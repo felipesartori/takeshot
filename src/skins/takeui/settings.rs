@@ -64,6 +64,8 @@ pub fn settings_page(
         egui::ScrollArea::vertical()
             .id_salt("takeui-settings")
             .auto_shrink([false, false])
+            // Clear of the box's 12 px corners.
+            .scroll_bar_rect(content.shrink2(vec2(0.0, 12.0)))
             .show(ui, |ui| {
                 // The scroll bar sits inside the right padding, so nothing moves when it shows.
                 Frame::new()
@@ -75,6 +77,8 @@ pub fn settings_page(
                     })
                     .show(ui, |ui| {
                         ui.set_width((content.width() - 80.0).max(0.0));
+                        // 4 px between a title and its hint; `group` and `heading` count on it.
+                        ui.spacing_mut().item_spacing.y = 4.0;
                         match home.section() {
                             SettingsSection::General => general(ui, t, home, shared, acts),
                             SettingsSection::Capture => capture(ui, t, shared),
@@ -90,9 +94,8 @@ pub fn settings_page(
     }
 }
 
-/// The section's title (22) and its short hint (13), 4 px apart.
+/// The section's title (22) and its short hint (13), the row spacing apart.
 fn heading(ui: &mut Ui, t: &Tokens, title: &str, hint: Option<&str>) {
-    ui.spacing_mut().item_spacing.y = 4.0;
     ui.label(
         RichText::new(title)
             .font(font(22.0, Weight::Bold))
@@ -110,7 +113,8 @@ fn heading(ui: &mut Ui, t: &Tokens, title: &str, hint: Option<&str>) {
 /// A titled group of rows in a bordered box, 24 px under what comes before; rows are separated
 /// by lines.
 fn group(ui: &mut Ui, t: &Tokens, title: &str, rows: impl FnOnce(&mut Ui)) {
-    ui.add_space(24.0);
+    // `add_space` comes on top of the spacing after the previous widget.
+    ui.add_space(24.0 - ui.spacing().item_spacing.y);
     ui.label(
         RichText::new(title)
             .font(font(13.0, Weight::Medium))
@@ -594,8 +598,9 @@ mod tests {
                 );
                 let texts: Vec<_> = painted.iter().filter(|(_, r)| r.top() > b.top()).collect();
                 for (i, (text, r)) in texts.iter().enumerate() {
+                    // The content's 40 px right padding, which holds the scroll bar.
                     assert!(
-                        r.right() <= b.right() - 25.0 + 1.0,
+                        r.right() <= b.right() - 40.0 + 1.0,
                         "{l:?} {s:?}: {text:?} {r:?} outside {b:?}"
                     );
                     for (other, o) in &texts[i + 1..] {
@@ -608,6 +613,62 @@ mod tests {
             }
         }
         set_lang(before);
+    }
+
+    #[test]
+    fn groups_sit_24_px_apart() {
+        // "Ajustes · escuro": 24 px from a group's box (or the heading) to the next title.
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(Page::Settings);
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let title = |m: Msg| {
+            painted
+                .iter()
+                .find(|(s, _)| every(m).contains(&s.as_str()))
+                .map(|(_, r)| *r)
+                .expect("a group title")
+        };
+        let hint = title(Msg::SettingsGeneralHint);
+        let startup = title(Msg::Startup);
+        let appearance = title(Msg::Appearance);
+        // The Startup group's box: the bordered frame right under its title.
+        let startup_box = blocks
+            .iter()
+            .map(|(r, _)| *r)
+            .filter(|r| {
+                r.top() > startup.bottom() && r.bottom() < appearance.top() && r.width() > 300.0
+            })
+            .max_by(|a, b| a.height().total_cmp(&b.height()))
+            .expect("the Startup box");
+        let gap = startup.top() - hint.bottom();
+        assert!((gap - 24.0).abs() <= 1.0, "heading to Startup: {gap}");
+        let gap = appearance.top() - startup_box.bottom();
+        assert!(
+            (gap - 24.0).abs() <= 1.0,
+            "Startup box to Appearance: {gap}"
+        );
+    }
+
+    #[test]
+    fn the_scroll_bar_keeps_off_the_rounded_corners() {
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(Page::Settings);
+        let (_, _, blocks) =
+            run_painted(&mut home, &mut shared, (900.0, 600.0), true, vec![vec![]]);
+        let b = content_box(&blocks, &shared.tokens(None));
+        let bars: Vec<_> = blocks
+            .iter()
+            .map(|(r, _)| *r)
+            .filter(|r| r.width() <= 6.5 && r.height() > 40.0 && r.right() > b.right() - 8.0)
+            .collect();
+        assert!(!bars.is_empty(), "the bar");
+        for r in bars {
+            assert!(
+                r.top() >= b.top() + 12.0 - 0.5 && r.bottom() <= b.bottom() - 12.0 + 0.5,
+                "{r:?} in {b:?}"
+            );
+        }
     }
 
     #[test]

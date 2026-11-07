@@ -275,6 +275,12 @@ impl Gallery {
                     kit::nav_item(ui, tk, Ico::Settings2, t(Msg::Settings), false);
                 });
             });
+            ui.allocate_ui(vec2(196.0, 120.0), |ui| {
+                ui.vertical(|ui| {
+                    kit::section_item(ui, tk, Ico::Sliders, t(Msg::GeneralSection), true);
+                    kit::section_item(ui, tk, Ico::Keyboard, t(Msg::ShortcutsSection), false);
+                });
+            });
             kit::status_chip(ui, tk, false);
         });
 

@@ -16,6 +16,9 @@ pub(crate) mod testing {
     /// A painted rectangle and its fill.
     pub type Block = (Rect, Color32);
 
+    /// The colour a mesh's block carries.
+    pub const MESH: Color32 = Color32::PLACEHOLDER;
+
     /// Runs a warm-up frame and then one frame per event list at `size`; returns every action and
     /// the texts painted in the last frame with their screen rects.
     pub fn run(
@@ -76,10 +79,12 @@ pub(crate) mod testing {
                 t.galley.rect.translate(t.pos.to_vec2()),
             )),
             egui::Shape::Rect(r) => blocks.push((r.rect, r.fill)),
-            // A line counts as a block of its stroke's colour.
+            // A line counts as a block of its stroke's colour; a mesh (a gradient, a picture) as
+            // a block of `MESH`.
             egui::Shape::LineSegment { points, stroke } => {
                 blocks.push((Rect::from_two_pos(points[0], points[1]), stroke.color))
             }
+            egui::Shape::Mesh(m) => blocks.push((m.calc_bounds(), MESH)),
             egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, texts, blocks)),
             _ => {}
         }

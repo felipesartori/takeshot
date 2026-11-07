@@ -14,7 +14,8 @@ use egui::{
     Align, Color32, CornerRadius, Layout, Rect, RichText, Sense, Ui, UiBuilder, pos2, vec2,
 };
 
-/// Width of the controls column, its line included, and its padding.
+/// Width of the controls column, from its line to the box's outer edge, and its padding. The
+/// content is 310 px at the design's size: the padding on both sides and a 10 px lane for the bar.
 const COLUMN: f32 = 360.0;
 const COLUMN_PAD: f32 = 20.0;
 
@@ -46,6 +47,8 @@ pub fn style_page(
         egui::ScrollArea::vertical()
             .id_salt("takeui-style-column")
             .auto_shrink([false, false])
+            // Clear of the box's 12 px corners.
+            .scroll_bar_rect(column.shrink2(vec2(0.0, 12.0)))
             .show(ui, |ui| {
                 // The scroll bar sits inside the right padding, so nothing moves when it shows.
                 egui::Frame::new()
@@ -56,7 +59,7 @@ pub fn style_page(
                         bottom: COLUMN_PAD as i8,
                     })
                     .show(ui, |ui| {
-                        ui.set_width((column.width() - 2.0 * COLUMN_PAD).max(0.0));
+                        ui.set_width((column.width() - 2.0 * COLUMN_PAD - 10.0).max(0.0));
                         if controls(ui, t, shared, acts) {
                             shared.settings_dirty = true;
                         }
@@ -445,10 +448,11 @@ pub fn controls(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<Mai
 #[cfg(test)]
 mod tests {
     use crate::screens::home::Home;
-    use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
+    use crate::skins::takeui::testing::{MESH, click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::system::settings::QuickStyle;
     use crate::ui::i18n::{Lang, Msg, every, lang, lang_lock, set_lang};
+    use egui::vec2;
 
     #[test]
     fn the_controls_column_runs_the_full_height() {
@@ -475,6 +479,45 @@ mod tests {
         let restore =
             painted_at(&painted, &every(Msg::RestoreDefault), |_| true).expect("Restore default");
         assert!(restore.x < line.left(), "{restore:?} over the preview");
+    }
+
+    #[test]
+    fn the_swatches_fill_their_tiles() {
+        // "Estilo · escuro": each gradient fills its 44 px tile; the border sits on top.
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(Page::Style);
+        let (_, _, blocks) = run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let tiles: Vec<_> = blocks
+            .iter()
+            .filter(|(r, c)| *c == MESH && r.width() < 60.0 && (r.width() - r.height()).abs() < 1.0)
+            .map(|(r, _)| *r)
+            .collect();
+        assert_eq!(tiles.len(), 12, "{tiles:?}");
+        for r in tiles {
+            assert_eq!(r.size(), vec2(44.0, 44.0), "{r:?}");
+        }
+    }
+
+    #[test]
+    fn the_scroll_bar_keeps_off_the_rounded_corners() {
+        // The column runs the box's full height; its bar stops 12 px short of the 12 px corners.
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(Page::Style);
+        let (_, _, blocks) =
+            run_painted(&mut home, &mut shared, (900.0, 600.0), true, vec![vec![]]);
+        let b = content_box(&blocks, &shared.tokens(None));
+        let bars: Vec<_> = blocks
+            .iter()
+            .map(|(r, _)| *r)
+            .filter(|r| r.width() <= 6.5 && r.height() > 40.0 && r.right() > b.right() - 8.0)
+            .collect();
+        assert!(!bars.is_empty(), "the bar");
+        for r in bars {
+            assert!(
+                r.top() >= b.top() + 12.0 - 0.5 && r.bottom() <= b.bottom() - 12.0 + 0.5,
+                "{r:?} in {b:?}"
+            );
+        }
     }
 
     #[test]

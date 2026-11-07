@@ -32,6 +32,12 @@ pub fn native() -> bool {
     NATIVE.load(Ordering::Relaxed)
 }
 
+/// Whether the theme's bar draws minimize, maximize and close: not on macOS (the traffic lights
+/// do) nor under the native bar.
+pub fn draws_window_buttons() -> bool {
+    !(cfg!(target_os = "macos") || native())
+}
+
 /// Room the macOS traffic lights take at the start of the bar.
 pub fn leading_inset() -> f32 {
     if cfg!(target_os = "macos") { 78.0 } else { 0.0 }
@@ -137,7 +143,7 @@ pub fn drag_area(ui: &mut Ui, rect: Rect) -> Response {
 /// Minimize, maximize or restore, and close, laid out by the caller right to left (Close first);
 /// none on macOS (the traffic lights) or with the native bar.
 pub fn window_buttons(ui: &mut Ui, t: &Tokens) -> Option<WindowControl> {
-    if cfg!(target_os = "macos") || native() {
+    if !draws_window_buttons() {
         return None;
     }
     let m = maximized(ui.ctx());

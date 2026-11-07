@@ -263,15 +263,14 @@ pub enum Swatch {
     Gradient(&'static [(f32, [u8; 3])], f32),
 }
 
-/// A 44 × 44 background choice: the fill inset by 3 px inside a 1 px border, a 2 px primary ring
-/// when selected; hover only colours the border.
+/// A 44 × 44 background choice: the fill over the whole tile with a 1 px border on top, a 2 px
+/// primary ring when selected; hover only colours the border.
 pub fn swatch(ui: &mut Ui, t: &Tokens, fill: Swatch, selected: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
     let h = hover_mix(ui, &resp);
     let p = ui.painter();
-    let body = rect.shrink(3.0);
     let Swatch::Gradient(stops, angle) = fill;
-    paint_gradient(p, body, stops, angle, 8.0, t.surf);
+    paint_gradient(p, rect, stops, angle, 10.0, t.surf);
     let ring = if selected {
         Stroke::new(2.0, t.primary)
     } else {
@@ -281,10 +280,11 @@ pub fn swatch(ui: &mut Ui, t: &Tokens, fill: Swatch, selected: bool) -> Response
     resp
 }
 
-/// A collapsible section's header: chevron and title over the full width; a click toggles `open`.
+/// A collapsible section's header, a 20 px text row over the full width: a 15 px chevron and the
+/// title (14) 23 px in, as in "Estilo · escuro". A click toggles `open`.
 pub fn section_header(ui: &mut Ui, t: &Tokens, title: &str, open: &mut bool) -> Response {
     let w = ui.available_width().max(120.0);
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
     if resp.clicked() {
         *open = !*open;
     }
@@ -298,17 +298,17 @@ pub fn section_header(ui: &mut Ui, t: &Tokens, title: &str, open: &mut bool) -> 
     };
     draw_icon(
         p,
-        pos2(rect.left() + 8.0, rect.center().y),
+        pos2(rect.left() + 7.5, rect.center().y),
         chevron,
-        14.0,
+        15.0,
         t.muted,
     );
     draw_text(
         p,
-        pos2(rect.left() + 22.0, rect.center().y),
+        pos2(rect.left() + 23.0, rect.center().y),
         Align2::LEFT_CENTER,
         title,
-        13.0,
+        14.0,
         Weight::Medium,
         dim(fg, ui),
     );
@@ -1598,8 +1598,11 @@ mod tests {
                 );
             }
             if name.starts_with("swatch") {
-                // "Estilo · escuro": six 44 px squares, 8 px apart, fill the 310 px column.
+                // "Estilo · escuro": six 44 px squares, 8 px apart, across the column.
                 assert_eq!(still.alloc.size(), egui::vec2(44.0, 44.0), "{name}");
+            } else {
+                // A text row in the design (17 px), with room for the watermark's 20 px switch.
+                assert_eq!(still.alloc.height(), 20.0, "{name}");
             }
         }
     }

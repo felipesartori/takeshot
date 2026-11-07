@@ -81,7 +81,7 @@ fn title_bar(
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if cfg!(target_os = "macos") || chrome::native() {
+            if !chrome::draws_window_buttons() {
                 ui.add_space(12.0);
             } else {
                 if let Some(c) = chrome::window_buttons(ui, t) {
