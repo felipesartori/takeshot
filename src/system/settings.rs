@@ -1,6 +1,7 @@
 //! User settings saved to settings.json: style, watermark, drawing options and app behavior.
 
 use crate::engine::model::{BlurMode, DEFAULT_COLOR, DEFAULT_WIDTH, Tool};
+use crate::system::hotkeys::{Shot, default_keys};
 use crate::ui::i18n::LangPref;
 use crate::ui::tokens::{ThemeId, UiMode};
 use serde::{Deserialize, Serialize};
@@ -232,6 +233,13 @@ pub struct Settings {
     /// Show a short notice after copying and saving.
     pub show_bubbles: bool,
     pub hotkeys: bool,
+    /// Capture shortcuts in the form `global_hotkey::hotkey::HotKey::from_str` reads.
+    pub hotkey_area: String,
+    pub hotkey_full: String,
+    /// Windows only: a low-level keyboard hook takes PrtSc before other apps.
+    pub prtsc_priority: bool,
+    /// The PrtSc priority offer was shown once already.
+    pub prtsc_offer_shown: bool,
     pub style: Style,
     pub watermark: Watermark,
     pub draw: DrawOpts,
@@ -255,6 +263,10 @@ impl Default for Settings {
             open_editor_after_full: false,
             show_bubbles: true,
             hotkeys: true,
+            hotkey_area: default_keys(Shot::Area).to_string(),
+            hotkey_full: default_keys(Shot::Full).to_string(),
+            prtsc_priority: false,
+            prtsc_offer_shown: false,
             style: Style::default(),
             watermark: Watermark::default(),
             draw: DrawOpts::default(),
@@ -305,5 +317,15 @@ mod tests {
         assert_eq!(s.ui_theme, ThemeId::TakeUi);
         assert_eq!(s.ui_mode, UiMode::System);
         assert_eq!(s.lang, LangPref::Auto);
+    }
+
+    #[test]
+    fn old_settings_without_hotkey_fields_get_the_defaults() {
+        use crate::system::hotkeys::{Shot, default_keys};
+        let s: Settings = serde_json::from_str(r#"{"save_dir":"D:/caps"}"#).unwrap();
+        assert_eq!(s.hotkey_area, default_keys(Shot::Area));
+        assert_eq!(s.hotkey_full, default_keys(Shot::Full));
+        assert!(!s.prtsc_priority);
+        assert!(!s.prtsc_offer_shown);
     }
 }

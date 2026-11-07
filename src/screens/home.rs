@@ -5,6 +5,7 @@ use crate::engine::render;
 use crate::screens::icons::{self, Icon};
 use crate::screens::overlay::color_image;
 use crate::screens::widgets::{self, ACCENT, BORDER, HOVER, MUTED, PANEL, RAISED, TEXT};
+use crate::system::hotkeys::{Hotkeys, Shot, Status, label};
 use crate::system::settings::QuickStyle;
 use crate::{Shared, Switch};
 use egui::{Color32, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
@@ -32,59 +33,22 @@ pub struct Home {
     sample: RgbaImage,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
-    hotkey_status: Result<String, String>,
-    _hotkeys: Option<global_hotkey::GlobalHotKeyManager>,
-}
-
-fn area_hotkey() -> (global_hotkey::hotkey::HotKey, &'static str) {
-    use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-    if cfg!(target_os = "macos") {
-        (
-            HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Digit2),
-            "Ctrl+Shift+2",
-        )
-    } else {
-        (HotKey::new(None, Code::PrintScreen), "PrtSc")
-    }
-}
-
-fn full_hotkey() -> (global_hotkey::hotkey::HotKey, &'static str) {
-    use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-    if cfg!(target_os = "macos") {
-        (
-            HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Digit1),
-            "Ctrl+Shift+1",
-        )
-    } else {
-        (
-            HotKey::new(Some(Modifiers::SHIFT), Code::PrintScreen),
-            "Shift+PrtSc",
-        )
-    }
-}
-
-pub fn area_key_name() -> &'static str {
-    area_hotkey().1
+    hotkeys: Option<Hotkeys>,
 }
 
 impl Home {
     pub fn new(ctx: &egui::Context, shared: &Shared, register_keys: bool) -> Self {
-        let (manager, status) = if register_keys && shared.settings.hotkeys {
-            register(ctx)
-        } else {
-            (
-                None,
-                if shared.settings.hotkeys {
-                    Ok(format!(
-                        "{} captura · {} tela inteira",
-                        area_hotkey().1,
-                        full_hotkey().1
-                    ))
-                } else {
-                    Err("Atalhos globais desligados".into())
-                },
-            )
-        };
+        let hotkeys = register_keys.then(|| {
+            let ctx = ctx.clone();
+            Hotkeys::start(&shared.settings, move |shot| {
+                let args: &[&str] = match shot {
+                    Shot::Area => &["--capture", "--wait"],
+                    Shot::Full => &["--capture", "--full", "--wait"],
+                };
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                let _ = crate::system::actions::spawn_self(args);
+            })
+        });
         let mut h = Self {
             page: Page::Start,
             recents: Vec::new(),
@@ -93,8 +57,7 @@ impl Home {
             sample: crate::system::capture::sample_window(1000, 620),
             preview: None,
             preview_dirty: true,
-            hotkey_status: status,
-            _hotkeys: manager,
+            hotkeys,
         };
         h.scan(&shared.settings.save_dir, 0.0);
         h
@@ -214,7 +177,7 @@ impl Home {
                     }
                 }
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    match &self.hotkey_status {
+                    match hotkey_text(self.hotkeys.as_ref(), &shared.settings) {
                         Ok(s) => ui.label(RichText::new(s).size(11.5).color(MUTED)),
                         Err(e) => ui.label(
                             RichText::new(e)
@@ -256,7 +219,7 @@ impl Home {
         ui.label(
             RichText::new(format!(
                 "Pressione {} em qualquer lugar, ou escolha abaixo.",
-                area_key_name()
+                label(&shared.settings.hotkey_area)
             ))
             .color(MUTED),
         );
@@ -264,10 +227,14 @@ impl Home {
         let mut action: Option<Vec<&str>> = None;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-            if big_card(ui, Icon::Select, "Área", area_key_name(), true).clicked() {
+            let (area_keys, full_keys) = (
+                label(&shared.settings.hotkey_area),
+                label(&shared.settings.hotkey_full),
+            );
+            if big_card(ui, Icon::Select, "Área", &area_keys, true).clicked() {
                 action = Some(vec!["--capture", "--wait"]);
             }
-            if big_card(ui, Icon::Full, "Tela inteira", full_hotkey().1, false).clicked() {
+            if big_card(ui, Icon::Full, "Tela inteira", &full_keys, false).clicked() {
                 action = Some(vec!["--capture", "--full", "--wait"]);
             }
             if big_card(ui, Icon::Timer, "Em 3 segundos", "temporizador", false).clicked() {
@@ -519,10 +486,11 @@ impl Home {
 
         widgets::section(ui, "Atalhos");
         ui.checkbox(&mut s.hotkeys, "Atalhos globais (vale ao reabrir o app)");
+        let (area_keys, full_keys) = (label(&s.hotkey_area), label(&s.hotkey_full));
         egui::Grid::new("keys").num_columns(2).spacing(vec2(24.0, 6.0)).show(ui, |ui| {
             for (k, d) in [
-                (area_key_name(), "Capturar área"),
-                (full_hotkey().1, "Tela inteira"),
+                (area_keys.as_str(), "Capturar área"),
+                (full_keys.as_str(), "Tela inteira"),
                 ("Shift (arrastando)", "Linha reta a 45°, quadrado, círculo perfeito"),
                 ("Alt (arrastando)", "Desenhar a partir do centro"),
                 ("P L A R O M T B N", "Caneta, linha, seta, retângulo, círculo, marcador, texto, borrar, numeração"),
@@ -636,49 +604,25 @@ fn open_clipboard(shared: &mut Shared) {
     }
 }
 
-fn register(
-    ctx: &egui::Context,
-) -> (
-    Option<global_hotkey::GlobalHotKeyManager>,
-    Result<String, String>,
-) {
-    use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-    let manager = match GlobalHotKeyManager::new() {
-        Ok(m) => m,
-        Err(e) => return (None, Err(format!("Atalhos globais indisponíveis: {e}"))),
-    };
-    let (area, an) = area_hotkey();
-    let (full, fname) = full_hotkey();
-    let mut problems = Vec::new();
-    if manager.register(area).is_err() {
-        problems.push(an);
-    }
-    if manager.register(full).is_err() {
-        problems.push(fname);
-    }
-    let (area_id, full_id) = (area.id(), full.id());
-    let ctx = ctx.clone();
-    GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
-        if e.state != HotKeyState::Pressed {
-            return;
-        }
-        let args: &[&str] = if e.id == area_id {
-            &["--capture", "--wait"]
-        } else if e.id == full_id {
-            &["--capture", "--full", "--wait"]
-        } else {
-            return;
-        };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        let _ = crate::system::actions::spawn_self(args);
-    }));
-    let status = if problems.is_empty() {
-        Ok(format!("{an} captura · {fname} tela inteira"))
-    } else {
-        Err(format!(
-            "{} em uso por outro programa",
-            problems.join(" e ")
+/// The status line under the navigation: which keys capture, or why they do not.
+fn hotkey_text(
+    hotkeys: Option<&Hotkeys>,
+    settings: &crate::system::settings::Settings,
+) -> Result<String, String> {
+    let ready = || {
+        Ok(format!(
+            "{} captura · {} tela inteira",
+            label(&settings.hotkey_area),
+            label(&settings.hotkey_full)
         ))
     };
-    (Some(manager), status)
+    match hotkeys.map(|h| h.status()) {
+        None if settings.hotkeys => ready(),
+        None | Some(Status::Off) => Err("Atalhos globais desligados".into()),
+        Some(Status::Ready) => ready(),
+        Some(Status::Busy { keys }) => {
+            Err(format!("{} em uso por outro programa", keys.join(" e ")))
+        }
+        Some(Status::Unavailable(e)) => Err(format!("Atalhos globais indisponíveis: {e}")),
+    }
 }
