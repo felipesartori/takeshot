@@ -382,15 +382,7 @@ impl Editor {
                     self.an.handle_object_keys(ui);
                     widgets::tool_shortcuts(ui, &mut self.an, &mut shared.settings.draw, true);
                     let cmd = Modifiers::COMMAND;
-                    // Redo first: egui also matches Ctrl+Shift+Z against the plain Ctrl+Z pattern.
-                    if ui.input_mut(|i| {
-                        i.consume_key(cmd, Key::Y) || i.consume_key(cmd | Modifiers::SHIFT, Key::Z)
-                    }) {
-                        self.an.redo();
-                    }
-                    if ui.input_mut(|i| i.consume_key(cmd, Key::Z)) {
-                        self.an.undo();
-                    }
+                    self.an.handle_history_keys(ui);
                     if ui.input_mut(|i| i.consume_key(cmd, Key::C)) {
                         self.copy(shared);
                     }

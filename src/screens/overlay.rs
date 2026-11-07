@@ -622,15 +622,7 @@ impl Overlay {
         view: &View,
     ) -> Option<Switch> {
         let cmd = Modifiers::COMMAND;
-        // Redo first: egui also matches Ctrl+Shift+Z against the plain Ctrl+Z pattern.
-        if ui.input_mut(|i| {
-            i.consume_key(cmd, Key::Y) || i.consume_key(cmd | Modifiers::SHIFT, Key::Z)
-        }) {
-            self.an.redo();
-        }
-        if ui.input_mut(|i| i.consume_key(cmd, Key::Z)) {
-            self.an.undo();
-        }
+        self.an.handle_history_keys(ui);
         // With objects selected, Delete, Ctrl+D, arrows and Esc act on them; otherwise on the area.
         self.an.handle_object_keys(ui);
         if ui.input_mut(|i| i.consume_key(cmd, Key::A)) {

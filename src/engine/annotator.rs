@@ -295,6 +295,25 @@ impl Annotator {
         SelectOutcome::Consumed
     }
 
+    /// Ctrl+Z undoes; Ctrl+Y or Ctrl+Shift+Z redo. Redo is matched first because egui also matches
+    /// Ctrl+Shift+Z against the plain Ctrl+Z pattern. Returns whether a key was used.
+    pub fn handle_history_keys(&mut self, ui: &Ui) -> bool {
+        use egui::{Key, Modifiers as M};
+        let (redo, undo) = ui.input_mut(|i| {
+            let redo =
+                i.consume_key(M::COMMAND, Key::Y) || i.consume_key(M::COMMAND | M::SHIFT, Key::Z);
+            let undo = !redo && i.consume_key(M::COMMAND, Key::Z);
+            (redo, undo)
+        });
+        if redo {
+            self.redo();
+        }
+        if undo {
+            self.undo();
+        }
+        redo || undo
+    }
+
     /// Object shortcuts, only with a selection: Delete or Backspace deletes, Ctrl+D copies 12 px
     /// away, arrows nudge 1 px (Shift 10 px, one undo step per press), Esc clears the selection.
     /// Returns whether a key was used, so the screen can give the rest its own meaning.
@@ -319,6 +338,10 @@ impl Annotator {
                 (Key::ArrowUp, vec2(0.0, -1.0)),
                 (Key::ArrowDown, vec2(0.0, 1.0)),
             ] {
+                // A held key repeats: only its first press opens an undo step.
+                let repeat = i.events.iter().any(|e| {
+                    matches!(e, egui::Event::Key { key, pressed: true, repeat: true, .. } if *key == k)
+                });
                 // Shift first: a plain pattern also matches Shift+key in egui.
                 let step = if i.consume_key(M::SHIFT, k) {
                     10.0
@@ -328,7 +351,9 @@ impl Annotator {
                     continue;
                 };
                 if !self.doc.selected().is_empty() {
-                    self.doc.begin_change();
+                    if !repeat {
+                        self.doc.begin_change();
+                    }
                     self.doc.translate_selected(dir * step);
                     used = true;
                 }
@@ -1293,6 +1318,86 @@ mod tests {
         assert_eq!(an.bar_tool(), Some(Tool::Rect));
         an.tool = Tool::Arrow;
         assert_eq!(an.bar_tool(), Some(Tool::Arrow));
+    }
+
+    #[test]
+    fn a_drawing_tool_on_a_selected_handle_resizes_instead_of_drawing() {
+        let (mut an, ids) = with(
+            Tool::Rect,
+            vec![rect_ann((100.0, 100.0), (200.0, 200.0), false)],
+        );
+        an.doc.select(Some(ids[0]), false);
+        let mut opts = DrawOpts::default();
+        let frames = drag(
+            pos2(200.0, 200.0),
+            &[pos2(250.0, 250.0), pos2(300.0, 300.0)],
+        );
+        run(Modifiers::NONE, frames, |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert_eq!(an.doc.objs().len(), 1, "nothing new was drawn");
+        assert!(an.live.is_none());
+        match an.doc.objs()[0].ann.shape {
+            Shape::Rect(_, b) => assert!(b.distance(pos2(300.0, 300.0)) < 0.01),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn history_keys_undo_and_redo_including_ctrl_shift_z() {
+        use egui::Key;
+        let (mut an, _) = with(Tool::Select, vec![]);
+        an.commit(rect_ann((0.0, 0.0), (50.0, 50.0), true));
+        an.commit(rect_ann((100.0, 0.0), (150.0, 50.0), true));
+        let used = run(
+            Modifiers::NONE,
+            vec![
+                key(Key::Z, Modifiers::COMMAND),
+                key(Key::Z, Modifiers::COMMAND),
+                key(Key::Z, Modifiers::COMMAND | Modifiers::SHIFT),
+                key(Key::Y, Modifiers::COMMAND),
+                key(Key::A, Modifiers::NONE),
+            ],
+            |ui, _| {
+                let used = an.handle_history_keys(ui);
+                (used, an.doc.objs().len())
+            },
+        );
+        assert_eq!(
+            used,
+            vec![(true, 1), (true, 0), (true, 1), (true, 2), (false, 2)]
+        );
+    }
+
+    #[test]
+    fn holding_an_arrow_is_one_undo_step() {
+        use egui::Key;
+        let (mut an, ids) = with(
+            Tool::Select,
+            vec![rect_ann((100.0, 100.0), (200.0, 200.0), true)],
+        );
+        an.doc.select(Some(ids[0]), false);
+        let start = bounds(&an, ids[0]).min;
+        let held = |repeat: bool| {
+            vec![Event::Key {
+                key: Key::ArrowRight,
+                physical_key: None,
+                pressed: true,
+                repeat,
+                modifiers: Modifiers::NONE,
+            }]
+        };
+        run(
+            Modifiers::NONE,
+            vec![held(false), held(true), held(true), held(true)],
+            |ui, _| an.handle_object_keys(ui),
+        );
+        assert!(bounds(&an, ids[0]).min.distance(start + vec2(4.0, 0.0)) < 0.01);
+        an.undo();
+        assert!(
+            bounds(&an, ids[0]).min.distance(start) < 0.01,
+            "one step for the whole hold"
+        );
     }
 
     #[test]
