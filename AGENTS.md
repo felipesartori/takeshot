@@ -1,6 +1,6 @@
 # Takeshot agent guide
 
-Takeshot is a tray-resident screenshot tool written in Rust with egui: capture with PrtSc, annotate with editable objects, style with backgrounds and watermarks. Product context and principles: [PRODUCT.md](PRODUCT.md). Visual source of truth: [design/takeshot-ui.fig](design/takeshot-ui.fig) (open it in OpenPencil or Figma).
+Takeshot is a screenshot tool written in Rust with egui: capture with PrtSc, annotate, and style the result with backgrounds and watermarks. The redesign in progress turns it into a tray utility with editable objects. Product context and principles: [PRODUCT.md](PRODUCT.md). Visual source of truth: [design/takeshot-ui.fig](design/takeshot-ui.fig) (open it in OpenPencil or Figma).
 
 ## Parity
 
@@ -25,7 +25,7 @@ The redesign that introduces the two themes is in progress on `feat/redesign`. U
 
 1. `cargo fmt --check` prints nothing.
 2. `cargo clippy --all-targets -- -D warnings` finishes with zero warnings, pre-existing ones included.
-3. `cargo test > shots/test.log 2>&1`, then read the log. Write test output to a file and read it; run one test command at a time.
+3. `mkdir -p shots` once (the folder is git-ignored), then `cargo test > shots/test.log 2>&1` and read the log. Send test output to a file and run one test command at a time: a pipe holds a hung run open.
 4. For visible changes, `takeshot --screenshot out.png` renders the window and saves it; compare it with the design file. Theme, mode, language and page flags arrive with the redesign.
 
 ## Git

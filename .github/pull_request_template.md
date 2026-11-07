@@ -13,7 +13,8 @@
 
 ## Parity
 
-- [ ] Every user-facing change exists in both themes (or this PR lists what the other theme still needs)
+Missing in the other theme: <!-- write "none", or list each function the other theme still needs -->
+
 
 ## Translations
 
