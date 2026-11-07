@@ -9,6 +9,8 @@ use crate::screens::icons::Icon;
 use crate::screens::overlay::color_image;
 use crate::screens::widgets::{self, ACCENT, BG, MUTED, TEXT};
 use crate::system::settings::Background;
+use crate::ui::i18n::{Msg, t};
+use crate::ui::kit::{self, BtnKind};
 use crate::{Shared, Switch};
 use egui::{Color32, Key, Modifiers, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
@@ -24,6 +26,12 @@ pub struct Editor {
     lay: Option<Layout>,
     canvas_px: egui::Vec2,
     last_avail: egui::Vec2,
+    /// Document revision at the last successful copy or save; `None` until the first one when the
+    /// picture arrived with objects (they were never exported either).
+    saved_rev: Option<u64>,
+    asking_close: bool,
+    /// Set once the user chose to close, so the window's own close request goes through.
+    closing: bool,
 }
 
 impl Editor {
@@ -31,6 +39,7 @@ impl Editor {
         let mut an = Annotator::with_doc(shared.settings.draw.last_tool, doc);
         let first = an.bake().unwrap_or_default();
         let annotated = render::render_annotations(&base, &first, &shared.fonts);
+        let saved_rev = an.doc.objs().is_empty().then(|| an.doc.revision());
         Self {
             base,
             annotated,
@@ -42,6 +51,26 @@ impl Editor {
             lay: None,
             canvas_px: vec2(1.0, 1.0),
             last_avail: vec2(0.0, 0.0),
+            saved_rev,
+            asking_close: false,
+            closing: false,
+        }
+    }
+
+    /// Edits that were not copied or saved: object changes since the last export, or text being typed.
+    fn unsaved(&self) -> bool {
+        self.saved_rev != Some(self.an.doc.revision())
+            || self.an.draft.as_ref().is_some_and(|d| !d.text.is_empty())
+    }
+
+    /// Closing asks first when there are unsaved edits; otherwise it closes.
+    fn request_close(&mut self) -> Switch {
+        if self.unsaved() {
+            self.asking_close = true;
+            Switch::None
+        } else {
+            self.closing = true;
+            Switch::Close
         }
     }
 
@@ -115,6 +144,11 @@ impl Editor {
 
     pub fn ui(&mut self, ui: &mut Ui, frame: &eframe::Frame, shared: &mut Shared) -> Switch {
         let ctx = ui.ctx().clone();
+        // The window X: keep the window open and ask when there are unsaved edits.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closing && self.unsaved() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.asking_close = true;
+        }
         if let Some(anns) = self.an.bake() {
             self.annotated = render::render_annotations(&self.base, &anns, &shared.fonts);
             self.preview_src = None;
@@ -344,7 +378,7 @@ impl Editor {
                     &shared.settings.draw,
                     ui.input(|i| i.time),
                 );
-                if !typing && !ctx.egui_wants_keyboard_input() {
+                if !typing && !self.asking_close && !ctx.egui_wants_keyboard_input() {
                     self.an.handle_object_keys(ui);
                     widgets::tool_shortcuts(ui, &mut self.an, &mut shared.settings.draw, true);
                     let cmd = Modifiers::COMMAND;
@@ -371,20 +405,63 @@ impl Editor {
                         self.an.set_tool(Tool::Select, &mut shared.settings.draw);
                     }
                     if ui.input_mut(|i| i.consume_key(cmd, Key::W)) {
-                        switch = Switch::Close;
+                        switch = self.request_close();
                     }
                 }
             });
+        if self.asking_close {
+            let theme = crate::ui::tokens::tokens(
+                shared.settings.ui_theme,
+                crate::ui::tokens::effective_dark(shared.settings.ui_mode, ctx.system_theme()),
+            );
+            let answer = kit::confirm_dialog(
+                &ctx,
+                &theme,
+                "editor-discard",
+                t(Msg::DiscardTitle),
+                t(Msg::DiscardBody),
+                &[
+                    (t(Msg::Discard), BtnKind::Danger),
+                    (t(Msg::Cancel), BtnKind::Secondary),
+                    (t(Msg::CopyAndClose), BtnKind::Primary),
+                ],
+                1,
+            );
+            match answer {
+                Some(0) => {
+                    self.asking_close = false;
+                    self.closing = true;
+                    switch = Switch::Close;
+                }
+                Some(2) => {
+                    self.asking_close = false;
+                    if self.copy(shared) {
+                        self.closing = true;
+                        switch = Switch::Close;
+                    }
+                }
+                Some(_) => self.asking_close = false,
+                None => {}
+            }
+        }
         switch
     }
 
-    fn copy(&mut self, shared: &mut Shared) {
+    /// Copies the final picture; true when it reached the clipboard.
+    fn copy(&mut self, shared: &mut Shared) -> bool {
         self.an.commit_draft(&shared.settings.draw);
         self.sync_now(shared);
         let img = self.final_image(shared);
         match crate::system::actions::copy_image(&img) {
-            Ok(()) => shared.toast("Imagem copiada".into()),
-            Err(e) => shared.toast(format!("Não consegui copiar: {e}")),
+            Ok(()) => {
+                self.saved_rev = Some(self.an.doc.revision());
+                shared.toast("Imagem copiada".into());
+                true
+            }
+            Err(e) => {
+                shared.toast(format!("Não consegui copiar: {e}"));
+                false
+            }
         }
     }
 
@@ -400,6 +477,7 @@ impl Editor {
         let img = self.final_image(shared);
         match crate::system::actions::save_png(&img, &path) {
             Ok(()) => {
+                self.saved_rev = Some(self.an.doc.revision());
                 if let Some(dir) = path.parent() {
                     shared.settings.save_dir = dir.to_string_lossy().into_owned();
                     shared.settings_dirty = true;

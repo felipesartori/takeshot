@@ -96,6 +96,11 @@ pub enum Msg {
     TypeBody,
     TypeLabel,
     TypeCaption,
+    DiscardTitle,
+    DiscardBody,
+    Discard,
+    CopyAndClose,
+    Cancel,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -163,6 +168,11 @@ fn en(m: Msg) -> &'static str {
         Msg::TypeBody => "Body text and fields",
         Msg::TypeLabel => "Label and button",
         Msg::TypeCaption => "Caption and metadata",
+        Msg::DiscardTitle => "Discard changes?",
+        Msg::DiscardBody => "This picture has edits that were not copied or saved.",
+        Msg::Discard => "Discard",
+        Msg::CopyAndClose => "Copy and close",
+        Msg::Cancel => "Cancel",
     }
 }
 
@@ -215,6 +225,11 @@ fn pt(m: Msg) -> &'static str {
         Msg::TypeBody => "Corpo de texto e campos",
         Msg::TypeLabel => "Rótulo e botão",
         Msg::TypeCaption => "Legenda e metadados",
+        Msg::DiscardTitle => "Descartar as mudanças?",
+        Msg::DiscardBody => "Esta imagem tem alterações que não foram copiadas nem salvas.",
+        Msg::Discard => "Descartar",
+        Msg::CopyAndClose => "Copiar e fechar",
+        Msg::Cancel => "Cancelar",
     }
 }
 
