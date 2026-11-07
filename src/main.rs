@@ -10,6 +10,7 @@
 //!   --page componentes     component gallery of the design system
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
 //!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only (every window)
+//!   --native-titlebar      the system's title bar instead of the theme's (also TAKESHOT_NATIVE_TITLEBAR=1)
 
 mod engine;
 mod screens;
@@ -139,6 +140,7 @@ fn parse_args() -> Args {
             }
             "--capture" => capture = true,
             "--minimized" => a.minimized = true,
+            "--native-titlebar" => ui::chrome::init(true),
             "--full" => full = true,
             "--sample" => a.sample = true,
             "--wait" => a.delay = a.delay.max(0.3),
@@ -377,6 +379,7 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
+    ui::chrome::init(false);
     let args = parse_args();
     let settings = settings::Settings::load();
 
@@ -534,8 +537,9 @@ fn main() -> eframe::Result {
         }
         _ if resident_mode && screens::shell::HOSTED => {
             // An invisible host: tiny, transparent, click-through, off screen and off the taskbar.
+            // Its own title, so the window lookups by "Takeshot" find only the main window.
             vp = vp
-                .with_title("Takeshot")
+                .with_title("Takeshot resident")
                 .with_inner_size([1.0, 1.0])
                 .with_position([-10000.0, -10000.0])
                 .with_decorations(false)

@@ -123,13 +123,16 @@ pub fn temp_png(img: &RgbaImage) -> Option<PathBuf> {
     save_png(img, &p).ok().map(|_| p)
 }
 
+/// Starts another Takeshot process (capture, editor, pin) with `args`; the native title bar choice
+/// goes along (the environment variable is inherited anyway, the flag is passed on).
 pub fn spawn_self(args: &[&str]) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    std::process::Command::new(exe)
-        .args(args)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(args);
+    if crate::ui::chrome::native() {
+        cmd.arg("--native-titlebar");
+    }
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 pub fn open_folder(path: &Path) {

@@ -74,6 +74,10 @@ Baixe em [Releases](../../releases) ou nos artefatos da última execução do wo
 - **macOS** (Apple Silicon e Intel): `takeshot-macos-universal.zip`. O app não é assinado pela Apple: na primeira vez, clique com o botão direito em Takeshot.app > Abrir, ou rode `xattr -cr Takeshot.app`. Libere em Ajustes do Sistema > Privacidade e Segurança > Gravação de Tela.
 - **Linux**: `takeshot-linux-x64.tar.gz`. O ícone da bandeja precisa de `libayatana-appindicator3-1` (ou `libappindicator3-1`) e de um painel com AppIndicator; sem ele o app funciona sem ícone, e "Sair do Takeshot" fica em Ajustes > Geral. No Wayland um app não consegue esconder a própria janela: "Minimizar para a bandeja" e o início com o sistema minimizam a janela na barra de tarefas, e ela volta pelo clique nela. Atalhos globais precisam de X11; no Wayland a captura passa pelo portal do sistema e os atalhos são do desktop: crie um que rode `takeshot --capture` (ou `takeshot --capture --full`).
 
+## Problemas conhecidos
+
+- **Barra de título**: o Takeshot desenha a própria barra de título. Com alguns drivers de vídeo Intel no Windows 10 e 11, janelas sem a borda do sistema mostram uma faixa preta no topo ou recebem os cliques deslocados. Para voltar à barra do sistema, abra com `takeshot --native-titlebar` ou defina a variável de ambiente `TAKESHOT_NATIVE_TITLEBAR=1`.
+
 ## Compilar
 
 ```sh

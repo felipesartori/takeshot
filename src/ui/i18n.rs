@@ -131,6 +131,9 @@ pub enum Msg {
     ViewOnGitHub,
     VersionN,
     CloseWord,
+    MinimizeWindow,
+    MaximizeWindow,
+    RestoreWindow,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -239,6 +242,9 @@ fn en(m: Msg) -> &'static str {
         Msg::ViewOnGitHub => "View on GitHub",
         Msg::VersionN => "Version {0}",
         Msg::CloseWord => "Close",
+        Msg::MinimizeWindow => "Minimize",
+        Msg::MaximizeWindow => "Maximize",
+        Msg::RestoreWindow => "Restore",
     }
 }
 
@@ -332,6 +338,9 @@ fn pt(m: Msg) -> &'static str {
         Msg::ViewOnGitHub => "Ver no GitHub",
         Msg::VersionN => "Versão {0}",
         Msg::CloseWord => "Fechar",
+        Msg::MinimizeWindow => "Minimizar",
+        Msg::MaximizeWindow => "Maximizar",
+        Msg::RestoreWindow => "Restaurar",
     }
 }
 

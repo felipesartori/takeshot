@@ -196,6 +196,41 @@ pub fn icon_button(ui: &mut Ui, t: &Tokens, icon: Ico, active: bool, tip: &str) 
     resp.on_hover_text(tip)
 }
 
+/// A window button of the theme's title bar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WindowControl {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// 40 × 32 window button. Hover fills `hover`; Close fills `danger` with a white glyph. With the
+/// window maximized, Maximize shows the restore glyph.
+pub fn window_control(ui: &mut Ui, t: &Tokens, c: WindowControl, maximized: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(40.0, 32.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let (icon, tip, hover_bg, hover_fg) = match c {
+        WindowControl::Minimize => (Ico::Minimize, Msg::MinimizeWindow, t.hover, t.text),
+        WindowControl::Maximize if maximized => (Ico::Copy, Msg::RestoreWindow, t.hover, t.text),
+        WindowControl::Maximize => (Ico::Square, Msg::MaximizeWindow, t.hover, t.text),
+        WindowControl::Close => (Ico::Close, Msg::CloseWord, t.danger, Color32::WHITE),
+    };
+    p.rect_filled(
+        rect,
+        CornerRadius::same(t.radius),
+        mix(Color32::TRANSPARENT, hover_bg, h),
+    );
+    draw_icon(
+        p,
+        rect.center(),
+        icon,
+        15.0,
+        dim(mix(t.muted, hover_fg, h), ui),
+    );
+    resp.on_hover_text(tr(tip))
+}
+
 /// 34 × 34 tool. `filled_active` paints the active tool in primary (Coral UI) instead of tint (TakeUI).
 /// `None` draws the numbered-step tool: a circle with "1".
 pub fn tool_button(
@@ -985,6 +1020,29 @@ mod tests {
                 off.abs() <= 1.0,
                 "{content:?}: text {off:+.1} px from the icon centre ({label:?} vs {icon:?})"
             );
+        }
+    }
+
+    #[test]
+    fn window_controls_keep_their_size_on_hover() {
+        let t = tokens(ThemeId::TakeUi, true);
+        for c in [
+            WindowControl::Minimize,
+            WindowControl::Maximize,
+            WindowControl::Close,
+        ] {
+            for maximized in [false, true] {
+                let f = |ui: &mut egui::Ui| window_control(ui, &t, c, maximized);
+                let still = rect_of(false, &f);
+                let hovered = rect_of(true, &f);
+                assert_eq!(still.alloc.size(), egui::vec2(40.0, 32.0), "{c:?}");
+                assert!(!still.hovered && hovered.hovered, "{c:?}: pointer missed");
+                assert_eq!(still.alloc, hovered.alloc, "{c:?} moves on hover");
+                assert!(
+                    hovered.alloc.contains_rect(hovered.painted),
+                    "{c:?} paints outside"
+                );
+            }
         }
     }
 

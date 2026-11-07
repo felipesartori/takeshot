@@ -8,6 +8,8 @@ pub mod capture;
 pub mod fonts;
 pub mod hotkeys;
 pub mod instance;
+#[cfg(target_os = "macos")]
+pub mod mac_titlebar;
 pub mod prtsc_hook;
 pub mod recents;
 pub mod resident;

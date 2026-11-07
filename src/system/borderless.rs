@@ -4,12 +4,59 @@
 //! gets it by moving the client area 1 px down, which DWM paints as a line across the top and
 //! frames with a rectangular shadow. A rounded, transparent popup (the tray menu) shows both as
 //! pale square corners. egui cannot turn it off, so the window is subclassed instead.
+//!
+//! The main window and the editor (the theme's own title bar, decision 13) are subclassed the same
+//! way and then get the shadow back from DWM through a 1 px frame inside the client area, which
+//! the app paints over; a maximized one is kept to the monitor's work area.
 
 /// Makes every window of this process titled `title` all client area, which also drops the DWM
 /// shadow. Call it from the thread that owns the windows, after they exist; a window already done
 /// carries a mark and is left alone, so calling it every frame costs a lookup.
 #[cfg(windows)]
 pub fn flatten_borderless(title: &str) {
+    for_each_new_window(title, |_| {});
+}
+
+/// Like `flatten_borderless`, for a window with the theme's title bar: DWM draws its shadow again
+/// (through a 1 px frame the app paints over) and Windows 11 rounds its corners; Windows 10 just
+/// ignores the corner request.
+#[cfg(windows)]
+#[allow(dead_code)] // The TakeUI shell calls it from plan 5, Task 4.
+pub fn frameless_with_shadow(title: &str) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmExtendFrameIntoClientArea,
+        DwmSetWindowAttribute,
+    };
+    use windows_sys::Win32::UI::Controls::MARGINS;
+    for_each_new_window(title, |hwnd| {
+        let margins = MARGINS {
+            cxLeftWidth: 0,
+            cxRightWidth: 0,
+            cyTopHeight: 1,
+            cyBottomHeight: 0,
+        };
+        let round = DWMWCP_ROUND;
+        // SAFETY: a live window of this process; the attribute value outlives the call.
+        unsafe {
+            DwmExtendFrameIntoClientArea(hwnd, &margins);
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                &round as *const _ as *const core::ffi::c_void,
+                std::mem::size_of_val(&round) as u32,
+            );
+        }
+    });
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)] // The TakeUI shell calls it from plan 5, Task 4.
+pub fn frameless_with_shadow(_title: &str) {}
+
+/// Subclasses each window of this process titled `title` that is not done yet, then runs `extra`
+/// on it. Call from the thread that owns the windows, after they exist.
+#[cfg(windows)]
+fn for_each_new_window(title: &str, mut extra: impl FnMut(windows_sys::Win32::Foundation::HWND)) {
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
     use windows_sys::Win32::UI::Shell::SetWindowSubclass;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -36,6 +83,7 @@ pub fn flatten_borderless(title: &str) {
             }
             SetPropW(hwnd, mark.as_ptr(), 1 as _);
             SetWindowSubclass(hwnd, Some(no_frame), SUBCLASS_ID, 0);
+            extra(hwnd);
             SetWindowPos(
                 hwnd,
                 std::ptr::null_mut(),
@@ -47,6 +95,17 @@ pub fn flatten_borderless(title: &str) {
             );
         }
     }
+}
+
+/// The client area `WM_NCCALCSIZE` gives a frameless window: all of it, or, maximized, the
+/// monitor's work area (Windows makes a maximized window larger than the monitor by its frame).
+#[cfg(windows)]
+pub fn client_rect(
+    window: windows_sys::Win32::Foundation::RECT,
+    maximized: bool,
+    work: windows_sys::Win32::Foundation::RECT,
+) -> windows_sys::Win32::Foundation::RECT {
+    if maximized { work } else { window }
 }
 
 #[cfg(not(windows))]
@@ -80,7 +139,26 @@ unsafe extern "system" fn no_frame(
     // SAFETY: called by Windows with this window's own message; the rest goes on down the chain.
     unsafe {
         match msg {
-            WM_NCCALCSIZE if wparam != 0 => 0,
+            WM_NCCALCSIZE if wparam != 0 => {
+                use windows_sys::Win32::Graphics::Gdi::{
+                    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+                };
+                use windows_sys::Win32::UI::WindowsAndMessaging::{IsZoomed, NCCALCSIZE_PARAMS};
+                let params = &mut *(lparam as *mut NCCALCSIZE_PARAMS);
+                let maximized = IsZoomed(hwnd) != 0;
+                let mut info: MONITORINFO = std::mem::zeroed();
+                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                let work = if maximized
+                    && GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info)
+                        != 0
+                {
+                    info.rcWork
+                } else {
+                    params.rgrc[0]
+                };
+                params.rgrc[0] = client_rect(params.rgrc[0], maximized, work);
+                0
+            }
             WM_NCDESTROY => {
                 RemovePropW(hwnd, mark().as_ptr());
                 RemoveWindowSubclass(hwnd, Some(no_frame), id);
@@ -93,6 +171,33 @@ unsafe extern "system" fn no_frame(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn a_maximized_frameless_window_fits_the_work_area() {
+        use super::client_rect;
+        use windows_sys::Win32::Foundation::RECT;
+        let r = |left, top, right, bottom| RECT {
+            left,
+            top,
+            right,
+            bottom,
+        };
+        // Windows makes a maximized window larger than the monitor by its frame.
+        let window = r(-8, -8, 1928, 1088);
+        let work = r(0, 0, 1920, 1040);
+        let eq = |a: RECT, b: RECT| {
+            (a.left, a.top, a.right, a.bottom) == (b.left, b.top, b.right, b.bottom)
+        };
+        assert!(
+            eq(client_rect(window, true, work), work),
+            "maximized: the work area"
+        );
+        assert!(
+            eq(client_rect(window, false, work), window),
+            "otherwise: the whole window"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_flattened_window_is_all_client_area() {
