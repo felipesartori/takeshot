@@ -1,6 +1,7 @@
 //! Lucide icons drawn from the embedded icon font, one glyph per `Ico`.
 
-use egui::{Color32, FontFamily, FontId, RichText};
+use crate::ui::style::{Weight, font as ui_font};
+use egui::{Color32, FontId, RichText};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ico {
@@ -206,7 +207,7 @@ pub fn glyph(i: Ico) -> char {
 }
 
 pub fn font(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("icons".into()))
+    ui_font(size, Weight::Icons)
 }
 
 pub fn text(i: Ico, size: f32, color: Color32) -> RichText {
@@ -225,6 +226,83 @@ mod tests {
         let f = ab_glyph::FontRef::try_from_slice(crate::ui::assets::LUCIDE).unwrap();
         for &i in ALL {
             assert_ne!(f.glyph_id(glyph(i)).0, 0, "{i:?} sem glifo");
+        }
+    }
+
+    /// Ico → Lucide name, copied from the plan; independent of the codepoint comments above.
+    const NAMES: &[(Ico, &str)] = &[
+        (Ico::Select, "mouse-pointer-2"),
+        (Ico::Pen, "pencil"),
+        (Ico::Line, "minus"),
+        (Ico::Arrow, "move-up-right"),
+        (Ico::Rect, "square"),
+        (Ico::Ellipse, "circle"),
+        (Ico::Marker, "highlighter"),
+        (Ico::Text, "type"),
+        (Ico::Blur, "grid-3x3"),
+        (Ico::Undo, "undo-2"),
+        (Ico::Redo, "redo-2"),
+        (Ico::Pin, "pin"),
+        (Ico::Download, "download"),
+        (Ico::FileDown, "file-down"),
+        (Ico::Copy, "copy"),
+        (Ico::CopyPlus, "copy-plus"),
+        (Ico::Edit, "pencil-ruler"),
+        (Ico::Close, "x"),
+        (Ico::Scan, "scan"),
+        (Ico::Monitor, "monitor"),
+        (Ico::Timer, "timer"),
+        (Ico::ImagePlus, "image-plus"),
+        (Ico::Images, "images"),
+        (Ico::FolderOpen, "folder-open"),
+        (Ico::FolderSearch, "folder-search"),
+        (Ico::Trash, "trash-2"),
+        (Ico::Search, "search"),
+        (Ico::Home, "house"),
+        (Ico::Grid, "layout-grid"),
+        (Ico::Palette, "palette"),
+        (Ico::Settings, "settings"),
+        (Ico::Settings2, "settings-2"),
+        (Ico::Sliders, "sliders-horizontal"),
+        (Ico::Keyboard, "keyboard"),
+        (Ico::HardDrive, "hard-drive-download"),
+        (Ico::Info, "info"),
+        (Ico::Sun, "sun"),
+        (Ico::Moon, "moon"),
+        (Ico::SunMoon, "sun-moon"),
+        (Ico::ChevronDown, "chevron-down"),
+        (Ico::ChevronRight, "chevron-right"),
+        (Ico::ChevronLeft, "chevron-left"),
+        (Ico::ChevronUp, "chevron-up"),
+        (Ico::Check, "check"),
+        (Ico::Plus, "plus"),
+        (Ico::RotateCcw, "rotate-ccw"),
+        (Ico::Maximize, "maximize"),
+        (Ico::ZoomIn, "zoom-in"),
+        (Ico::ZoomOut, "zoom-out"),
+        (Ico::Eye, "eye"),
+        (Ico::EyeOff, "eye-off"),
+        (Ico::BringFront, "bring-to-front"),
+        (Ico::SendBack, "send-to-back"),
+        (Ico::PaintBucket, "paint-bucket"),
+        (Ico::Alert, "triangle-alert"),
+        (Ico::Power, "power"),
+        (Ico::ArrowDownToLine, "arrow-down-to-line"),
+        (Ico::ExternalLink, "external-link"),
+        (Ico::Move, "move"),
+        (Ico::TextCursor, "text-cursor"),
+        (Ico::Hand, "hand"),
+        (Ico::Minimize, "minus"),
+        (Ico::Square, "square"),
+    ];
+
+    #[test]
+    fn codepoints_match_lucide_names() {
+        let map: std::collections::HashMap<String, u32> =
+            serde_json::from_str(include_str!("lucide-codepoints.json")).unwrap();
+        assert_eq!(NAMES.len(), ALL.len());
+        for (i, name) in NAMES {
+            assert_eq!(glyph(*i) as u32, map[*name], "{i:?} não é {name}");
         }
     }
 }

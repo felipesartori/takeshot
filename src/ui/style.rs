@@ -112,4 +112,27 @@ mod tests {
         );
         assert_eq!(ctx.global_style().spacing.scroll.bar_width, 6.0);
     }
+
+    #[test]
+    fn widget_states_follow_the_tokens() {
+        let ctx = egui::Context::default();
+        let t = tokens(ThemeId::TakeUi, false);
+        apply(&ctx, &t);
+        let s = ctx.global_style();
+        let w = &s.visuals.widgets;
+        for st in [&w.inactive, &w.hovered, &w.active, &w.open] {
+            assert_eq!(st.bg_stroke, egui::Stroke::NONE, "borda muda entre estados");
+        }
+        assert_eq!(w.inactive.bg_fill, t.raised);
+        assert_eq!(w.hovered.bg_fill, t.hover);
+        assert_eq!(w.active.bg_fill, t.press);
+        assert_eq!(s.visuals.window_fill, t.surf);
+        assert_eq!(s.visuals.extreme_bg_color, t.input);
+        assert_eq!(s.visuals.selection.bg_fill.a(), 89);
+        assert_eq!(s.text_styles[&egui::TextStyle::Heading].size, 22.0);
+        assert_eq!(
+            s.text_styles[&egui::TextStyle::Button].family,
+            family(Weight::Medium)
+        );
+    }
 }

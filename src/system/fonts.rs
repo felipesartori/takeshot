@@ -354,6 +354,23 @@ mod tests {
                 .map(String::as_str),
             Some(UI_REGULAR)
         );
+        let lib = FontLib::load();
+        let bold = &defs.families[&egui::FontFamily::Name("bold".into())];
+        assert_eq!(bold[0], "ui-bold");
+        assert_eq!(bold[1], format!("tk-{}", lib.list[lib.bold].name));
+        if let Some(i) = lib.ui {
+            assert_eq!(
+                defs.families[&egui::FontFamily::Proportional][1],
+                format!("tk-{}", lib.list[i].name)
+            );
+        }
+        for f in &lib.list {
+            assert!(
+                defs.families.contains_key(&f.family),
+                "fonte do texto {} sumiu",
+                f.name
+            );
+        }
         for fam in ["medium", "bold", "mono", "icons", "brand"] {
             assert!(
                 defs.families
