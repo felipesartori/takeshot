@@ -16,7 +16,7 @@ mod system;
 mod ui;
 
 use engine::{model, render};
-use screens::{editor, home, icons, notice, overlay, pin, widgets};
+use screens::{editor, home, notice, overlay, pin, widgets};
 use system::{actions, capture, fonts, settings};
 
 use std::path::PathBuf;
@@ -113,7 +113,7 @@ fn parse_args() -> Args {
                 a.theme = match v.get(i + 1).map(String::as_str) {
                     Some("takeui") => Some(ui::tokens::ThemeId::TakeUi),
                     Some("coral") => Some(ui::tokens::ThemeId::Coral),
-                    _ => None,
+                    other => unknown_value("--theme", other),
                 };
                 i += 1;
             }
@@ -122,7 +122,7 @@ fn parse_args() -> Args {
                     Some("light") => Some(ui::tokens::UiMode::Light),
                     Some("dark") => Some(ui::tokens::UiMode::Dark),
                     Some("system") => Some(ui::tokens::UiMode::System),
-                    _ => None,
+                    other => unknown_value("--mode", other),
                 };
                 i += 1;
             }
@@ -130,13 +130,17 @@ fn parse_args() -> Args {
                 a.lang = match v.get(i + 1).map(String::as_str) {
                     Some("en") => Some(ui::i18n::LangPref::En),
                     Some("pt") => Some(ui::i18n::LangPref::Pt),
-                    _ => None,
+                    Some("auto") => Some(ui::i18n::LangPref::Auto),
+                    other => unknown_value("--lang", other),
                 };
                 i += 1;
             }
             "--page" => {
-                if v.get(i + 1).map(String::as_str) == Some("componentes") {
-                    a.launch = Launch::Gallery;
+                match v.get(i + 1).map(String::as_str) {
+                    Some("componentes") => a.launch = Launch::Gallery,
+                    other => {
+                        unknown_value::<()>("--page", other);
+                    }
                 }
                 i += 1;
             }
@@ -154,6 +158,12 @@ fn parse_args() -> Args {
         a.launch = Launch::Capture { full };
     }
     a
+}
+
+/// Reports a flag value the app does not know, so a typo never yields a silent fallback.
+fn unknown_value<T>(flag: &str, value: Option<&str>) -> Option<T> {
+    eprintln!("takeshot: unknown value {value:?} for {flag}; using the saved setting");
+    None
 }
 
 struct App {
@@ -302,7 +312,9 @@ fn main() -> eframe::Result {
     }
 
     let mut vp = egui::ViewportBuilder::default()
-        .with_icon(Arc::new(icons::app_icon()))
+        .with_icon(Arc::new(ui::brand::window_icon(
+            args.theme.unwrap_or(settings.ui_theme),
+        )))
         .with_app_id("takeshot");
     let mut editor_window = (egui::pos2(80.0, 60.0), egui::vec2(1280.0, 820.0));
     let mut monitor = (egui::pos2(0.0, 0.0), egui::vec2(1600.0, 900.0));
@@ -394,7 +406,7 @@ fn main() -> eframe::Result {
         (Launch::Gallery, _) => {
             vp = vp
                 .with_title("Takeshot · componentes")
-                .with_inner_size([1280.0, 800.0]);
+                .with_inner_size([1280.0, 900.0]);
         }
         _ => {
             vp = vp

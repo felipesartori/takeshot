@@ -4,6 +4,7 @@ pub mod assets;
 
 pub mod tokens;
 
+pub mod brand;
 pub mod gallery;
 pub mod i18n;
 pub mod icon;

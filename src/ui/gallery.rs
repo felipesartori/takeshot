@@ -1,6 +1,7 @@
 //! Component gallery: every kit component, colour token, icon and type size of the active theme,
 //! rendered by `--page componentes` for visual checks against the design file.
 
+use crate::ui::brand;
 use crate::ui::i18n::{self, LangPref, Msg, t, tf};
 use crate::ui::icon::{self, ALL, Ico};
 use crate::ui::kit::{self, BtnKind};
@@ -21,6 +22,8 @@ pub struct Gallery {
     margin: f32,
     search: String,
     ask: u8,
+    mark: Option<egui::TextureHandle>,
+    trays: Vec<(Color32, egui::TextureHandle)>,
 }
 
 impl Gallery {
@@ -38,6 +41,8 @@ impl Gallery {
             margin: 7.0,
             search: String::new(),
             ask: 0,
+            mark: None,
+            trays: Vec::new(),
         };
         g.reapply(ctx);
         g
@@ -52,6 +57,26 @@ impl Gallery {
         self.tokens = tokens::tokens(self.theme, dark);
         style::apply(ctx, &self.tokens);
         i18n::set_lang(i18n::resolve(self.lang, i18n::system_locale().as_deref()));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
+            brand::window_icon(self.theme),
+        ))));
+        self.mark = Some(brand::mark_texture(ctx, self.theme, dark));
+        self.trays = [(true, 0x1F1F1F), (false, 0xEDEDED)]
+            .into_iter()
+            .map(|(dark_bar, bar)| {
+                let (rgba, w, h) = brand::tray_rgba(self.theme, dark_bar, 32);
+                let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                let bar = Color32::from_rgb((bar >> 16) as u8, (bar >> 8) as u8, bar as u8);
+                (
+                    bar,
+                    ctx.load_texture(
+                        format!("tray-{dark_bar}"),
+                        img,
+                        egui::TextureOptions::NEAREST,
+                    ),
+                )
+            })
+            .collect();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "Takeshot · {}",
             t(Msg::GalleryTitle)
@@ -174,6 +199,9 @@ impl Gallery {
             ThemeId::Coral => "takeshot",
         };
         ui.horizontal(|ui| {
+            if let Some(m) = &self.mark {
+                ui.add(egui::Image::new(m).fit_to_exact_size(vec2(28.0, 28.0)));
+            }
             ui.label(RichText::new(word).font(brand).color(tk.text));
             ui.add_space(16.0);
             let title = tf(Msg::GalleryHeading, &[&format!("{theme_name} {mode_name}")]);
@@ -185,9 +213,10 @@ impl Gallery {
         });
         ui.add_space(8.0);
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.columns(2, |cols| {
+            ui.columns(3, |cols| {
                 self.left(&mut cols[0], tk);
-                self.right(&mut cols[1], tk);
+                self.middle(&mut cols[1], tk);
+                self.right(&mut cols[2], tk);
             });
         });
     }
@@ -280,15 +309,14 @@ impl Gallery {
             });
     }
 
-    fn right(&mut self, ui: &mut Ui, tk: &Tokens) {
+    fn middle(&mut self, ui: &mut Ui, tk: &Tokens) {
         heading(ui, tk, Msg::SecControls);
         ui.horizontal(|ui| {
             kit::switch(ui, tk, &mut self.switch_on);
             kit::switch(ui, tk, &mut self.switch_off);
             ui.label(RichText::new(t(Msg::StartWithSystem)).color(tk.text));
-            ui.add_space(12.0);
-            kit::checkbox(ui, tk, &mut self.check, t(Msg::ShowNotice));
         });
+        kit::checkbox(ui, tk, &mut self.check, t(Msg::ShowNotice));
         kit::segmented(
             ui,
             tk,
@@ -302,15 +330,15 @@ impl Gallery {
         ui.allocate_ui(vec2(360.0, 30.0), |ui| {
             kit::slider_row(ui, tk, t(Msg::Margin), &mut self.margin, 0.0..=20.0, "%");
         });
+        kit::text_field(
+            ui,
+            tk,
+            &mut self.search,
+            t(Msg::Search),
+            Some(Ico::Search),
+            240.0,
+        );
         ui.horizontal(|ui| {
-            kit::text_field(
-                ui,
-                tk,
-                &mut self.search,
-                t(Msg::Search),
-                Some(Ico::Search),
-                240.0,
-            );
             kit::select(
                 ui,
                 tk,
@@ -339,6 +367,38 @@ impl Gallery {
             }
         });
 
+        heading(ui, tk, Msg::SecBrand);
+        ui.horizontal(|ui| {
+            for (bar, tex) in &self.trays {
+                let (r, _) = ui.allocate_exact_size(vec2(56.0, 44.0), egui::Sense::hover());
+                ui.painter().rect_filled(r, CornerRadius::same(8), *bar);
+                ui.painter().image(
+                    tex.id(),
+                    egui::Rect::from_center_size(r.center(), vec2(16.0, 16.0)),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+        });
+
+        heading(ui, tk, Msg::SecType);
+        for (m, size, w) in [
+            (Msg::TypeTitle, 22.0, Weight::Bold),
+            (Msg::TypeSection, 15.0, Weight::Bold),
+            (Msg::TypeBody, 13.0, Weight::Regular),
+            (Msg::TypeLabel, 13.0, Weight::Medium),
+            (Msg::TypeCaption, 12.0, Weight::Regular),
+        ] {
+            ui.label(RichText::new(t(m)).font(font(size, w)).color(tk.text));
+        }
+        ui.label(
+            RichText::new("Ctrl+Shift+PrtSc")
+                .font(font(11.0, Weight::Mono))
+                .color(tk.text),
+        );
+    }
+
+    fn right(&mut self, ui: &mut Ui, tk: &Tokens) {
         heading(ui, tk, Msg::SecColors);
         egui::Grid::new("gallery-colors")
             .num_columns(2)
@@ -373,21 +433,5 @@ impl Gallery {
                     .on_hover_text(format!("{i:?}"));
             }
         });
-
-        heading(ui, tk, Msg::SecType);
-        for (m, size, w) in [
-            (Msg::TypeTitle, 22.0, Weight::Bold),
-            (Msg::TypeSection, 15.0, Weight::Bold),
-            (Msg::TypeBody, 13.0, Weight::Regular),
-            (Msg::TypeLabel, 13.0, Weight::Medium),
-            (Msg::TypeCaption, 12.0, Weight::Regular),
-        ] {
-            ui.label(RichText::new(t(m)).font(font(size, w)).color(tk.text));
-        }
-        ui.label(
-            RichText::new("Ctrl+Shift+PrtSc")
-                .font(font(11.0, Weight::Mono))
-                .color(tk.text),
-        );
     }
 }
