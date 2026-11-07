@@ -1,8 +1,8 @@
 //! Drawing on a picture: the same logic runs on the capture overlay and in the editor.
 
-use crate::fonts::FontLib;
-use crate::model::*;
-use crate::settings::DrawOpts;
+use crate::engine::model::*;
+use crate::system::fonts::FontLib;
+use crate::system::settings::DrawOpts;
 use egui::{Color32, Painter, Pos2, Response, Shape as EShape, Stroke, Ui, pos2, vec2};
 
 /// Maps picture pixels to screen points: screen = origin + px * k.
@@ -305,7 +305,7 @@ impl Annotator {
             );
             let rect = egui::Rect::from_min_size(pos, galley.size());
             if opts.text_box {
-                let pad = crate::render::text_box_padding(size);
+                let pad = crate::engine::render::text_box_padding(size);
                 painter.rect_filled(rect.expand2(pad), size * 0.25, c32(opts.color));
             }
             let text_col = if opts.text_box {

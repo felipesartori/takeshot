@@ -10,8 +10,16 @@ The redesign that introduces the two themes is in progress on `feat/redesign`. U
 
 ## Layout
 
-- Every `src/*.rs` file starts with a `//!` doc comment (after any crate attributes) stating its responsibility; read those lines to find your way, and give every new file one.
-- Target architecture: a theme-agnostic core (state, settings, objects, capture, render, actions, tray, hotkeys) plus two skins, `takeui` and `coral`, that only draw and call core actions. Keep behavior in the core so both skins share it.
+| Folder | Holds |
+|---|---|
+| `src/main.rs` | entry point: arguments, shared state, window modes |
+| `src/engine/` | drawing engine: annotations, objects, pointer policy, rendering, background presets |
+| `src/system/` | operating system and data: screen capture, clipboard and files, fonts, settings (tray, hotkeys and autostart join here) |
+| `src/ui/` | design system: tokens, translations, icons, style, component kit, brand |
+| `src/screens/` | current windows; the skins replace them screen by screen |
+| `src/skins/` | `takeui/` and `coral/`: they only draw and call engine and system code |
+
+Every `.rs` file starts with a `//!` doc comment (after any crate attributes) stating its responsibility; read those lines to find your way, and give every new file one. Behavior lives in `engine/` and `system/` so both skins share it.
 
 ## Interface rules
 

@@ -1,11 +1,11 @@
 //! Capture overlay: the frozen screen, area selection, drawing tools and quick actions.
 
-use crate::annotator::{Annotator, View};
-use crate::capture::Shot;
-use crate::editor::Editor;
-use crate::icons::Icon;
-use crate::model::*;
-use crate::widgets::{self, ACCENT, MUTED, TEXT};
+use crate::engine::annotator::{Annotator, View};
+use crate::engine::model::*;
+use crate::screens::editor::Editor;
+use crate::screens::icons::Icon;
+use crate::screens::widgets::{self, ACCENT, MUTED, TEXT};
+use crate::system::capture::Shot;
 use crate::{Shared, Switch};
 use egui::{
     Align2, Color32, CursorIcon, FontId, Key, Modifiers, Pos2, Rect, RichText, Sense, Stroke, Ui,
@@ -118,7 +118,7 @@ impl Overlay {
     fn output(&self, shared: &mut Shared) -> Option<RgbaImage> {
         let crop = self.crop()?;
         let logo = shared.logo.image.clone();
-        Some(crate::render::finish(
+        Some(crate::engine::render::finish(
             &crop,
             &shared.settings,
             logo.as_ref(),
@@ -166,8 +166,11 @@ impl Overlay {
         // ---------------- baked picture
         if self.an.changed {
             self.an.changed = false;
-            self.baked =
-                crate::render::render_annotations(&self.shot.image, &self.an.anns, &shared.fonts);
+            self.baked = crate::engine::render::render_annotations(
+                &self.shot.image,
+                &self.an.anns,
+                &shared.fonts,
+            );
             self.tex
                 .set(color_image(&self.baked), egui::TextureOptions::NEAREST);
         }
@@ -644,7 +647,7 @@ impl Overlay {
                     && (ip.y as u32) < self.shot.image.height()
                 {
                     let c = self.shot.image.get_pixel(ip.x as u32, ip.y as u32).0;
-                    crate::actions::copy_text(&widgets::hex(c));
+                    crate::system::actions::copy_text(&widgets::hex(c));
                     shared.toast(format!("Cor {} copiada", widgets::hex(c)));
                 }
             }
@@ -686,11 +689,11 @@ impl Overlay {
         self.an.commit_draft(&shared.settings.draw);
         self.flush(shared);
         if let Some(img) = self.output(shared) {
-            match crate::actions::copy_image(&img) {
+            match crate::system::actions::copy_image(&img) {
                 Ok(()) => {
                     self.remember_selection(shared);
                     return if shared.settings.show_bubbles {
-                        Switch::ToNotice(Box::new(crate::notice::Notice::copied()))
+                        Switch::ToNotice(Box::new(crate::screens::notice::Notice::copied()))
                     } else {
                         Switch::Close
                     };
@@ -708,21 +711,21 @@ impl Overlay {
             return Switch::None;
         };
         let path = if shared.settings.auto_save {
-            Some(crate::actions::auto_path(&shared.settings.save_dir))
+            Some(crate::system::actions::auto_path(&shared.settings.save_dir))
         } else {
-            crate::actions::ask_save_path(&shared.settings.save_dir, Some(frame))
+            crate::system::actions::ask_save_path(&shared.settings.save_dir, Some(frame))
         };
         let Some(path) = path else {
             return Switch::None;
         };
-        match crate::actions::save_png(&img, &path) {
+        match crate::system::actions::save_png(&img, &path) {
             Ok(()) => {
                 if let Some(dir) = path.parent() {
                     shared.settings.save_dir = dir.to_string_lossy().into_owned();
                 }
                 self.remember_selection(shared);
                 if shared.settings.show_bubbles {
-                    Switch::ToNotice(Box::new(crate::notice::Notice::saved(path)))
+                    Switch::ToNotice(Box::new(crate::screens::notice::Notice::saved(path)))
                 } else {
                     Switch::Close
                 }
@@ -740,8 +743,8 @@ impl Overlay {
         let Some(img) = self.crop() else {
             return Switch::None;
         };
-        if let Some(p) = crate::actions::temp_png(&img) {
-            let _ = crate::actions::spawn_self(&["--pin", &p.to_string_lossy()]);
+        if let Some(p) = crate::system::actions::temp_png(&img) {
+            let _ = crate::system::actions::spawn_self(&["--pin", &p.to_string_lossy()]);
             self.remember_selection(shared);
             return Switch::Close;
         }
@@ -752,8 +755,11 @@ impl Overlay {
     fn flush(&mut self, shared: &Shared) {
         if self.an.changed {
             self.an.changed = false;
-            self.baked =
-                crate::render::render_annotations(&self.shot.image, &self.an.anns, &shared.fonts);
+            self.baked = crate::engine::render::render_annotations(
+                &self.shot.image,
+                &self.an.anns,
+                &shared.fonts,
+            );
         }
     }
 }

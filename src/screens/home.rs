@@ -1,11 +1,11 @@
 //! Main window: capture buttons, recent captures, default style and settings.
 //! It also listens for the global capture keys.
 
-use crate::icons::{self, Icon};
-use crate::overlay::color_image;
-use crate::render;
-use crate::settings::QuickStyle;
-use crate::widgets::{self, ACCENT, BORDER, HOVER, MUTED, PANEL, RAISED, TEXT};
+use crate::engine::render;
+use crate::screens::icons::{self, Icon};
+use crate::screens::overlay::color_image;
+use crate::screens::widgets::{self, ACCENT, BORDER, HOVER, MUTED, PANEL, RAISED, TEXT};
+use crate::system::settings::QuickStyle;
 use crate::{Shared, Switch};
 use egui::{Color32, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
@@ -90,7 +90,7 @@ impl Home {
             recents: Vec::new(),
             rx: None,
             last_scan: -100.0,
-            sample: crate::capture::sample_window(1000, 620),
+            sample: crate::system::capture::sample_window(1000, 620),
             preview: None,
             preview_dirty: true,
             hotkey_status: status,
@@ -174,7 +174,7 @@ impl Home {
                 .collect()
         });
         if let Some(p) = dropped.first() {
-            let _ = crate::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
+            let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
         }
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::V))
             || ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
@@ -285,12 +285,12 @@ impl Home {
                     .add_filter("Imagem", &["png", "jpg", "jpeg", "webp", "bmp"])
                     .pick_file()
             {
-                let _ = crate::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
+                let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
             }
         });
         if let Some(args) = action {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            if let Err(e) = crate::actions::spawn_self(&args) {
+            if let Err(e) = crate::system::actions::spawn_self(&args) {
                 shared.toast(format!("Não consegui iniciar a captura: {e}"));
             }
         }
@@ -363,11 +363,13 @@ impl Home {
                     }
                 });
                 if let Some(p) = open {
-                    let _ = crate::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
+                    let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
                 }
                 ui.add_space(6.0);
                 if ui.button("Abrir pasta das capturas").clicked() {
-                    crate::actions::open_folder(std::path::Path::new(&shared.settings.save_dir));
+                    crate::system::actions::open_folder(std::path::Path::new(
+                        &shared.settings.save_dir,
+                    ));
                 }
             });
         });
@@ -482,7 +484,7 @@ impl Home {
                 s.save_dir = p.to_string_lossy().into_owned();
             }
             if ui.button("Abrir").clicked() {
-                crate::actions::open_folder(std::path::Path::new(&s.save_dir));
+                crate::system::actions::open_folder(std::path::Path::new(&s.save_dir));
             }
         });
         ui.checkbox(
@@ -624,10 +626,10 @@ fn big_card(ui: &mut Ui, icon: Icon, title: &str, sub: &str, primary: bool) -> e
 }
 
 fn open_clipboard(shared: &mut Shared) {
-    match crate::actions::clipboard_image() {
+    match crate::system::actions::clipboard_image() {
         Some(img) => {
-            if let Some(p) = crate::actions::temp_png(&img) {
-                let _ = crate::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
+            if let Some(p) = crate::system::actions::temp_png(&img) {
+                let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
             }
         }
         None => shared.toast("Não há imagem na área de transferência".into()),
@@ -668,7 +670,7 @@ fn register(
             return;
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        let _ = crate::actions::spawn_self(args);
+        let _ = crate::system::actions::spawn_self(args);
     }));
     let status = if problems.is_empty() {
         Ok(format!("{an} captura · {fname} tela inteira"))

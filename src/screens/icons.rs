@@ -27,8 +27,8 @@ pub enum Icon {
     Folder,
 }
 
-pub fn for_tool(t: crate::model::Tool) -> Icon {
-    use crate::model::Tool;
+pub fn for_tool(t: crate::engine::model::Tool) -> Icon {
+    use crate::engine::model::Tool;
     match t {
         Tool::Select => Icon::Select,
         Tool::Pen => Icon::Pen,

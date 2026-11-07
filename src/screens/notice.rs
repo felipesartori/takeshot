@@ -1,7 +1,7 @@
 //! Small notice shown after copying or saving.
 //! Clicking it opens the folder of a saved file; it closes on its own.
 
-use crate::widgets::{ACCENT, BORDER, MUTED, TEXT};
+use crate::screens::widgets::{ACCENT, BORDER, MUTED, TEXT};
 use crate::{Shared, Switch};
 use egui::{Color32, RichText, Sense, Stroke, Ui, vec2};
 use std::path::PathBuf;
@@ -74,7 +74,7 @@ impl Notice {
         }
         if resp.clicked() {
             if let Some(dir) = self.path.as_ref().and_then(|p| p.parent()) {
-                crate::actions::open_folder(dir);
+                crate::system::actions::open_folder(dir);
             }
             return Switch::Close;
         }

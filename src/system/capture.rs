@@ -44,7 +44,7 @@ fn fill(pm: &mut sk::Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: [u8; 4])
     let mut p = sk::Paint::default();
     p.set_color_rgba8(c[0], c[1], c[2], c[3]);
     p.anti_alias = true;
-    if let Some(path) = crate::render::rounded_rect(x, y, w, h, [r; 4]) {
+    if let Some(path) = crate::engine::render::rounded_rect(x, y, w, h, [r; 4]) {
         pm.fill_path(
             &path,
             &p,
@@ -209,7 +209,7 @@ pub fn sample_window(w: u32, h: u32) -> RgbaImage {
             c,
         );
     }
-    crate::render::from_pixmap(&pm)
+    crate::engine::render::from_pixmap(&pm)
 }
 
 /// A fake desktop: wallpaper with the sample window on it.
@@ -238,7 +238,7 @@ pub fn sample_desktop(w: u32, h: u32) -> RgbaImage {
         );
     }
     let win = sample_window((w as f32 * 0.62) as u32, (h as f32 * 0.6) as u32);
-    let wpm = crate::render::to_pixmap(&win);
+    let wpm = crate::engine::render::to_pixmap(&win);
     pm.draw_pixmap(
         (w as f32 * 0.19) as i32,
         (h as f32 * 0.17) as i32,
@@ -257,7 +257,7 @@ pub fn sample_desktop(w: u32, h: u32) -> RgbaImage {
         0.0,
         [18, 20, 26, 235],
     );
-    crate::render::from_pixmap(&pm)
+    crate::engine::render::from_pixmap(&pm)
 }
 
 pub fn sample_shot() -> Shot {
@@ -277,6 +277,7 @@ mod tests {
     fn grabs_the_screen() {
         let s = super::grab().expect("capture");
         assert!(s.image.width() > 100 && s.image.height() > 100);
-        crate::actions::save_png(&s.image, std::path::Path::new("shots/real-capture.png")).unwrap();
+        crate::system::actions::save_png(&s.image, std::path::Path::new("shots/real-capture.png"))
+            .unwrap();
     }
 }

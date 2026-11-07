@@ -1,12 +1,12 @@
 //! Editor: the captured picture on a styled background, with drawing tools and export.
 
-use crate::annotator::{Annotator, View};
-use crate::icons::Icon;
-use crate::model::*;
-use crate::overlay::color_image;
-use crate::render::{self, Layout};
-use crate::settings::Background;
-use crate::widgets::{self, ACCENT, BG, MUTED, TEXT};
+use crate::engine::annotator::{Annotator, View};
+use crate::engine::model::*;
+use crate::engine::render::{self, Layout};
+use crate::screens::icons::Icon;
+use crate::screens::overlay::color_image;
+use crate::screens::widgets::{self, ACCENT, BG, MUTED, TEXT};
+use crate::system::settings::Background;
 use crate::{Shared, Switch};
 use egui::{Color32, Key, Modifiers, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
@@ -174,14 +174,16 @@ impl Editor {
                         }
                         if widgets::icon_button(ui, Icon::Pin, false, "Fixar na tela").clicked() {
                             let img = self.final_image(shared);
-                            if let Some(p) = crate::actions::temp_png(&img) {
-                                let _ =
-                                    crate::actions::spawn_self(&["--pin", &p.to_string_lossy()]);
+                            if let Some(p) = crate::system::actions::temp_png(&img) {
+                                let _ = crate::system::actions::spawn_self(&[
+                                    "--pin",
+                                    &p.to_string_lossy(),
+                                ]);
                             }
                         }
                         if widgets::icon_button(ui, Icon::Full, false, "Nova captura").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                            let _ = crate::actions::spawn_self(&["--capture", "--wait"]);
+                            let _ = crate::system::actions::spawn_self(&["--capture", "--wait"]);
                         }
                     });
                 });
@@ -354,7 +356,7 @@ impl Editor {
         self.an.commit_draft(&shared.settings.draw);
         self.sync_now(shared);
         let img = self.final_image(shared);
-        match crate::actions::copy_image(&img) {
+        match crate::system::actions::copy_image(&img) {
             Ok(()) => shared.toast("Imagem copiada".into()),
             Err(e) => shared.toast(format!("Não consegui copiar: {e}")),
         }
@@ -364,13 +366,13 @@ impl Editor {
         self.an.commit_draft(&shared.settings.draw);
         self.sync_now(shared);
         let path = if shared.settings.auto_save && !ask {
-            Some(crate::actions::auto_path(&shared.settings.save_dir))
+            Some(crate::system::actions::auto_path(&shared.settings.save_dir))
         } else {
-            crate::actions::ask_save_path(&shared.settings.save_dir, Some(frame))
+            crate::system::actions::ask_save_path(&shared.settings.save_dir, Some(frame))
         };
         let Some(path) = path else { return };
         let img = self.final_image(shared);
-        match crate::actions::save_png(&img, &path) {
+        match crate::system::actions::save_png(&img, &path) {
             Ok(()) => {
                 if let Some(dir) = path.parent() {
                     shared.settings.save_dir = dir.to_string_lossy().into_owned();

@@ -8,21 +8,13 @@
 //!   --pin file             picture pinned on top of other windows
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
 
-mod actions;
-mod annotator;
-mod capture;
-mod editor;
-mod fonts;
-mod home;
-mod icons;
-mod model;
-mod notice;
-mod overlay;
-mod pin;
-mod presets;
-mod render;
-mod settings;
-mod widgets;
+mod engine;
+mod screens;
+mod system;
+
+use engine::{model, render};
+use screens::{editor, home, icons, notice, overlay, pin, widgets};
+use system::{actions, capture, fonts, settings};
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,7 +1,7 @@
 //! A capture pinned on top of other windows: drag to move, wheel to zoom, double-click to close.
 
-use crate::overlay::color_image;
-use crate::widgets::{self, ACCENT};
+use crate::screens::overlay::color_image;
+use crate::screens::widgets::{self, ACCENT};
 use crate::{Shared, Switch};
 use egui::{Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
@@ -64,20 +64,20 @@ impl Pin {
         }
         resp.context_menu(|ui| {
             if ui.button("Copiar").clicked() {
-                let _ = crate::actions::copy_image(&self.img);
+                let _ = crate::system::actions::copy_image(&self.img);
                 ui.close();
             }
             if ui.button("Salvar…").clicked() {
                 if let Some(p) =
-                    crate::actions::ask_save_path(&shared.settings.save_dir, Some(frame))
+                    crate::system::actions::ask_save_path(&shared.settings.save_dir, Some(frame))
                 {
-                    let _ = crate::actions::save_png(&self.img, &p);
+                    let _ = crate::system::actions::save_png(&self.img, &p);
                 }
                 ui.close();
             }
             if ui.button("Abrir no editor").clicked() {
-                if let Some(p) = crate::actions::temp_png(&self.img) {
-                    let _ = crate::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
+                if let Some(p) = crate::system::actions::temp_png(&self.img) {
+                    let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
                 }
                 ui.close();
             }

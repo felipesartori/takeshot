@@ -2,10 +2,10 @@
 //! The same code makes the on-screen preview (at a smaller scale) and the saved file (at 1:1),
 //! so what you see is what you get.
 
-use crate::fonts::{self, FontLib};
-use crate::model::*;
-use crate::presets;
-use crate::settings::{Background, Style, Watermark, WmPos};
+use crate::engine::model::*;
+use crate::engine::presets;
+use crate::system::fonts::{self, FontLib};
+use crate::system::settings::{Background, Style, Watermark, WmPos};
 use ab_glyph::{Font, FontArc, ScaleFont, point};
 use image::RgbaImage;
 use tiny_skia as sk;
@@ -342,7 +342,7 @@ pub fn draw_ann(pm: &mut sk::Pixmap, a: &Ann, fonts: &FontLib) {
             c[3] = MARKER_ALPHA;
             let mut paint = paint_rgba(c);
             paint.blend_mode = sk::BlendMode::Multiply;
-            if crate::model::luminance(a.color) < 0.35 {
+            if crate::engine::model::luminance(a.color) < 0.35 {
                 paint.blend_mode = sk::BlendMode::SourceOver;
             }
             let s = stroke(
@@ -954,12 +954,12 @@ pub fn corners_only(src: &RgbaImage, radius: f32) -> RgbaImage {
 /// Final picture for a crop, following the quick-action setting.
 pub fn finish(
     src: &RgbaImage,
-    settings: &crate::settings::Settings,
+    settings: &crate::system::settings::Settings,
     logo: Option<&RgbaImage>,
     fonts: &FontLib,
-    quick: crate::settings::QuickStyle,
+    quick: crate::system::settings::QuickStyle,
 ) -> RgbaImage {
-    use crate::settings::QuickStyle;
+    use crate::system::settings::QuickStyle;
     match quick {
         QuickStyle::Plain => src.clone(),
         QuickStyle::CornersOnly => corners_only(src, settings.style.radius),
@@ -974,7 +974,7 @@ pub fn load_logo(path: &str) -> Option<RgbaImage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{Aspect, Background, Style, Watermark, WmPos};
+    use crate::system::settings::{Aspect, Background, Style, Watermark, WmPos};
     use egui::pos2;
 
     fn logo() -> RgbaImage {
@@ -1008,7 +1008,7 @@ mod tests {
     fn renders_styles_and_marks() {
         let fonts = FontLib::load();
         assert!(fonts.list.len() >= 2, "at least the two built-in fonts");
-        let base = crate::capture::sample_window(1000, 620);
+        let base = crate::system::capture::sample_window(1000, 620);
         let mut anns = vec![
             Ann {
                 shape: Shape::Ellipse(pos2(400.0, 100.0), pos2(700.0, 260.0)),
@@ -1115,7 +1115,7 @@ mod tests {
             let (img, lay) = compose(&annotated, &style, &wm, Some(&lg), &fonts, 1.0);
             assert_eq!(img.width() as f32, lay.w);
             // corners of the screenshot are rounded: the canvas pixel just inside the corner shows background
-            crate::actions::save_png(
+            crate::system::actions::save_png(
                 &img,
                 std::path::Path::new(&format!("shots/test-{name}.png")),
             )
@@ -1146,7 +1146,7 @@ mod tests {
 
     #[test]
     fn shift_makes_uniform_shapes() {
-        use crate::model::{Tool, constrain};
+        use crate::engine::model::{Tool, constrain};
         let (a, b) = constrain(
             Tool::Ellipse,
             pos2(0.0, 0.0),

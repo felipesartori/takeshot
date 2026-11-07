@@ -1,11 +1,11 @@
 //! Look and feel: theme, icon buttons, the tool bar, the options bar and the style panel.
 
-use crate::annotator::Annotator;
-use crate::fonts::FontLib;
-use crate::icons::{self, Icon};
-use crate::model::*;
-use crate::presets::{self, PRESETS};
-use crate::settings::{Aspect, Background, DrawOpts, Style, Watermark, WmPos};
+use crate::engine::annotator::Annotator;
+use crate::engine::model::*;
+use crate::engine::presets::{self, PRESETS};
+use crate::screens::icons::{self, Icon};
+use crate::system::fonts::FontLib;
+use crate::system::settings::{Aspect, Background, DrawOpts, Style, Watermark, WmPos};
 use egui::{Color32, CornerRadius, Margin, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 
 pub const BG: Color32 = Color32::from_rgb(14, 14, 16);
@@ -419,7 +419,10 @@ impl LogoCache {
     pub fn sync(&mut self, ctx: &egui::Context, wm: &Watermark) {
         if self.path != wm.logo_path {
             self.path = wm.logo_path.clone();
-            self.image = wm.logo_path.as_deref().and_then(crate::render::load_logo);
+            self.image = wm
+                .logo_path
+                .as_deref()
+                .and_then(crate::engine::render::load_logo);
             self.thumb = self.image.as_ref().map(|img| {
                 let t = image::imageops::thumbnail(
                     img,
