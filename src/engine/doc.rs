@@ -147,6 +147,10 @@ fn inside_ellipse(p: Pos2, r: Rect) -> bool {
 }
 
 fn point_in_triangle(p: Pos2, t: [Pos2; 3]) -> bool {
+    // A zero-length arrow collapses its head to a point, which would contain every point.
+    if (t[1] - t[0]).x * (t[2] - t[0]).y - (t[1] - t[0]).y * (t[2] - t[0]).x == 0.0 {
+        return false;
+    }
     let side = |a: Pos2, b: Pos2| (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
     let (d0, d1, d2) = (side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0]));
     let neg = d0 < 0.0 || d1 < 0.0 || d2 < 0.0;
@@ -212,7 +216,7 @@ fn anchor(r: Rect, h: Handle) -> Option<(Pos2, Vec2)> {
 }
 
 /// Moves the sides that `h` controls to `to`, never past the opposite side.
-fn resize_box(r: Rect, h: Handle, to: egui::Pos2, keep_ratio: bool) -> Rect {
+fn resize_box(r: Rect, h: Handle, to: Pos2, keep_ratio: bool) -> Rect {
     let (n, s, w, e) = match h {
         Handle::N => (true, false, false, false),
         Handle::S => (false, true, false, false),
@@ -332,17 +336,16 @@ impl Doc {
         &self.selected
     }
 
-    /// `None` clears; `additive` toggles `id` in the selection instead of replacing it.
+    /// `None` clears; `additive` (Shift+click) adds `id` to the selection instead of replacing it.
+    /// Hidden or missing objects are never selected.
     pub fn select(&mut self, id: Option<ObjId>, additive: bool) {
         match (id, additive) {
             (None, false) => self.selected.clear(),
             (None, true) => {}
-            (Some(id), _) if self.get(id).is_none() => {}
+            (Some(id), _) if !self.get(id).is_some_and(|o| !o.hidden) => {}
             (Some(id), false) => self.selected = vec![id],
             (Some(id), true) => {
-                if let Some(i) = self.selected.iter().position(|s| *s == id) {
-                    self.selected.remove(i);
-                } else {
+                if !self.selected.contains(&id) {
                     self.selected.push(id);
                 }
             }
@@ -395,6 +398,9 @@ impl Doc {
 
     /// Moves the selection; call `begin_change` once before a drag.
     pub fn translate_selected(&mut self, d: Vec2) {
+        if self.selected.is_empty() || d == Vec2::ZERO {
+            return;
+        }
         let sel = &self.selected;
         for o in self.objs.iter_mut().filter(|o| sel.contains(&o.id)) {
             o.ann.translate(d);
@@ -436,10 +442,10 @@ impl Doc {
                 }
             }
             Shape::Text { size, .. } => {
-                let Some((fixed, _)) = anchor(bounds, h) else {
+                let Some((fixed, dir)) = anchor(bounds, h) else {
                     return;
                 };
-                let height = (to.y - fixed.y).abs().max(MIN_SIDE);
+                let height = ((to.y - fixed.y) * dir.y).max(MIN_SIDE);
                 *size = (*size * height / bounds.height().max(MIN_SIDE)).max(MIN_TEXT);
                 // Keep the opposite corner where it was: the size change moves it with the background spacing.
                 let moved = anchor(ann_bounds(a, m), h).map_or(fixed, |(p, _)| p);
@@ -449,7 +455,7 @@ impl Doc {
                 let Some((fixed, dir)) = anchor(bounds, h) else {
                     return;
                 };
-                let side = (to.x - fixed.x).abs().max((to.y - fixed.y).abs());
+                let side = ((to.x - fixed.x) * dir.x).max((to.y - fixed.y) * dir.y);
                 a.width = ((side * 0.5 - 11.0) / 2.2).max(1.0);
                 let r = counter_radius(a.width);
                 *center = fixed + vec2(dir.x * r, dir.y * r);
@@ -464,7 +470,16 @@ impl Doc {
         width: Option<f32>,
         filled: Option<bool>,
     ) {
-        if self.selected.is_empty() {
+        let differs = |o: &Obj| {
+            color.is_some_and(|c| c != o.ann.color)
+                || width.is_some_and(|w| w != o.ann.width)
+                || filled.is_some_and(|f| f != o.ann.filled)
+        };
+        if !self
+            .objs
+            .iter()
+            .any(|o| self.selected.contains(&o.id) && differs(o))
+        {
             return;
         }
         self.checkpoint();
@@ -614,24 +629,32 @@ impl Doc {
 
     fn restored(&mut self) {
         let objs = &self.objs;
-        self.selected.retain(|s| objs.iter().any(|o| o.id == *s));
+        self.selected
+            .retain(|s| objs.iter().any(|o| o.id == *s && !o.hidden));
         self.changed();
     }
 
     /// Moves the selection to the back (`to_back`) or the front, keeping each group's order.
     fn reorder(&mut self, to_back: bool) {
-        if self.selected.is_empty() {
-            return;
-        }
-        self.checkpoint();
-        let (sel, rest): (Vec<Obj>, Vec<Obj>) = std::mem::take(&mut self.objs)
-            .into_iter()
+        let (sel, rest): (Vec<Obj>, Vec<Obj>) = self
+            .objs
+            .iter()
+            .cloned()
             .partition(|o| self.selected.contains(&o.id));
-        self.objs = if to_back {
+        let order: Vec<Obj> = if to_back {
             sel.into_iter().chain(rest).collect()
         } else {
             rest.into_iter().chain(sel).collect()
         };
+        if order
+            .iter()
+            .map(|o| o.id)
+            .eq(self.objs.iter().map(|o| o.id))
+        {
+            return;
+        }
+        self.checkpoint();
+        self.objs = order;
         self.changed();
     }
 }
@@ -993,10 +1016,11 @@ mod tests {
         bumped(&d, "restyle");
         d.duplicate_selected(vec2(12.0, 12.0));
         bumped(&d, "duplicate");
-        d.bring_to_front();
-        bumped(&d, "front");
+        // The copy is already in front: send it back first so both moves change the order.
         d.send_to_back();
         bumped(&d, "back");
+        d.bring_to_front();
+        bumped(&d, "front");
         d.delete_selected();
         bumped(&d, "delete");
         d.set_hidden(a, true);
@@ -1056,6 +1080,143 @@ mod tests {
         }
         assert_eq!(steps, 200);
         assert_eq!(d.objs().len(), 50);
+    }
+
+    /// Measure with the render's background spacing, which grows with the size.
+    fn mp(t: &str, f: usize, size: f32, boxed: bool) -> Vec2 {
+        let pad = if boxed {
+            vec2(size * 0.4, size * 0.22) * 2.0
+        } else {
+            Vec2::ZERO
+        };
+        m(t, f, size, false) + pad
+    }
+
+    #[test]
+    fn shift_click_adds_and_never_removes() {
+        let mut d = Doc::new();
+        let a = d.add(rect((0.0, 0.0), (50.0, 50.0))).unwrap();
+        let b = d.add(rect((100.0, 0.0), (150.0, 50.0))).unwrap();
+        d.select(Some(a), false);
+        d.select(Some(b), true);
+        assert_eq!(d.selected(), &[a, b]);
+        d.select(Some(b), true);
+        assert_eq!(d.selected(), &[a, b]);
+        d.select(None, true);
+        assert_eq!(d.selected(), &[a, b]);
+        d.select(None, false);
+        assert!(d.selected().is_empty());
+    }
+
+    #[test]
+    fn zero_length_arrow_is_hit_only_where_it_is() {
+        let mut d = Doc::new();
+        let id = d
+            .add(ann(Shape::Arrow(pos2(0.0, 0.0), pos2(100.0, 0.0))))
+            .unwrap();
+        d.resize(id, Handle::End, pos2(0.0, 0.0), false, &m);
+        assert_eq!(d.hit(pos2(300.0, 300.0), 2.0, &m), None);
+        assert_eq!(d.hit(pos2(1.0, 0.0), 2.0, &m), Some(id));
+    }
+
+    #[test]
+    fn boxed_text_resize_keeps_the_opposite_corner() {
+        let text = || {
+            ann(Shape::Text {
+                pos: pos2(100.0, 100.0),
+                text: "ab".into(),
+                font: 0,
+                size: 20.0,
+                boxed: true,
+            })
+        };
+        for (h, keep) in [(Handle::SE, true), (Handle::NW, false)] {
+            let mut d = Doc::new();
+            let id = d.add(text()).unwrap();
+            let before = ann_bounds(&d.objs()[0].ann, &mp);
+            let fixed = if keep { before.min } else { before.max };
+            let far = if keep { before.max } else { before.min };
+            d.resize(id, h, far + (far - fixed), false, &mp);
+            let after = ann_bounds(&d.objs()[0].ann, &mp);
+            let now = if keep { after.min } else { after.max };
+            assert!(near(now, fixed), "{h:?}: {fixed:?} moved to {now:?}");
+            assert!(after.height() > before.height() * 1.5, "{h:?}: {after:?}");
+        }
+    }
+
+    #[test]
+    fn hidden_objects_never_stay_selected() {
+        let mut d = Doc::new();
+        let a = d.add(rect((0.0, 0.0), (50.0, 50.0))).unwrap();
+        d.set_hidden(a, true);
+        d.select(Some(a), false);
+        assert!(d.selected().is_empty());
+        assert!(d.undo());
+        d.select(Some(a), false);
+        assert!(d.redo());
+        assert!(d.selected().is_empty(), "redo hid a selected object");
+        assert_eq!(d.handle_at(pos2(50.0, 50.0), 4.0, &m), None);
+    }
+
+    #[test]
+    fn text_and_step_stop_at_their_minimum_past_the_fixed_corner() {
+        let mut d = Doc::new();
+        let id = d
+            .add(ann(Shape::Text {
+                pos: pos2(100.0, 100.0),
+                text: "ab".into(),
+                font: 0,
+                size: 20.0,
+                boxed: false,
+            }))
+            .unwrap();
+        d.resize(id, Handle::SE, pos2(0.0, 0.0), false, &m);
+        match d.objs()[0].ann.shape {
+            Shape::Text { size, .. } => assert!((size - MIN_TEXT).abs() < 0.01, "{size}"),
+            _ => unreachable!(),
+        }
+        let mut d = Doc::new();
+        let id = d.add(counter(1)).unwrap();
+        let nw = bounds_of(&d, id).min;
+        d.resize(id, Handle::SE, nw - vec2(100.0, 100.0), false, &m);
+        assert!((d.objs()[0].ann.width - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn edits_that_change_nothing_leave_the_picture_unchanged() {
+        let mut d = Doc::new();
+        let a = d.add(rect((0.0, 0.0), (50.0, 50.0))).unwrap();
+        let b = d.add(rect((100.0, 0.0), (150.0, 50.0))).unwrap();
+        let rev = d.revision();
+        let check = |d: &Doc, what: &str| assert_eq!(d.revision(), rev, "{what}");
+        d.select(None, false);
+        d.translate_selected(vec2(5.0, 0.0));
+        check(&d, "translate with nothing selected");
+        d.select(Some(a), false);
+        d.restyle_selected(Some([255, 0, 0, 255]), Some(4.0), Some(false));
+        check(&d, "restyle to the same style");
+        d.send_to_back();
+        check(&d, "send the back object to the back");
+        d.select(Some(b), false);
+        d.bring_to_front();
+        check(&d, "bring the front object to the front");
+        // Only the two adds are in the history.
+        assert!(d.undo() && d.undo() && !d.undo());
+    }
+
+    #[test]
+    fn reorder_keeps_the_order_inside_a_multi_selection() {
+        let mut d = Doc::new();
+        let a = d.add(rect((0.0, 0.0), (50.0, 50.0))).unwrap();
+        let b = d.add(rect((100.0, 0.0), (150.0, 50.0))).unwrap();
+        let c = d.add(rect((200.0, 0.0), (250.0, 50.0))).unwrap();
+        let order = |d: &Doc| d.objs().iter().map(|o| o.id).collect::<Vec<_>>();
+        d.select(Some(a), false);
+        d.select(Some(b), true);
+        d.bring_to_front();
+        assert_eq!(order(&d), vec![c, a, b]);
+        d.send_to_back();
+        assert_eq!(order(&d), vec![a, b, c]);
     }
 
     #[test]
