@@ -442,6 +442,8 @@ pub fn text_field(
     let edit = egui::TextEdit::singleline(text)
         .hint_text(egui::RichText::new(hint).color(t.faint))
         .frame(egui::Frame::NONE)
+        // `put` stretches the edit to the field height; centre the text, hint and caret in it.
+        .align(Align2::LEFT_CENTER)
         .font(font(13.0, Weight::Regular))
         .text_color(t.text)
         .desired_width(inner.width());
@@ -731,6 +733,75 @@ mod tests {
     }
 
     type Widget<'a> = Box<dyn Fn(&mut egui::Ui) -> egui::Response + 'a>;
+
+    /// Screen rects of the text shapes painted in one frame, with their text.
+    fn texts(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, egui::Rect)> {
+        fn walk(s: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match s {
+                egui::Shape::Text(t) => out.push((
+                    t.galley.text().to_owned(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        shapes.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    }
+
+    #[test]
+    fn text_field_centres_text_with_its_icon() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        crate::ui::style::apply(&ctx, &t);
+        let glyph = icon::glyph(Ico::Search).to_string();
+        for content in ["", "abc"] {
+            let mut text = content.to_owned();
+            let mut found = Vec::new();
+            for _ in 0..2 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 200.0),
+                    )),
+                    ..Default::default()
+                };
+                let mut full = ctx.run_ui(input, |ui| {
+                    text_field(
+                        ui,
+                        &t,
+                        &mut text,
+                        "Search captures",
+                        Some(Ico::Search),
+                        220.0,
+                    );
+                });
+                full.textures_delta.clear();
+                found = texts(&full.shapes);
+            }
+            let rect_of = |s: &str| {
+                found
+                    .iter()
+                    .find(|(t, _)| t == s)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_else(|| panic!("{s:?} not painted: {found:?}"))
+            };
+            let icon = rect_of(&glyph);
+            let label = rect_of(if content.is_empty() {
+                "Search captures"
+            } else {
+                content
+            });
+            let off = label.center().y - icon.center().y;
+            assert!(
+                off.abs() <= 1.0,
+                "{content:?}: text {off:+.1} px from the icon centre ({label:?} vs {icon:?})"
+            );
+        }
+    }
 
     #[test]
     fn components_keep_size_on_hover() {
