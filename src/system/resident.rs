@@ -22,6 +22,21 @@ pub enum XAction {
     Quit,
 }
 
+/// How the main window leaves the screen for the tray: hidden, or minimized on Wayland, where a
+/// window can neither hide itself (winit ignores Visible(false) there) nor come back by itself.
+pub fn hide_command(wayland: bool) -> egui::ViewportCommand {
+    if wayland {
+        egui::ViewportCommand::Minimized(true)
+    } else {
+        egui::ViewportCommand::Visible(false)
+    }
+}
+
+/// winit uses Wayland when the session has one.
+pub fn on_wayland() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
 /// What the close prompt stores: the answer (Hide or Quit), only with "Remember my choice"
 /// checked. `Ask` is the prompt cancelled.
 pub fn remembered(answer: XAction, remember: bool) -> Option<OnClose> {
@@ -210,6 +225,13 @@ mod tests {
             ]
         );
         assert!(q.drain().is_empty());
+    }
+
+    #[test]
+    fn the_window_minimizes_where_it_cannot_hide() {
+        // Wayland ignores Visible(false): the tray hides the window by minimizing it there.
+        assert_eq!(hide_command(false), egui::ViewportCommand::Visible(false));
+        assert_eq!(hide_command(true), egui::ViewportCommand::Minimized(true));
     }
 
     #[test]

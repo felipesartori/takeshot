@@ -11,7 +11,9 @@ use crate::screens::widgets;
 use crate::system::actions;
 use crate::system::hotkeys::{Shot, Status, effective_status, label, should_offer_priority};
 use crate::system::instance::Page;
-use crate::system::resident::{Resident, ResidentEvent, XAction, left_click, on_x, remembered};
+use crate::system::resident::{
+    Resident, ResidentEvent, XAction, hide_command, left_click, on_wayland, on_x, remembered,
+};
 use crate::system::tray::{TrayAction, TrayEntry, TrayEvent, tray_entries};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, BtnKind};
@@ -52,6 +54,8 @@ pub struct Shell {
     /// The main window's icon, decoded once per theme.
     icon: Option<(crate::ui::tokens::ThemeId, Arc<egui::IconData>)>,
     quitting: bool,
+    /// The first frame ran (the start-up hide happens once).
+    started: bool,
     /// Bumped by the recents thread, so the Linux native menu is rebuilt when the list changes.
     recents_version: Arc<std::sync::atomic::AtomicU64>,
     menu_version: u64,
@@ -71,6 +75,7 @@ impl Shell {
             mark: None,
             icon: None,
             quitting: false,
+            started: false,
             recents_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             menu_version: u64::MAX,
             next_recents: 0.0,
@@ -232,7 +237,7 @@ impl Shell {
     fn hide(&mut self, ctx: &egui::Context) {
         self.main_open = false;
         if !self.hosted {
-            ctx.send_viewport_cmd_to(ViewportId::ROOT, Cmd::Visible(false));
+            ctx.send_viewport_cmd_to(ViewportId::ROOT, hide_command(on_wayland()));
         }
     }
 
@@ -267,6 +272,12 @@ impl Shell {
         shared: &mut Shared,
     ) {
         let ctx = ui.ctx().clone();
+        // A window the root could not start hidden (--minimized on Wayland) leaves on the first
+        // frame, once: after that the user may bring it back from the taskbar. On X11 the hidden
+        // root runs no frame until it is shown.
+        if !std::mem::replace(&mut self.started, true) && !self.hosted && !self.main_open {
+            ctx.send_viewport_cmd_to(ViewportId::ROOT, hide_command(on_wayland()));
+        }
         if cfg!(windows) && resident.priority_on() != shared.settings.prtsc_priority {
             resident.set_priority(shared.settings.prtsc_priority);
         }
