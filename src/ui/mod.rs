@@ -7,3 +7,5 @@
 pub mod assets;
 
 pub mod tokens;
+
+pub mod i18n;
