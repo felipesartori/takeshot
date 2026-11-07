@@ -72,7 +72,12 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
         w.noninteractive.bg_stroke = Stroke::new(1.0, t.border);
 
         s.animation_time = 0.08;
-        s.spacing.scroll.bar_width = 6.0;
+        // A solid bar keeps its own room beside the content, and hover only colours it.
+        s.spacing.scroll = egui::style::ScrollStyle {
+            bar_width: 6.0,
+            bar_inner_margin: 8.0,
+            ..egui::style::ScrollStyle::solid()
+        };
         s.text_styles = [
             (TextStyle::Body, font(13.0, Weight::Regular)),
             (TextStyle::Button, font(13.0, Weight::Medium)),
@@ -110,7 +115,11 @@ mod tests {
             ctx.global_style().visuals.panel_fill,
             Color32::from_hex("#111111").unwrap()
         );
-        assert_eq!(ctx.global_style().spacing.scroll.bar_width, 6.0);
+        let scroll = ctx.global_style().spacing.scroll;
+        assert_eq!(scroll.bar_width, 6.0);
+        // A floating bar widens on hover and covers the content; a solid one keeps its room.
+        assert!(!scroll.floating);
+        assert_eq!(scroll.bar_inner_margin, 8.0);
     }
 
     #[test]

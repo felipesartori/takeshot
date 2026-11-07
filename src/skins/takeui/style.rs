@@ -53,32 +53,33 @@ pub fn style_page(
     ui.add_space(16.0);
     let avail = ui.available_size();
     ui.horizontal_top(|ui| {
-        let left = (avail.x - COLUMN - 20.0).max(240.0);
+        // The 20 px gap, plus the spacing the row adds after the preview's column.
+        let left = (avail.x - COLUMN - 20.0 - ui.spacing().item_spacing.x).max(240.0);
         ui.vertical(|ui| {
             ui.set_width(left);
-            preview(ui, t, home, shared, vec2(left, (avail.y - 44.0).max(160.0)));
+            preview(ui, t, home, shared, vec2(left, (avail.y - 72.0).max(160.0)));
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr(Msg::DirectStyleLabel))
-                        .font(font(12.0, Weight::Regular))
-                        .color(t.muted),
-                );
-                let before = shared.settings.quick_style;
-                kit::segmented(
-                    ui,
-                    t,
-                    &mut shared.settings.quick_style,
-                    &[
-                        (QuickStyle::Full, tr(Msg::StyleFull)),
-                        (QuickStyle::CornersOnly, tr(Msg::StyleCorners)),
-                        (QuickStyle::Plain, tr(Msg::StyleNone)),
-                    ],
-                );
-                if shared.settings.quick_style != before {
-                    shared.settings_dirty = true;
-                }
-            });
+            // The label sits over the choice, so the row fits the narrowest window.
+            ui.label(
+                RichText::new(tr(Msg::DirectStyleLabel))
+                    .font(font(12.0, Weight::Regular))
+                    .color(t.muted),
+            );
+            ui.add_space(4.0);
+            let before = shared.settings.quick_style;
+            kit::segmented(
+                ui,
+                t,
+                &mut shared.settings.quick_style,
+                &[
+                    (QuickStyle::Full, tr(Msg::StyleFull)),
+                    (QuickStyle::CornersOnly, tr(Msg::StyleCorners)),
+                    (QuickStyle::Plain, tr(Msg::StyleNone)),
+                ],
+            );
+            if shared.settings.quick_style != before {
+                shared.settings_dirty = true;
+            }
         });
         ui.add_space(20.0);
         ui.vertical(|ui| {
@@ -390,10 +391,54 @@ pub fn controls(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<Mai
 #[cfg(test)]
 mod tests {
     use crate::screens::home::Home;
-    use crate::skins::takeui::testing::{click, painted_at, run};
+    use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::system::settings::QuickStyle;
-    use crate::ui::i18n::{Msg, every};
+    use crate::ui::i18n::{Lang, Msg, every, lang, set_lang};
+
+    #[test]
+    fn the_page_fits_in_its_box_at_the_minimum_size() {
+        let before = lang();
+        for l in [Lang::Pt, Lang::En] {
+            set_lang(l);
+            let (mut home, mut shared) = Home::for_tests(vec![]);
+            home.open(Page::Style);
+            let (_, painted, blocks) =
+                run_painted(&mut home, &mut shared, (900.0, 600.0), true, vec![vec![]]);
+            let b = content_box(&blocks, &shared.tokens(None));
+            // A row too wide for its column would push the box past the window's 8 px margin.
+            assert!((b.right() - (900.0 - 8.0)).abs() <= 0.5, "{l:?}: {b:?}");
+            for (s, r) in painted.iter().filter(|(_, r)| r.top() > b.top()) {
+                assert!(
+                    r.right() <= b.right() - 25.0 + 1.0,
+                    "{l:?}: {s:?} {r:?} outside {b:?}"
+                );
+            }
+        }
+        set_lang(before);
+    }
+
+    #[test]
+    fn the_controls_keep_clear_of_the_scroll_bar() {
+        // At the minimum size the column scrolls; its 6 px bar keeps an 8 px gap to the controls
+        // instead of floating over them. The second frame knows the column overflows.
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(Page::Style);
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (900.0, 600.0), true, vec![vec![]]);
+        let b = content_box(&blocks, &shared.tokens(None));
+        // The inner edge of the box's 1 px border and 24 px padding.
+        let right = b.right() - 25.0;
+        let column = painted
+            .iter()
+            .filter(|(_, r)| r.center().x > right - super::COLUMN && r.top() > b.top() + 70.0);
+        let mut seen = 0;
+        for (s, r) in column {
+            seen += 1;
+            assert!(r.right() <= right - 14.0 + 1.0, "{s:?} {r:?} under the bar");
+        }
+        assert!(seen > 5, "the controls column");
+    }
 
     #[test]
     fn the_direct_style_choice_is_saved() {
