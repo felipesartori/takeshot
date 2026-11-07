@@ -11,7 +11,9 @@ use crate::ui::i18n::{LangPref, Msg, t as tr, tf};
 use crate::ui::kit::{self, BtnKind, Ico};
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::{ThemeId, Tokens, UiMode};
-use egui::{Align, Align2, Frame, Layout, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::{
+    Align, Align2, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
+};
 
 const SECTIONS: [(SettingsSection, Ico, Msg); 5] = [
     (SettingsSection::General, Ico::Sliders, Msg::GeneralSection),
@@ -22,8 +24,11 @@ const SECTIONS: [(SettingsSection, Ico, Msg); 5] = [
         Ico::Keyboard,
         Msg::ShortcutsSection,
     ),
-    (SettingsSection::About, Ico::Info, Msg::About),
+    (SettingsSection::About, Ico::Info, Msg::AboutSection),
 ];
+
+/// A drop-down's width in a row, as in the design.
+const SELECT_WIDTH: f32 = 220.0;
 
 pub fn settings_page(
     ui: &mut Ui,
@@ -33,72 +38,88 @@ pub fn settings_page(
     acts: &mut Vec<MainAction>,
 ) {
     let before = serde_json::to_string(&shared.settings).ok();
-    let avail = ui.available_size();
-    ui.horizontal_top(|ui| {
-        // The list keeps the box's 24 px padding on its right too, before the line; the row's
-        // own spacing counts towards it (and stays as it is for the controls inside).
-        let pad = (24.0 - ui.spacing().item_spacing.x).max(0.0);
-        ui.vertical(|ui| {
-            ui.set_width(180.0);
-            for (s, icon, msg) in SECTIONS {
-                if kit::nav_item(ui, t, icon, tr(msg), home.section() == s).clicked() {
-                    acts.push(MainAction::Section(s));
-                }
+    // Measures from "Ajustes · escuro": a 220 px list flush to the box (its 196 px items 12 px
+    // in), a line from top to bottom, and the content 40 px in on both sides, 28 from the top.
+    let inner = ui.max_rect();
+    let b = inner.expand(1.0); // the box, its border included
+    let list = Rect::from_min_max(
+        pos2(b.left() + 12.0, b.top() + 12.0),
+        pos2(b.left() + 208.0, inner.bottom()),
+    );
+    let line = Rect::from_min_max(
+        pos2(b.left() + 220.0, inner.top()),
+        pos2(b.left() + 221.0, inner.bottom()),
+    );
+    let content = Rect::from_min_max(pos2(line.right(), inner.top()), inner.max);
+    ui.scope_builder(UiBuilder::new().max_rect(list), |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        for (s, icon, msg) in SECTIONS {
+            if kit::section_item(ui, t, icon, tr(msg), home.section() == s).clicked() {
+                acts.push(MainAction::Section(s));
             }
-        });
-        ui.add_space(pad);
-        let (line, _) = ui.allocate_exact_size(vec2(1.0, avail.y.max(0.0)), egui::Sense::hover());
-        ui.painter().rect_filled(line, 0.0, t.border);
-        ui.add_space(pad);
-        ui.vertical(|ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("takeui-settings")
-                .max_height(avail.y)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    match home.section() {
-                        SettingsSection::General => general(ui, t, home, shared, acts),
-                        SettingsSection::Capture => capture(ui, t, shared),
-                        SettingsSection::Save => save(ui, t, shared, acts),
-                        SettingsSection::Shortcuts => shortcuts(ui, t, home, shared, acts),
-                        SettingsSection::About => about(ui, t, home, acts),
-                    }
-                });
-        });
+        }
+    });
+    ui.painter().rect_filled(line, 0.0, t.border);
+    ui.scope_builder(UiBuilder::new().max_rect(content), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("takeui-settings")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // The scroll bar sits inside the right padding, so nothing moves when it shows.
+                Frame::new()
+                    .inner_margin(Margin {
+                        left: 40,
+                        right: 0,
+                        top: 28,
+                        bottom: 28,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width((content.width() - 80.0).max(0.0));
+                        match home.section() {
+                            SettingsSection::General => general(ui, t, home, shared, acts),
+                            SettingsSection::Capture => capture(ui, t, shared),
+                            SettingsSection::Save => save(ui, t, shared, acts),
+                            SettingsSection::Shortcuts => shortcuts(ui, t, home, shared, acts),
+                            SettingsSection::About => about(ui, t, home, acts),
+                        }
+                    });
+            });
     });
     if serde_json::to_string(&shared.settings).ok() != before {
         shared.settings_dirty = true;
     }
 }
 
+/// The section's title (22) and its short hint (13), 4 px apart.
 fn heading(ui: &mut Ui, t: &Tokens, title: &str, hint: Option<&str>) {
+    ui.spacing_mut().item_spacing.y = 4.0;
     ui.label(
         RichText::new(title)
-            .font(font(18.0, Weight::Bold))
+            .font(font(22.0, Weight::Bold))
             .color(t.text),
     );
     if let Some(h) = hint {
         ui.label(
             RichText::new(h)
-                .font(font(12.0, Weight::Regular))
+                .font(font(13.0, Weight::Regular))
                 .color(t.muted),
         );
     }
 }
 
-/// A titled group of rows in a bordered box; rows are separated by lines.
+/// A titled group of rows in a bordered box, 24 px under what comes before; rows are separated
+/// by lines.
 fn group(ui: &mut Ui, t: &Tokens, title: &str, rows: impl FnOnce(&mut Ui)) {
-    ui.add_space(16.0);
+    ui.add_space(24.0);
     ui.label(
         RichText::new(title)
-            .font(font(12.0, Weight::Medium))
+            .font(font(13.0, Weight::Medium))
             .color(t.muted),
     );
-    ui.add_space(6.0);
+    ui.add_space(10.0 - ui.spacing().item_spacing.y);
     Frame::new()
         .stroke(Stroke::new(1.0, t.border))
-        .corner_radius(8)
+        .corner_radius(10)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.set_width(ui.available_width());
@@ -108,7 +129,7 @@ fn group(ui: &mut Ui, t: &Tokens, title: &str, rows: impl FnOnce(&mut Ui)) {
 
 fn divider(ui: &mut Ui, t: &Tokens) {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().rect_filled(r, 0.0, t.border);
+    ui.painter().rect_filled(r, 0.0, t.line);
 }
 
 /// The two theme cards with the same room above and below, the label centred beside them.
@@ -119,16 +140,16 @@ fn theme_row(ui: &mut Ui, t: &Tokens, acts: &mut Vec<MainAction>) {
         Sense::hover(),
     );
     ui.painter().text(
-        pos2(rect.left() + 14.0, rect.center().y),
+        pos2(rect.left() + 20.0, rect.center().y),
         Align2::LEFT_CENTER,
         tr(Msg::Theme),
-        font(13.0, Weight::Medium),
+        font(14.0, Weight::Medium),
         t.text,
     );
     // Centred in the full height, so the scope ends where the row does.
     ui.scope_builder(
         UiBuilder::new()
-            .max_rect(rect.shrink2(vec2(14.0, 0.0)))
+            .max_rect(rect.shrink2(vec2(20.0, 0.0)))
             .layout(Layout::right_to_left(Align::Center)),
         |ui| {
             for th in [ThemeId::Coral, ThemeId::TakeUi] {
@@ -214,28 +235,32 @@ fn general(
             tr(Msg::OnCloseLabel),
             Some(tr(Msg::OnCloseHint)),
             |ui| {
-                kit::segmented(
+                kit::select(
                     ui,
                     t,
+                    "takeui-on-close",
                     &mut s.on_close,
                     &[
                         (OnClose::Ask, tr(Msg::AskOnClose)),
                         (OnClose::Minimize, tr(Msg::MinimizeToTray)),
                         (OnClose::Quit, tr(Msg::Quit)),
                     ],
+                    SELECT_WIDTH,
                 );
             },
         );
         divider(ui, t);
         kit::setting_row(ui, t, tr(Msg::TrayClickLabel), None, |ui| {
-            kit::segmented(
+            kit::select(
                 ui,
                 t,
+                "takeui-tray-click",
                 &mut s.tray_click,
                 &[
                     (TrayClick::OpenHome, tr(Msg::OpenHome)),
                     (TrayClick::CaptureArea, tr(Msg::CaptureArea)),
                 ],
+                SELECT_WIDTH,
             );
         });
         divider(ui, t);
@@ -602,10 +627,13 @@ mod tests {
     }
 
     #[test]
-    fn the_section_list_has_the_same_room_on_both_sides() {
+    fn the_section_list_matches_the_design() {
+        // "Ajustes · escuro": a 220 px list flush to the box, 196 × 36 items 12 px in from both
+        // sides, a line from the box's top to its bottom, the content 40 px past it.
         let (mut home, mut shared) = Home::for_tests(vec![]);
         home.open(Page::Settings);
-        let (_, _, blocks) = run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
         let t = shared.tokens(None);
         let b = content_box(&blocks, &t);
         let line = blocks
@@ -615,12 +643,27 @@ mod tests {
             .expect("the line beside the list");
         let open = blocks
             .iter()
-            .find(|(r, c)| *c == t.raised && r.height() == 34.0 && r.right() <= line.left())
+            .find(|(r, c)| *c == t.tint && r.right() <= line.left())
             .map(|(r, _)| *r)
             .expect("the open section");
-        let left = open.left() - b.left();
-        let right = line.left() - open.right();
-        assert!((left - right).abs() <= 1.0, "left {left}, right {right}");
+        assert_eq!(open.size(), vec2(196.0, 36.0), "{open:?}");
+        assert_eq!(open.left() - b.left(), 12.0, "{open:?} in {b:?}");
+        assert_eq!(line.left() - open.right(), 12.0, "{open:?} beside {line:?}");
+        assert!(
+            (line.top() - b.top()).abs() <= 1.0 && (line.bottom() - b.bottom()).abs() <= 1.0,
+            "{line:?} spans {b:?}"
+        );
+        let heading = painted
+            .iter()
+            .find(|(s, r)| {
+                every(Msg::GeneralSection).contains(&s.as_str()) && r.left() > line.left()
+            })
+            .map(|(_, r)| *r)
+            .expect("the General heading");
+        assert!(
+            (heading.left() - line.right() - 40.0).abs() <= 1.0,
+            "{heading:?} after {line:?}"
+        );
     }
 
     #[test]

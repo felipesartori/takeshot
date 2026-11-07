@@ -19,6 +19,7 @@ pub fn center_traffic_lights(title: &str) {
         window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         let toolbar = NSToolbar::new(mtm);
         window.setToolbar(Some(&toolbar));
-        window.setToolbarStyle(NSWindowToolbarStyle::UnifiedCompact);
+        // The unified toolbar is 52 pt tall, the theme bar's height, so the lights sit centred.
+        window.setToolbarStyle(NSWindowToolbarStyle::Unified);
     }
 }

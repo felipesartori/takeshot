@@ -9,11 +9,12 @@ use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{self, BtnKind, CARD_TEXT_H, CardAction, Ico};
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::Tokens;
-use egui::{Align, Layout, RichText, Ui, vec2};
+use egui::{Align, Layout, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 
-/// The narrowest card and the gap between cards.
-const CARD_MIN: f32 = 168.0;
-const GAP: f32 = 12.0;
+/// The narrowest card and the gap between cards (16 in the design, which fits five 228 px cards
+/// in its 1280 px window).
+const CARD_MIN: f32 = 200.0;
+const GAP: f32 = 16.0;
 
 /// Columns and card size for a grid `width` wide: pictures in 16:10 over the two text lines.
 pub fn grid(width: f32) -> (usize, egui::Vec2) {
@@ -33,75 +34,117 @@ pub fn start_page(
 ) {
     let area = label(&shared.settings.hotkey_area);
     let full = label(&shared.settings.hotkey_full);
-    header(ui, t, &area, &full, acts);
-    ui.add_space(18.0);
-    ui.horizontal(|ui| {
-        let [all, today, week] = home.counts();
-        for (p, msg, n) in [
-            (Period::All, Msg::FilterAll, all),
-            (Period::Today, Msg::Today, today),
-            (Period::Week, Msg::ThisWeek, week),
-        ] {
-            if kit::filter_pill(ui, t, tr(msg), n, home.filter() == p).clicked() {
-                acts.push(MainAction::Filter(p));
-            }
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if kit::button(
+    // Measures from "Início · escuro": the header 24 px in and 22 from the top over an 87 px
+    // band, a line across the box, the filters in a 56 px band 20 px in, the grid 24 px in.
+    let inner = ui.max_rect();
+    let b = inner.expand(1.0); // the box, its border included
+    let head = ui
+        .scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_max(
+                pos2(b.left() + 24.0, b.top() + 22.0),
+                pos2(b.right() - 24.0, inner.bottom()),
+            )),
+            |ui| header(ui, t, &area, &full, acts),
+        )
+        .response
+        .rect;
+    let line_y = (b.top() + 87.0).max(head.bottom() + 18.0);
+    ui.painter().rect_filled(
+        Rect::from_min_max(
+            pos2(inner.left(), line_y),
+            pos2(inner.right(), line_y + 1.0),
+        ),
+        0.0,
+        t.border,
+    );
+    let filters = Rect::from_min_max(
+        pos2(b.left() + 20.0, line_y + 1.0),
+        pos2(b.right() - 20.0, line_y + 57.0),
+    );
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(filters)
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| filter_row(ui, t, home, acts),
+    );
+    let rest = Rect::from_min_max(
+        pos2(b.left() + 24.0, filters.bottom()),
+        pos2(b.right() - 24.0, inner.bottom()),
+    );
+    ui.scope_builder(UiBuilder::new().max_rect(rest), |ui| {
+        if home.folder_missing() {
+            empty(
                 ui,
                 t,
-                BtnKind::Secondary,
-                Some(Ico::FolderOpen),
-                tr(Msg::OpenFolder),
+                Ico::FolderSearch,
+                tr(Msg::FolderMissing),
                 None,
-            )
-            .clicked()
-            {
-                acts.push(MainAction::OpenFolder);
-            }
-            let mut q = home.query().to_string();
-            if kit::text_field(
+                Some(acts),
+            );
+        } else if !home.has_captures() {
+            let hint = tf(Msg::HomeSubtitle, &[&area]);
+            empty(
                 ui,
                 t,
-                &mut q,
-                tr(Msg::SearchByName),
-                Some(Ico::Search),
-                220.0,
-            )
-            .changed()
-            {
-                acts.push(MainAction::Search(q));
-            }
-        });
+                Ico::Images,
+                tr(Msg::NoCapturesYet),
+                Some(&hint),
+                None,
+            );
+        } else {
+            gallery(ui, t, home, acts);
+        }
     });
-    ui.add_space(14.0);
-    if home.folder_missing() {
-        empty(
-            ui,
-            t,
-            Ico::FolderSearch,
-            tr(Msg::FolderMissing),
-            None,
-            Some(acts),
-        );
-    } else if !home.has_captures() {
-        let hint = tf(Msg::HomeSubtitle, &[&area]);
-        empty(
-            ui,
-            t,
-            Ico::Images,
-            tr(Msg::NoCapturesYet),
-            Some(&hint),
-            None,
-        );
-    } else {
-        gallery(ui, t, home, acts);
+}
+
+/// The period pills on the left; search and the folder on the right.
+fn filter_row(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
+    ui.spacing_mut().item_spacing.x = 2.0;
+    let [all, today, week] = home.counts();
+    for (p, msg, n) in [
+        (Period::All, Msg::FilterAll, all),
+        (Period::Today, Msg::Today, today),
+        (Period::Week, Msg::ThisWeek, week),
+    ] {
+        if kit::filter_pill(ui, t, tr(msg), n, home.filter() == p).clicked() {
+            acts.push(MainAction::Filter(p));
+        }
     }
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        if kit::button(
+            ui,
+            t,
+            BtnKind::Secondary,
+            Some(Ico::FolderOpen),
+            tr(Msg::OpenFolder),
+            None,
+        )
+        .clicked()
+        {
+            acts.push(MainAction::OpenFolder);
+        }
+        let mut q = home.query().to_string();
+        if kit::text_field(
+            ui,
+            t,
+            &mut q,
+            tr(Msg::SearchByName),
+            Some(Ico::Search),
+            240.0,
+        )
+        .changed()
+        {
+            acts.push(MainAction::Search(q));
+        }
+    });
 }
 
 /// Title and subtitle with the capture buttons on their right, or under them when the window is
 /// too narrow for one row. The buttons' width is remembered from the frame before.
 fn header(ui: &mut Ui, t: &Tokens, area: &str, full: &str, acts: &mut Vec<MainAction>) {
+    // The design's 10 px between buttons and 4 px between title and subtitle.
+    ui.spacing_mut().item_spacing = vec2(10.0, 4.0);
     let title = tr(Msg::Home);
     let sub = tf(Msg::HomeSubtitle, &[area]);
     let sub = sub.as_str();
@@ -368,10 +411,28 @@ mod tests {
     }
 
     #[test]
+    fn a_line_parts_the_header_from_the_filters() {
+        // "Início · escuro": the header is 87 px tall, then a line across the whole box.
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let (_, _, blocks) = run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let t = shared.tokens(None);
+        let b = content_box(&blocks, &t);
+        let line = blocks
+            .iter()
+            .map(|(r, _)| *r)
+            .find(|r| r.height() == 1.0 && r.width() >= b.width() - 2.0 && r.top() > b.top())
+            .expect("a line across the box");
+        assert!(
+            (line.top() - b.top() - 87.0).abs() <= 1.0,
+            "{line:?} in {b:?}"
+        );
+    }
+
+    #[test]
     fn a_grid_without_a_scroll_bar_takes_the_full_width() {
-        // Fourteen captures fit at this size: the cards line up with the buttons above.
+        // One row fits at this size: the cards line up with the buttons above.
         let now = SystemTime::now();
-        let few = (0..14).map(|i| entry(&format!("{i}.png"), now)).collect();
+        let few = (0..5).map(|i| entry(&format!("{i}.png"), now)).collect();
         let (mut home, mut shared) = Home::for_tests(few);
         let (_, _, blocks) =
             run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![vec![]]);
@@ -382,7 +443,8 @@ mod tests {
             .filter(|(r, c)| *c == t.input && r.height() > 60.0 && r.width() > 100.0)
             .map(|(r, _)| r.right())
             .fold(f32::MIN, f32::max);
-        let edge = b.right() - 25.0 - 6.0;
+        // 24 px from the box's edge, the picture 6 px inside the card.
+        let edge = b.right() - 24.0 - 6.0;
         assert!(
             (last - edge).abs() <= 1.0,
             "picture edge {last}, expected {edge}"

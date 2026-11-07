@@ -27,11 +27,11 @@ pub fn main_window(
     egui::CentralPanel::no_frame()
         .frame(Frame::new().fill(t.shell).inner_margin(Margin::same(8)))
         .show(ui, |ui| {
+            // Each page lays out its own padding: lists and columns run to the box's edges.
             Frame::new()
                 .fill(t.surf)
                 .stroke(Stroke::new(1.0, t.border))
-                .corner_radius(10)
-                .inner_margin(Margin::symmetric(24, 20))
+                .corner_radius(12)
                 .show(ui, |ui| {
                     ui.set_min_size(ui.available_size());
                     match home.page() {
@@ -57,17 +57,20 @@ fn title_bar(
 ) {
     // The empty bar moves the window; it goes first so the bar's buttons sit above it.
     chrome::drag_area(ui, ui.max_rect());
+    // Measures from "A · Janela principal": 4 px between items, the mark 16 px in, the pills
+    // 28 px after the name, the window buttons flush right behind a short line.
     ui.horizontal_centered(|ui| {
-        ui.add_space(12.0 + chrome::leading_inset());
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.add_space(16.0 + chrome::leading_inset());
         let mark = home.mark(ui.ctx(), t);
-        ui.add(egui::Image::new((mark, vec2(20.0, 20.0))));
-        ui.add_space(6.0);
+        ui.add(egui::Image::new((mark, vec2(22.0, 22.0))));
+        ui.add_space(12.0);
         ui.label(
             RichText::new("Takeshot")
-                .font(font(15.0, Weight::Bold))
+                .font(font(17.0, Weight::Brand))
                 .color(t.text),
         );
-        ui.add_space(18.0);
+        ui.add_space(28.0);
         for (page, icon, msg) in [
             (Page::Start, Ico::Home, Msg::Home),
             (Page::Style, Ico::Palette, Msg::Style),
@@ -78,11 +81,16 @@ fn title_bar(
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_space(4.0);
-            if let Some(c) = chrome::window_buttons(ui, t) {
-                acts.push(MainAction::Window(c));
+            if cfg!(target_os = "macos") || chrome::native() {
+                ui.add_space(12.0);
+            } else {
+                if let Some(c) = chrome::window_buttons(ui, t) {
+                    acts.push(MainAction::Window(c));
+                }
+                ui.add_space(10.0);
+                let (line, _) = ui.allocate_exact_size(vec2(1.0, 20.0), egui::Sense::hover());
+                ui.painter().rect_filled(line, 0.0, t.border);
             }
-            ui.add_space(6.0);
             if kit::icon_button(ui, t, Ico::Info, false, tr(Msg::About)).clicked() {
                 acts.push(MainAction::About);
             }
@@ -94,7 +102,7 @@ fn title_bar(
             if kit::icon_button(ui, t, icon, false, tr(tip)).clicked() {
                 acts.push(MainAction::SetMode(next));
             }
-            ui.add_space(6.0);
+            ui.add_space(12.0);
             let status = hotkey_text(home.hotkey_status.as_ref(), &shared.settings);
             let tip = match &status {
                 Ok(s) | Err(s) => s.clone(),
@@ -113,6 +121,31 @@ mod tests {
     use crate::ui::i18n::{Msg, every};
     use crate::ui::icon::{Ico, glyph};
     use crate::ui::tokens::UiMode;
+
+    #[test]
+    fn the_title_bar_matches_the_design() {
+        // "A · Janela principal": a 52 px bar, the window buttons its full height, flush right.
+        assert_eq!(BAR_HEIGHT, 52.0);
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        if cfg!(not(target_os = "macos")) {
+            let close = blocks
+                .iter()
+                .map(|(r, _)| *r)
+                .find(|r| {
+                    r.right() == 1160.0
+                        && r.top() == 0.0
+                        && r.height() == BAR_HEIGHT
+                        && r.width() < 100.0
+                })
+                .expect("the close button");
+            assert_eq!(close.width(), 44.0, "{close:?}");
+        }
+        let name =
+            painted_at(&painted, &["Takeshot"], |r| r.center().y < BAR_HEIGHT).expect("the name");
+        assert!((name.y - BAR_HEIGHT / 2.0).abs() <= 1.5, "{name:?}");
+    }
 
     #[test]
     fn no_line_runs_under_the_title_bar() {

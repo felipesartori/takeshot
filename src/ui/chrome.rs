@@ -7,7 +7,8 @@ use crate::ui::tokens::Tokens;
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Response, Sense, Ui, ViewportCommand};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub const BAR_HEIGHT: f32 = 40.0;
+/// The title bar's height, as in the design ("A · Janela principal").
+pub const BAR_HEIGHT: f32 = 52.0;
 /// How far in from the window border a press resizes.
 pub const EDGE: f32 = 6.0;
 /// How far along a side from a corner a press resizes diagonally.

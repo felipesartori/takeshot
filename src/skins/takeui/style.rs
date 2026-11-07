@@ -10,10 +10,13 @@ use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, BtnKind, Ico, Swatch};
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::Tokens;
-use egui::{Align, Color32, CornerRadius, Layout, Rect, RichText, Sense, Stroke, Ui, vec2};
+use egui::{
+    Align, Color32, CornerRadius, Layout, Rect, RichText, Sense, Ui, UiBuilder, pos2, vec2,
+};
 
-/// Width of the controls column.
-const COLUMN: f32 = 300.0;
+/// Width of the controls column, its line included, and its padding.
+const COLUMN: f32 = 360.0;
+const COLUMN_PAD: f32 = 20.0;
 
 pub fn style_page(
     ui: &mut Ui,
@@ -22,6 +25,57 @@ pub fn style_page(
     shared: &mut Shared,
     acts: &mut Vec<MainAction>,
 ) {
+    // Measures from "Estilo · escuro": the controls in a 360 px column behind a line from the
+    // box's top to its bottom; title, preview and the direct-copy choice 24 px in on the left.
+    let inner = ui.max_rect();
+    let b = inner.expand(1.0); // the box, its border included
+    let line = Rect::from_min_max(
+        pos2(b.right() - COLUMN - 1.0, inner.top()),
+        pos2(b.right() - COLUMN, inner.bottom()),
+    );
+    let column = Rect::from_min_max(pos2(line.right(), inner.top()), inner.max);
+    let left = Rect::from_min_max(
+        pos2(b.left() + 24.0, b.top() + 24.0),
+        pos2((line.left() - 24.0).max(b.left() + 24.0), b.bottom() - 24.0),
+    );
+    ui.scope_builder(UiBuilder::new().max_rect(left), |ui| {
+        preview_side(ui, t, home, shared, acts)
+    });
+    ui.painter().rect_filled(line, 0.0, t.border);
+    ui.scope_builder(UiBuilder::new().max_rect(column), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("takeui-style-column")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // The scroll bar sits inside the right padding, so nothing moves when it shows.
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: COLUMN_PAD as i8,
+                        right: 0,
+                        top: COLUMN_PAD as i8,
+                        bottom: COLUMN_PAD as i8,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width((column.width() - 2.0 * COLUMN_PAD).max(0.0));
+                        if controls(ui, t, shared, acts) {
+                            shared.settings_dirty = true;
+                        }
+                    });
+            });
+    });
+}
+
+/// Title and Restore default over the preview, and the direct-copy choice under it: on one row
+/// when it fits, else its label over it. The choice's width is remembered from the frame before.
+fn preview_side(
+    ui: &mut Ui,
+    t: &Tokens,
+    home: &mut Home,
+    shared: &mut Shared,
+    acts: &mut Vec<MainAction>,
+) {
+    let area = ui.max_rect();
+    ui.spacing_mut().item_spacing.y = 4.0;
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label(
@@ -50,64 +104,59 @@ pub fn style_page(
             }
         });
     });
-    ui.add_space(16.0);
-    let avail = ui.available_size();
-    ui.horizontal_top(|ui| {
-        // The 20 px gap, plus the spacing the row adds after the preview's column.
-        let left = (avail.x - COLUMN - 20.0 - ui.spacing().item_spacing.x).max(240.0);
-        ui.vertical(|ui| {
-            ui.set_width(left);
-            preview(ui, t, home, shared, vec2(left, (avail.y - 72.0).max(160.0)));
-            ui.add_space(10.0);
-            // The label sits over the choice, so the row fits the narrowest window.
-            ui.label(
-                RichText::new(tr(Msg::DirectStyleLabel))
-                    .font(font(12.0, Weight::Regular))
-                    .color(t.muted),
-            );
-            ui.add_space(4.0);
-            let before = shared.settings.quick_style;
-            kit::segmented(
-                ui,
-                t,
-                &mut shared.settings.quick_style,
-                &[
-                    (QuickStyle::Full, tr(Msg::StyleFull)),
-                    (QuickStyle::CornersOnly, tr(Msg::StyleCorners)),
-                    (QuickStyle::Plain, tr(Msg::StyleNone)),
-                ],
-            );
-            if shared.settings.quick_style != before {
-                shared.settings_dirty = true;
-            }
-        });
-        ui.add_space(20.0);
-        ui.vertical(|ui| {
-            ui.set_width(COLUMN);
-            egui::ScrollArea::vertical()
-                .id_salt("takeui-style-column")
-                .max_height(avail.y)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if controls(ui, t, shared, acts) {
-                        shared.settings_dirty = true;
-                    }
-                });
-        });
-    });
+    ui.add_space(16.0 - 4.0);
+    let label = tr(Msg::DirectStyleLabel);
+    let label_w = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font(13.0, Weight::Regular), t.muted)
+        .size()
+        .x;
+    let id = egui::Id::unique("takeui-direct-choice");
+    let choice_w = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(330.0);
+    let one_row = area.width() >= label_w + 12.0 + choice_w;
+    let below = if one_row { 28.0 } else { 16.0 + 4.0 + 28.0 };
+    let preview_h = (ui.available_rect_before_wrap().height() - 16.0 - below).max(120.0);
+    preview(ui, t, home, shared, vec2(area.width(), preview_h));
+    ui.add_space(16.0 - 4.0);
+    let choice = |ui: &mut Ui, shared: &mut Shared| {
+        let before = shared.settings.quick_style;
+        let r = kit::segmented(
+            ui,
+            t,
+            &mut shared.settings.quick_style,
+            &[
+                (QuickStyle::Full, tr(Msg::StyleFull)),
+                (QuickStyle::CornersOnly, tr(Msg::StyleCorners)),
+                (QuickStyle::Plain, tr(Msg::StyleNone)),
+            ],
+        );
+        if shared.settings.quick_style != before {
+            shared.settings_dirty = true;
+        }
+        r.rect.width()
+    };
+    let label_text = RichText::new(label)
+        .font(font(13.0, Weight::Regular))
+        .color(t.muted);
+    let w = if one_row {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            ui.label(label_text);
+            choice(ui, shared)
+        })
+        .inner
+    } else {
+        ui.label(label_text);
+        choice(ui, shared)
+    };
+    ui.ctx().data_mut(|d| d.insert_temp(id, w));
 }
 
-/// The preview on the canvas colour, the picture fitted with a margin.
+/// The preview on the canvas colour (12 px corners, no border), the picture fitted with a margin.
 fn preview(ui: &mut Ui, t: &Tokens, home: &mut Home, shared: &Shared, size: egui::Vec2) {
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::same(10), t.canvas);
-    p.rect_stroke(
-        rect,
-        CornerRadius::same(10),
-        Stroke::new(1.0, t.border),
-        egui::StrokeKind::Inside,
-    );
+    p.rect_filled(rect, CornerRadius::same(12), t.canvas);
     if let Some((id, px)) = home.style_preview(ui.ctx(), shared) {
         let k = ((rect.width() - 48.0) / px.x)
             .min((rect.height() - 48.0) / px.y)
@@ -183,13 +232,18 @@ fn link(ui: &mut Ui, t: &Tokens, icon: Ico, text: &str) -> egui::Response {
 /// Background, frame and watermark; true when one of them changed.
 pub fn controls(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<MainAction>) -> bool {
     let before = serde_json::to_string(&(&shared.settings.style, &shared.settings.watermark)).ok();
-    ui.spacing_mut().item_spacing = vec2(6.0, 8.0);
+    // The design's 22 px between rows, and a line between sections.
+    ui.spacing_mut().item_spacing = vec2(6.0, 22.0);
+    let rule = |ui: &mut Ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+        ui.painter().rect_filled(r, 0.0, t.border);
+    };
 
     let (open, _) = section(ui, t, "background", tr(Msg::Background));
     if open {
         let s = &mut shared.settings.style;
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             for (i, pr) in PRESETS.iter().enumerate() {
                 let on = s.background == Background::Preset(i);
                 if kit::swatch(ui, t, Swatch::Gradient(pr.stops, pr.angle), on)
@@ -247,7 +301,7 @@ pub fn controls(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<Mai
         }
     }
 
-    ui.add_space(4.0);
+    rule(ui);
     let (open, _) = section(ui, t, "frame", tr(Msg::Frame));
     if open {
         let s = &mut shared.settings.style;
@@ -275,7 +329,7 @@ pub fn controls(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<Mai
         });
     }
 
-    ui.add_space(4.0);
+    rule(ui);
     let (open, header) = section(ui, t, "watermark", tr(Msg::Watermark));
     let wm = &mut shared.settings.watermark;
     let at = Rect::from_center_size(
@@ -397,6 +451,33 @@ mod tests {
     use crate::ui::i18n::{Lang, Msg, every, lang, lang_lock, set_lang};
 
     #[test]
+    fn the_controls_column_runs_the_full_height() {
+        // "Estilo · escuro": a 360 px column behind a line from the box's top to its bottom;
+        // the title sits over the preview only.
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(Page::Style);
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let b = content_box(&blocks, &shared.tokens(None));
+        let line = blocks
+            .iter()
+            .map(|(r, _)| *r)
+            .find(|r| r.width() == 1.0 && r.height() > 300.0)
+            .expect("the line before the column");
+        assert!(
+            (line.top() - b.top()).abs() <= 1.0 && (line.bottom() - b.bottom()).abs() <= 1.0,
+            "{line:?} spans {b:?}"
+        );
+        assert!(
+            (b.right() - line.right() - 360.0).abs() <= 1.0,
+            "{line:?} in {b:?}"
+        );
+        let restore =
+            painted_at(&painted, &every(Msg::RestoreDefault), |_| true).expect("Restore default");
+        assert!(restore.x < line.left(), "{restore:?} over the preview");
+    }
+
+    #[test]
     fn the_page_fits_in_its_box_at_the_minimum_size() {
         let _lang = lang_lock();
         let before = lang();
@@ -428,11 +509,11 @@ mod tests {
         let (_, painted, blocks) =
             run_painted(&mut home, &mut shared, (900.0, 600.0), true, vec![vec![]]);
         let b = content_box(&blocks, &shared.tokens(None));
-        // The inner edge of the box's 1 px border and 24 px padding.
-        let right = b.right() - 25.0;
+        // The column runs to the inner edge of the box's 1 px border; the bar sits there.
+        let right = b.right() - 1.0;
         let column = painted
             .iter()
-            .filter(|(_, r)| r.center().x > right - super::COLUMN && r.top() > b.top() + 70.0);
+            .filter(|(_, r)| r.center().x > right - super::COLUMN && r.top() > b.top() + 10.0);
         let mut seen = 0;
         for (s, r) in column {
             seen += 1;

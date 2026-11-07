@@ -263,26 +263,21 @@ pub enum Swatch {
     Gradient(&'static [(f32, [u8; 3])], f32),
 }
 
-/// A 44 × 36 background choice: the fill inset by 3 px, a 2 px primary ring when selected, a
-/// 1 px ring on hover, all inside its own area.
+/// A 44 × 44 background choice: the fill inset by 3 px inside a 1 px border, a 2 px primary ring
+/// when selected; hover only colours the border.
 pub fn swatch(ui: &mut Ui, t: &Tokens, fill: Swatch, selected: bool) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 36.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
     let h = hover_mix(ui, &resp);
     let p = ui.painter();
     let body = rect.shrink(3.0);
     let Swatch::Gradient(stops, angle) = fill;
-    paint_gradient(p, body, stops, angle, 6.0, t.surf);
+    paint_gradient(p, body, stops, angle, 8.0, t.surf);
     let ring = if selected {
         Stroke::new(2.0, t.primary)
     } else {
-        Stroke::new(1.0, mix(Color32::TRANSPARENT, t.muted, h))
+        Stroke::new(1.0, mix(t.border, t.muted, h))
     };
-    p.rect_stroke(
-        rect.shrink(1.0),
-        CornerRadius::same(8),
-        ring,
-        StrokeKind::Inside,
-    );
+    p.rect_stroke(rect, CornerRadius::same(10), ring, StrokeKind::Inside);
     resp
 }
 
@@ -371,41 +366,43 @@ pub fn setting_row(
     hint: Option<&str>,
     control: impl FnOnce(&mut Ui),
 ) -> Response {
+    // Measures from "Ajustes · escuro": 20 px in, 63 px tall with a hint and 60 without, 24 px
+    // between the texts and the control.
     let w = ui.available_width().max(240.0);
-    let h = if hint.is_some() { 52.0 } else { 40.0 };
+    let h = if hint.is_some() { 63.0 } else { 60.0 };
     let (rect, resp) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-    let left = rect.left() + 14.0;
+    let left = rect.left() + 20.0;
     let used = ui
         .scope_builder(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(
                     pos2(left, rect.top()),
-                    pos2(rect.right() - 14.0, rect.bottom()),
+                    pos2(rect.right() - 20.0, rect.bottom()),
                 ))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
             control,
         )
         .response
         .rect;
-    let room = (used.left() - 16.0 - left).max(0.0);
+    let room = (used.left() - 24.0 - left).max(0.0);
     let line = |text: &str, size: f32, weight: Weight, color: Color32| {
         let mut job =
             egui::text::LayoutJob::simple_singleline(text.to_string(), font(size, weight), color);
         job.wrap = egui::text::TextWrapping::truncate_at_width(room);
         ui.painter().layout_job(job)
     };
-    let top = if hint.is_some() {
-        rect.top() + 9.0
-    } else {
-        rect.center().y - 8.0
-    };
     let color = dim(t.text, ui);
-    let g = line(label, 13.0, Weight::Medium, color);
+    let g = line(label, 14.0, Weight::Medium, color);
+    let top = if hint.is_some() {
+        rect.top() + 14.0
+    } else {
+        rect.center().y - g.size().y / 2.0
+    };
     ui.painter().galley(pos2(left, top), g, color);
     if let Some(hint) = hint {
         let g = line(hint, 12.0, Weight::Regular, t.muted);
         ui.painter()
-            .galley(pos2(left, rect.top() + 28.0), g, t.muted);
+            .galley(pos2(left, rect.top() + 34.0), g, t.muted);
     }
     resp
 }
@@ -653,10 +650,10 @@ pub enum WindowControl {
     Close,
 }
 
-/// 40 × 32 window button. Hover fills `hover`; Close fills `danger` with a white glyph. With the
-/// window maximized, Maximize shows the restore glyph.
+/// 44 × 52 window button, the title bar's full height. Hover fills `hover`; Close fills `danger`
+/// with a white glyph. With the window maximized, Maximize shows the restore glyph.
 pub fn window_control(ui: &mut Ui, t: &Tokens, c: WindowControl, maximized: bool) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(40.0, 32.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 52.0), Sense::click());
     let h = hover_mix(ui, &resp);
     let p = ui.painter();
     let (icon, tip, hover_bg, hover_fg) = match c {
@@ -665,11 +662,7 @@ pub fn window_control(ui: &mut Ui, t: &Tokens, c: WindowControl, maximized: bool
         WindowControl::Maximize => (Ico::Square, Msg::MaximizeWindow, t.hover, t.text),
         WindowControl::Close => (Ico::Close, Msg::CloseWord, t.danger, Color32::WHITE),
     };
-    p.rect_filled(
-        rect,
-        CornerRadius::same(t.radius),
-        mix(Color32::TRANSPARENT, hover_bg, h),
-    );
+    p.rect_filled(rect, 0.0, mix(Color32::TRANSPARENT, hover_bg, h));
     draw_icon(
         p,
         rect.center(),
@@ -997,10 +990,11 @@ pub fn confirm_dialog<T: Copy>(
     chosen
 }
 
-/// Drop-down list built on egui's combo box, styled by the theme visuals.
+/// Drop-down list on egui's combo box: 32 px tall, the input fill with a border (as the field in
+/// "Ajustes · escuro"); hover only colours the border.
 pub fn select<T: PartialEq + Copy>(
     ui: &mut Ui,
-    _t: &Tokens,
+    t: &Tokens,
     id: &str,
     value: &mut T,
     items: &[(T, &str)],
@@ -1012,18 +1006,38 @@ pub fn select<T: PartialEq + Copy>(
         .map(|(_, s)| *s)
         .unwrap_or("");
     let mut changed = false;
-    let mut resp = egui::ComboBox::from_id_salt(id)
-        .selected_text(current)
-        .width(width)
-        .show_ui(ui, |ui| {
-            for (v, s) in items {
-                if ui.selectable_label(*value == *v, *s).clicked() && *value != *v {
-                    *value = *v;
-                    changed = true;
-                }
+    let mut resp = ui
+        .scope(|ui| {
+            ui.spacing_mut().interact_size.y = 32.0;
+            ui.spacing_mut().button_padding = vec2(10.0, 8.0);
+            let w = &mut ui.visuals_mut().widgets;
+            for (st, stroke) in [
+                (&mut w.inactive, t.border),
+                (&mut w.hovered, t.muted),
+                (&mut w.active, t.muted),
+                (&mut w.open, t.muted),
+            ] {
+                st.weak_bg_fill = t.input;
+                st.bg_stroke = Stroke::new(1.0, stroke);
             }
+            let chevron = t.muted;
+            egui::ComboBox::from_id_salt(id)
+                .selected_text(current)
+                .width(width)
+                .icon(move |ui, rect, _, _| {
+                    draw_icon(ui.painter(), rect.center(), Ico::ChevronDown, 15.0, chevron)
+                })
+                .show_ui(ui, |ui| {
+                    for (v, s) in items {
+                        if ui.selectable_label(*value == *v, *s).clicked() && *value != *v {
+                            *value = *v;
+                            changed = true;
+                        }
+                    }
+                })
+                .response
         })
-        .response;
+        .inner;
     if changed {
         resp.mark_changed();
     }
@@ -1095,6 +1109,43 @@ pub fn nav_item(ui: &mut Ui, t: &Tokens, icon: Ico, label: &str, active: bool) -
         13.0,
         Weight::Medium,
         dim(t.text, ui),
+    );
+    resp
+}
+
+/// TakeUI's Settings section: full width, height 36, a 16 px icon 12 px in and the label after it.
+/// The open section is tinted with the label and icon in the accent colour.
+pub fn section_item(ui: &mut Ui, t: &Tokens, icon: Ico, label: &str, active: bool) -> Response {
+    let w = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let bg = if active {
+        t.tint
+    } else {
+        mix(Color32::TRANSPARENT, t.raised, h)
+    };
+    p.rect_filled(rect, CornerRadius::same(t.radius), bg);
+    let (ic, fg) = if active {
+        (t.accent, t.accent)
+    } else {
+        (t.muted, t.text)
+    };
+    draw_icon(
+        p,
+        pos2(rect.left() + 12.0 + 8.0, rect.center().y),
+        icon,
+        16.0,
+        dim(ic, ui),
+    );
+    draw_text(
+        p,
+        pos2(rect.left() + 38.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        13.0,
+        Weight::Medium,
+        dim(fg, ui),
     );
     resp
 }
@@ -1546,6 +1597,10 @@ mod tests {
                     "{name} paints outside"
                 );
             }
+            if name.starts_with("swatch") {
+                // "Estilo · escuro": six 44 px squares, 8 px apart, fill the 310 px column.
+                assert_eq!(still.alloc.size(), egui::vec2(44.0, 44.0), "{name}");
+            }
         }
     }
 
@@ -1639,7 +1694,8 @@ mod tests {
                 let f = |ui: &mut egui::Ui| window_control(ui, &t, c, maximized);
                 let still = rect_of(false, &f);
                 let hovered = rect_of(true, &f);
-                assert_eq!(still.alloc.size(), egui::vec2(40.0, 32.0), "{c:?}");
+                // The full height of the 52 px bar, as in the design.
+                assert_eq!(still.alloc.size(), egui::vec2(44.0, 52.0), "{c:?}");
                 assert!(!still.hovered && hovered.hovered, "{c:?}: pointer missed");
                 assert_eq!(still.alloc, hovered.alloc, "{c:?} moves on hover");
                 assert!(
@@ -1686,6 +1742,10 @@ mod tests {
             (
                 "nav_item",
                 Box::new(|ui| nav_item(ui, &t, Ico::Grid, "Home", false)),
+            ),
+            (
+                "section_item",
+                Box::new(|ui| section_item(ui, &t, Ico::Sliders, "General", false)),
             ),
             (
                 "menu_item",
