@@ -452,9 +452,14 @@ fn main() -> eframe::Result {
                     Mode::Notice(Box::new(instant_notice.take().unwrap()))
                 }
                 Launch::Capture { full } => match shot {
-                    Some(s) if full && shared.settings.open_editor_after_full => Mode::Editor(
-                        Box::new(editor::Editor::new(ctx, s.image, Vec::new(), &shared)),
-                    ),
+                    Some(s) if full && shared.settings.open_editor_after_full => {
+                        Mode::Editor(Box::new(editor::Editor::new(
+                            ctx,
+                            s.image,
+                            engine::doc::Doc::new(),
+                            &shared,
+                        )))
+                    }
                     Some(s) => {
                         let o = overlay::Overlay::new(ctx, s, &shared);
                         Mode::Overlay(Box::new(if demo { o.demo() } else { o }))
@@ -482,7 +487,12 @@ fn main() -> eframe::Result {
                         let _ = std::fs::remove_file(p);
                     }
                     let anns = if demo { demo_annotations() } else { Vec::new() };
-                    Mode::Editor(Box::new(editor::Editor::new(ctx, img, anns, &shared)))
+                    Mode::Editor(Box::new(editor::Editor::new(
+                        ctx,
+                        img,
+                        engine::doc::Doc::from_anns(anns),
+                        &shared,
+                    )))
                 }
                 Launch::Pin(_) => match pin_img {
                     Some((img, size)) => Mode::Pin(Box::new(pin::Pin::new(img, size))),

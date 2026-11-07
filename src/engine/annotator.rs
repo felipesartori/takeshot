@@ -450,6 +450,19 @@ impl Annotator {
         }
     }
 
+    /// The tool whose options the bar shows: the active drawing tool, or with Select the picked object.
+    pub fn bar_tool(&self) -> Option<Tool> {
+        if self.tool != Tool::Select {
+            return Some(self.tool);
+        }
+        let id = self.doc.selected().first()?;
+        self.doc
+            .objs()
+            .iter()
+            .find(|o| o.id == *id)
+            .map(|o| o.ann.shape.tool())
+    }
+
     /// Applies to the selection what the options bar changed between `before` and `after`.
     pub fn restyle_from_opts(&mut self, before: &DrawOpts, after: &DrawOpts) {
         let color = (after.color != before.color).then_some(after.color);
@@ -1267,6 +1280,19 @@ mod tests {
             repeat: false,
             modifiers,
         }]
+    }
+
+    #[test]
+    fn the_bar_shows_the_drawing_tool_or_the_picked_object() {
+        let (mut an, ids) = with(
+            Tool::Select,
+            vec![rect_ann((0.0, 0.0), (100.0, 100.0), false)],
+        );
+        assert_eq!(an.bar_tool(), None);
+        an.doc.select(Some(ids[0]), false);
+        assert_eq!(an.bar_tool(), Some(Tool::Rect));
+        an.tool = Tool::Arrow;
+        assert_eq!(an.bar_tool(), Some(Tool::Arrow));
     }
 
     #[test]

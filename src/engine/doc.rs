@@ -589,6 +589,17 @@ impl Doc {
         true
     }
 
+    /// The same document in coordinates shifted by `d`, history included, so undo keeps working
+    /// after the capture hands its objects to the editor (which crops the picture).
+    pub fn translated(mut self, d: Vec2) -> Self {
+        let shift = |objs: &mut Vec<Obj>| objs.iter_mut().for_each(|o| o.ann.translate(d));
+        shift(&mut self.objs);
+        self.undo.iter_mut().for_each(shift);
+        self.redo.iter_mut().for_each(shift);
+        self.changed();
+        self
+    }
+
     /// Rises with every change to the objects, undo and redo included; selecting does not count.
     pub fn revision(&self) -> u64 {
         self.revision
@@ -1217,6 +1228,26 @@ mod tests {
         assert_eq!(order(&d), vec![c, a, b]);
         d.send_to_back();
         assert_eq!(order(&d), vec![a, b, c]);
+    }
+
+    #[test]
+    fn translated_moves_objects_and_history_together() {
+        let mut d = Doc::new();
+        let a = d.add(rect((100.0, 100.0), (150.0, 150.0))).unwrap();
+        d.begin_change();
+        d.translate_selected(vec2(20.0, 0.0));
+        let hidden = d.add(rect((300.0, 300.0), (350.0, 350.0))).unwrap();
+        d.set_hidden(hidden, true);
+        let rev = d.revision();
+        let mut d = d.translated(vec2(-100.0, -100.0));
+        assert!(near(bounds_of(&d, a).min, pos2(18.0, -2.0)));
+        assert!(d.objs().iter().any(|o| o.id == hidden && o.hidden));
+        assert!(d.revision() >= rev);
+        // Undo still lands where the object was, in the new coordinates.
+        assert!(d.undo() && d.undo() && d.undo());
+        assert!(near(bounds_of(&d, a).min, pos2(-2.0, -2.0)));
+        assert!(d.redo());
+        assert!(near(bounds_of(&d, a).min, pos2(18.0, -2.0)));
     }
 
     #[test]

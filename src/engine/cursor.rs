@@ -5,7 +5,6 @@ use crate::engine::model::Tool;
 use egui::CursorIcon;
 
 /// Where the pointer is relative to the capture area; the editor has none.
-#[allow(dead_code)] // The capture reports Outside, Inside and Handle from plan 3, Task 5.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Area {
     NotStarted,

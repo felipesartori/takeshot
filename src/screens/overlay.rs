@@ -1,7 +1,8 @@
 //! Capture overlay: the frozen screen, area selection, drawing tools and quick actions.
 
-use crate::engine::annotator::{Annotator, View};
-use crate::engine::doc::Doc;
+use crate::engine::annotator::{Annotator, SelectOutcome, View, text_measure};
+use crate::engine::cursor::{self, Area, CursorCtx};
+use crate::engine::doc::{Doc, Handle as ObjHandle};
 use crate::engine::model::*;
 use crate::screens::editor::Editor;
 use crate::screens::icons::Icon;
@@ -9,8 +10,7 @@ use crate::screens::widgets::{self, ACCENT, MUTED, TEXT};
 use crate::system::capture::Shot;
 use crate::{Shared, Switch};
 use egui::{
-    Align2, Color32, CursorIcon, FontId, Key, Modifiers, Pos2, Rect, RichText, Sense, Stroke, Ui,
-    pos2, vec2,
+    Align2, Color32, FontId, Key, Modifiers, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2,
 };
 use image::RgbaImage;
 
@@ -141,12 +141,9 @@ impl Overlay {
             .min(self.shot.image.height().saturating_sub(y))
             .max(1);
         let base = image::imageops::crop_imm(&self.shot.image, x, y, w, h).to_image();
-        let mut anns = self.an.doc.visible_anns(&[]);
-        for a in &mut anns {
-            a.translate(-vec2(x as f32, y as f32));
-        }
+        let doc = std::mem::take(&mut self.an.doc).translated(-vec2(x as f32, y as f32));
         self.remember_selection(shared);
-        Switch::ToEditor(Box::new(Editor::new(ctx, base, anns, shared)))
+        Switch::ToEditor(Box::new(Editor::new(ctx, base, doc, shared)))
     }
 
     pub fn ui(&mut self, ui: &mut Ui, frame: &eframe::Frame, shared: &mut Shared) -> Switch {
@@ -181,14 +178,56 @@ impl Overlay {
         let typing = self.an.handle_typing(ui, &shared.settings.draw);
 
         let drawing_tool = self.sel.is_some() && self.an.tool != Tool::Select;
-        if drawing_tool {
-            self.an
-                .handle_pointer(ui, &canvas, &view, &shared.settings.draw);
-            ctx.set_cursor_icon(if self.an.tool == Tool::Text {
-                CursorIcon::Text
+        let sel_screen = self
+            .sel
+            .map(|s| Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max)));
+        {
+            let measure = text_measure(&shared.fonts);
+            // Objects answer first; with Select a miss on empty space falls through to the area.
+            // A drawing tool only starts inside the area, where the pointer shows the crosshair.
+            let press_inside = ui
+                .input(|i| i.pointer.press_origin())
+                .zip(sel_screen)
+                .is_none_or(|(o, r)| r.contains(o));
+            let objects_answer = self.sel.is_some()
+                && matches!(self.drag, Drag::None)
+                && (self.an.tool == Tool::Select || press_inside);
+            let outcome = if objects_answer {
+                self.an
+                    .handle_canvas(ui, &canvas, &view, &measure, &mut shared.settings.draw)
             } else {
-                CursorIcon::Crosshair
-            });
+                SelectOutcome::Missed
+            };
+            if !drawing_tool && outcome == SelectOutcome::Missed {
+                self.selection_input(ui, &canvas, &view, pointer);
+            }
+            if let Some(p) = pointer
+                && (canvas.hovered()
+                    || self.an.dragging.is_some()
+                    || !matches!(self.drag, Drag::None))
+            {
+                let (handle, over_object) = if self.an.live.is_some()
+                    || self.sel.is_none()
+                    || !matches!(self.drag, Drag::None)
+                {
+                    (None, false)
+                } else {
+                    self.an.hover(view.to_img(p), &view, &measure)
+                };
+                ctx.set_cursor_icon(cursor::pick(&CursorCtx {
+                    tool: self.an.tool,
+                    over_image: sel_screen.is_some_and(|r| r.contains(p)),
+                    over_chrome: false,
+                    handle,
+                    over_object,
+                    typing: self.an.draft.is_some(),
+                    dragging: self.an.dragging.is_some(),
+                    space_pan: false,
+                    area: pointer_area(self.sel, &self.drag, p, &view, !drawing_tool),
+                }));
+            }
+        }
+        if drawing_tool {
             // mouse wheel changes the stroke width (or text size)
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.5 {
@@ -199,8 +238,6 @@ impl Overlay {
                     d.width = (d.width + scroll.signum()).clamp(1.0, 40.0);
                 }
             }
-        } else {
-            self.selection_input(ui, &canvas, &view, pointer);
         }
 
         // ---------------- painting
@@ -253,6 +290,17 @@ impl Overlay {
                 size_label(&painter, r, s, screen);
             }
         }
+        let theme = crate::ui::tokens::tokens(
+            shared.settings.ui_theme,
+            crate::ui::tokens::effective_dark(shared.settings.ui_mode, ctx.system_theme()),
+        );
+        self.an.paint_selection(
+            &painter,
+            &view,
+            &theme,
+            &shared.fonts,
+            &text_measure(&shared.fonts),
+        );
         self.an.paint_live(
             &painter,
             &view,
@@ -307,40 +355,14 @@ impl Overlay {
         view: &View,
         pointer: Option<Pos2>,
     ) {
-        let ctx = ui.ctx();
         let mods = ui.input(|i| i.modifiers);
         let bounds = Rect::from_min_size(Pos2::ZERO, self.img_size());
-        let hit = |sel: Option<Rect>, p: Pos2| -> Option<Handle> {
-            let s = sel?;
-            let r = Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max));
-            for (h, hp) in handles(r) {
-                if hp.distance(p) <= 9.0 {
-                    return Some(h);
-                }
-            }
-            r.contains(p).then_some(Handle::Move)
-        };
-        if let Some(p) = pointer {
-            let hit_now = hit(self.sel, p);
-            let icon = match (&self.drag, hit_now.as_ref()) {
-                (Drag::NewSel(_), _) => CursorIcon::Crosshair,
-                (Drag::Adjust { handle, .. }, _) | (_, Some(handle)) => match *handle {
-                    Handle::Move => CursorIcon::Move,
-                    Handle::N | Handle::S => CursorIcon::ResizeVertical,
-                    Handle::E | Handle::W => CursorIcon::ResizeHorizontal,
-                    Handle::NE | Handle::SW => CursorIcon::ResizeNeSw,
-                    Handle::NW | Handle::SE => CursorIcon::ResizeNwSe,
-                },
-                _ => CursorIcon::Crosshair,
-            };
-            ctx.set_cursor_icon(icon);
-        }
         if canvas.drag_started() {
             let origin = ui
                 .input(|i| i.pointer.press_origin())
                 .or(pointer)
                 .unwrap_or_default();
-            self.drag = match hit(self.sel, origin) {
+            self.drag = match area_hit(self.sel, view, origin) {
                 Some(h) => Drag::Adjust {
                     handle: h,
                     start_ptr: view.to_img(origin),
@@ -488,7 +510,8 @@ impl Overlay {
         let mut switch = Switch::None;
         let gap = 10.0;
         let tb = self.toolbar_size;
-        let show_opts = self.an.tool != Tool::Select;
+        let bar_tool = self.an.bar_tool();
+        let show_opts = bar_tool.is_some();
         let ob = if show_opts {
             self.options_size
         } else {
@@ -571,7 +594,8 @@ impl Overlay {
                 screen.min.x + 8.0,
                 (screen.max.x - self.options_size.x - 8.0).max(screen.min.x + 8.0),
             );
-            let tool = self.an.tool;
+            let tool = bar_tool.unwrap_or(self.an.tool);
+            let before = shared.settings.draw.clone();
             let resp = egui::Area::new(egui::Id::unique("tool_opts"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(pos2(ox, ob_y))
@@ -583,6 +607,7 @@ impl Overlay {
                     });
                 });
             self.options_size = resp.response.rect.size();
+            self.an.restyle_from_opts(&before, &shared.settings.draw);
         }
         switch
     }
@@ -597,14 +622,17 @@ impl Overlay {
         view: &View,
     ) -> Option<Switch> {
         let cmd = Modifiers::COMMAND;
-        if ui.input_mut(|i| i.consume_key(cmd, Key::Z)) {
-            self.an.undo();
-        }
+        // Redo first: egui also matches Ctrl+Shift+Z against the plain Ctrl+Z pattern.
         if ui.input_mut(|i| {
             i.consume_key(cmd, Key::Y) || i.consume_key(cmd | Modifiers::SHIFT, Key::Z)
         }) {
             self.an.redo();
         }
+        if ui.input_mut(|i| i.consume_key(cmd, Key::Z)) {
+            self.an.undo();
+        }
+        // With objects selected, Delete, Ctrl+D, arrows and Esc act on them; otherwise on the area.
+        self.an.handle_object_keys(ui);
         if ui.input_mut(|i| i.consume_key(cmd, Key::A)) {
             self.sel = Some(Rect::from_min_size(Pos2::ZERO, self.img_size()));
         }
@@ -651,7 +679,7 @@ impl Overlay {
         }
         if self.sel.is_some() {
             widgets::tool_shortcuts(ui, &mut self.an, &mut shared.settings.draw, true);
-            // arrows move the selection, Shift+arrows resize it
+            // with no object selected, arrows move the area and Shift+arrows resize it
             if self.an.tool == Tool::Select {
                 let mut d = vec2(0.0, 0.0);
                 let shift = ui.input(|i| i.modifiers.shift);
@@ -756,6 +784,52 @@ impl Overlay {
     }
 }
 
+/// The area handle (or `Move` inside the area) under screen point `p`.
+fn area_hit(sel: Option<Rect>, view: &View, p: Pos2) -> Option<Handle> {
+    let s = sel?;
+    let r = Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max));
+    for (h, hp) in handles(r) {
+        if hp.distance(p) <= 9.0 {
+            return Some(h);
+        }
+    }
+    r.contains(p).then_some(Handle::Move)
+}
+
+/// Where the pointer is relative to the capture area, for `cursor::pick`. The area handles count
+/// only where they work, with Select (`handles_work`); otherwise their spot is inside or outside.
+fn pointer_area(sel: Option<Rect>, drag: &Drag, p: Pos2, view: &View, handles_work: bool) -> Area {
+    if sel.is_none() || matches!(drag, Drag::NewSel(_)) {
+        return Area::NotStarted;
+    }
+    let under = match drag {
+        Drag::Adjust { handle, .. } => Some(*handle),
+        _ => area_hit(sel, view, p),
+    };
+    let inside = sel.is_some_and(|s| {
+        Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max)).contains(p)
+    });
+    match under {
+        Some(Handle::Move) => Area::Inside,
+        Some(h) if handles_work => Area::Handle(as_obj_handle(h)),
+        _ if inside => Area::Inside,
+        _ => Area::Outside,
+    }
+}
+
+fn as_obj_handle(h: Handle) -> ObjHandle {
+    match h {
+        Handle::N => ObjHandle::N,
+        Handle::S => ObjHandle::S,
+        Handle::E => ObjHandle::E,
+        Handle::W => ObjHandle::W,
+        Handle::NE => ObjHandle::NE,
+        Handle::NW => ObjHandle::NW,
+        Handle::SE => ObjHandle::SE,
+        Handle::SW | Handle::Move => ObjHandle::SW,
+    }
+}
+
 fn handles(r: Rect) -> [(Handle, Pos2); 8] {
     let c = r.center();
     [
@@ -832,4 +906,54 @@ pub fn load_tex(
     opts: egui::TextureOptions,
 ) -> egui::TextureHandle {
     ctx.load_texture(name, color_image(img), opts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VIEW: View = View {
+        origin: Pos2::ZERO,
+        k: 1.0,
+    };
+
+    fn sel() -> Option<Rect> {
+        Some(Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0)))
+    }
+
+    #[test]
+    fn pointer_area_follows_the_capture_state() {
+        let idle = Drag::None;
+        let at = |p: Pos2, select: bool| pointer_area(sel(), &idle, p, &VIEW, select);
+        assert_eq!(
+            pointer_area(None, &idle, pos2(5.0, 5.0), &VIEW, true),
+            Area::NotStarted
+        );
+        assert_eq!(
+            pointer_area(
+                sel(),
+                &Drag::NewSel(Pos2::ZERO),
+                pos2(150.0, 150.0),
+                &VIEW,
+                true
+            ),
+            Area::NotStarted
+        );
+        assert_eq!(at(pos2(200.0, 150.0), true), Area::Inside);
+        assert_eq!(at(pos2(300.0, 200.0), true), Area::Handle(ObjHandle::SE));
+        assert_eq!(at(pos2(200.0, 100.0), true), Area::Handle(ObjHandle::N));
+        // Area handles only work with Select; with a drawing tool their spot is inside or outside.
+        assert_eq!(at(pos2(300.0, 200.0), false), Area::Inside);
+        assert_eq!(at(pos2(305.0, 203.0), false), Area::Outside);
+        assert_eq!(at(pos2(500.0, 500.0), true), Area::Outside);
+        let adjusting = Drag::Adjust {
+            handle: Handle::E,
+            start_ptr: Pos2::ZERO,
+            orig: sel().unwrap(),
+        };
+        assert_eq!(
+            pointer_area(sel(), &adjusting, pos2(500.0, 500.0), &VIEW, true),
+            Area::Handle(ObjHandle::E)
+        );
+    }
 }

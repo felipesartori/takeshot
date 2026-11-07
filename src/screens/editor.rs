@@ -27,8 +27,8 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new(_ctx: &egui::Context, base: RgbaImage, anns: Vec<Ann>, shared: &Shared) -> Self {
-        let mut an = Annotator::with_doc(shared.settings.draw.last_tool, Doc::from_anns(anns));
+    pub fn new(_ctx: &egui::Context, base: RgbaImage, doc: Doc, shared: &Shared) -> Self {
+        let mut an = Annotator::with_doc(shared.settings.draw.last_tool, doc);
         let first = an.bake().unwrap_or_default();
         let annotated = render::render_annotations(&base, &first, &shared.fonts);
         Self {
@@ -189,19 +189,7 @@ impl Editor {
                     });
                 });
                 // With Select the bar shows the picked object's options, and changing them restyles it.
-                let bar_tool = if self.an.tool != Tool::Select {
-                    Some(self.an.tool)
-                } else {
-                    self.an.doc.selected().first().and_then(|id| {
-                        self.an
-                            .doc
-                            .objs()
-                            .iter()
-                            .find(|o| o.id == *id)
-                            .map(|o| o.ann.shape.tool())
-                    })
-                };
-                if let Some(tool) = bar_tool {
+                if let Some(tool) = self.an.bar_tool() {
                     ui.add_space(4.0);
                     let before = shared.settings.draw.clone();
                     ui.horizontal(|ui| {
