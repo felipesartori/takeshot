@@ -43,6 +43,25 @@ pub struct RunOverrides {
 }
 
 impl Shared {
+    /// A `Shared` for tests: default settings with a captures folder that does not exist.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        Self {
+            settings: settings::Settings {
+                save_dir: std::env::temp_dir()
+                    .join("takeshot-test-no-captures")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..Default::default()
+            },
+            settings_dirty: false,
+            fonts: Arc::new(fonts::FontLib::load()),
+            logo: widgets::LogoCache::new(),
+            toast: None,
+            overrides: RunOverrides::default(),
+        }
+    }
+
     /// The look now: the run's override, else the setting; `system` decides the System mode.
     pub fn tokens(&self, system: Option<egui::Theme>) -> ui::tokens::Tokens {
         let theme = self.overrides.theme.unwrap_or(self.settings.ui_theme);
@@ -302,7 +321,14 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let sw = match &mut self.mode {
-            Mode::Home(h) => h.ui(ui, frame, &mut self.shared),
+            Mode::Home(h) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                skins::begin_frame(&ctx, &t);
+                for a in skins::main_window(ui, &t, h, &mut self.shared) {
+                    h.apply(a, &ctx, &mut self.shared);
+                }
+                Switch::None
+            }
             Mode::Resident {
                 home,
                 shell,
@@ -561,7 +587,7 @@ fn main() -> eframe::Result {
                 .with_taskbar(false);
         }
         _ => {
-            vp = vp
+            vp = ui::chrome::frameless(vp)
                 .with_title("Takeshot")
                 .with_inner_size([1160.0, 740.0])
                 .with_min_inner_size([900.0, 600.0])

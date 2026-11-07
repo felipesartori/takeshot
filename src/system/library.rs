@@ -2,9 +2,6 @@
 //! name, their thumbnails made off the UI thread, and sending one to the trash. Both themes'
 //! galleries and the tray's recent captures read it.
 
-// The TakeUI Home uses it from plan 5, Task 4; until then the tray's recents and the tests do.
-#![allow(dead_code)]
-
 use chrono::{DateTime, Datelike, Local, NaiveTime};
 use image::RgbaImage;
 use std::path::{Path, PathBuf};

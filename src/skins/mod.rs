@@ -3,7 +3,23 @@
 
 pub mod takeui;
 
+use crate::Shared;
+use crate::screens::home::{Home, MainAction};
 use crate::ui::tokens::{ThemeId, Tokens};
+
+/// The main window in the current theme: TakeUI for both themes until the Coral UI skin exists
+/// (the Coral tokens already apply). Returns what the user asked for; `Home::apply` does it.
+pub fn main_window(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    home: &mut Home,
+    shared: &mut Shared,
+) -> Vec<MainAction> {
+    let mut acts = home.begin(ui, shared);
+    crate::ui::chrome::adopt_window("Takeshot");
+    acts.extend(takeui::shell::main_window(ui, t, home, shared));
+    acts
+}
 
 /// Applies the egui style for this look when it changed since the last frame (theme or light and
 /// dark); true when it did.

@@ -1,18 +1,23 @@
-//! Main window: capture buttons, recent captures, default style and settings.
-//! It also listens for the global capture keys.
+//! Main window state and behaviour, shared by both themes: the page on screen, the captures
+//! library (filter, search, selection, thumbnails), what the user asked for (`MainAction`) and
+//! carrying it out. The skins draw it; the style and settings pages still draw here until their
+//! TakeUI pages land.
 
+use crate::Shared;
 use crate::engine::render;
-use crate::screens::icons::{self, Icon};
 use crate::screens::overlay::color_image;
-use crate::screens::widgets::{self, ACCENT, BORDER, HOVER, MUTED, PANEL, RAISED, TEXT};
+use crate::screens::widgets::{self, ACCENT, BORDER, MUTED, PANEL, TEXT};
 use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label, needs_modifier};
+use crate::system::library::{self, Entry, Period, Thumbs};
 use crate::system::settings::QuickStyle;
 use crate::system::settings::{OnClose, TrayClick};
 use crate::ui::i18n::{Msg, t as tr, tf};
-use crate::{Shared, Switch};
+use crate::ui::kit::{CardThumb, WindowControl};
+use crate::ui::tokens::{ThemeId, Tokens, UiMode};
 use egui::{Color32, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 
 #[derive(PartialEq, Clone, Copy)]
@@ -22,16 +27,61 @@ enum Page {
     Settings,
 }
 
-struct Recent {
-    path: PathBuf,
-    tex: egui::TextureHandle,
+/// What the user asked for in the main window; `Home::apply` carries it out.
+#[derive(Clone, PartialEq, Debug)]
+pub enum MainAction {
+    Page(crate::system::instance::Page),
+    Capture(Shot),
+    CaptureIn3s,
+    OpenImage,
+    OpenFolder,
+    ChooseFolder,
+    Filter(Period),
+    Search(String),
+    Select(PathBuf),
+    Copy(PathBuf),
+    Edit(PathBuf),
+    ShowInFolder(PathBuf),
+    Pin(PathBuf),
+    Trash(PathBuf),
+    SetMode(UiMode),
+    About,
+    Window(WindowControl),
 }
+
+/// A capture's thumbnail in the cache.
+enum Thumbnail {
+    Pending,
+    Ready {
+        tex: egui::TextureHandle,
+        size: [u32; 2],
+        used: u64,
+    },
+    Failed,
+}
+
+/// Thumbnails kept as textures; the least recently drawn go first.
+const THUMB_CACHE: usize = 300;
+/// How often the folder is read again while Home is on screen.
+const RESCAN_SECONDS: f64 = 5.0;
 
 pub struct Home {
     page: Page,
-    recents: Vec<Recent>,
-    rx: Option<Receiver<Vec<(PathBuf, RgbaImage)>>>,
+    entries: Vec<Entry>,
+    /// The positions in `entries` the filter and the search let through, and the filters' counts,
+    /// worked out when the list, the filter or the search changes.
+    shown: Vec<usize>,
+    counts: [usize; 3],
+    filter: Period,
+    query: String,
+    selected: Option<PathBuf>,
+    folder_missing: bool,
+    thumbs: Thumbs,
+    textures: HashMap<PathBuf, Thumbnail>,
+    frame: u64,
+    scan_rx: Option<Receiver<(bool, Vec<Entry>)>>,
     last_scan: f64,
+    mark: Option<((ThemeId, bool), egui::TextureHandle)>,
     sample: RgbaImage,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
@@ -53,21 +103,44 @@ pub struct HomeRequests {
 }
 
 impl Home {
-    pub fn new(_ctx: &egui::Context, shared: &Shared) -> Self {
-        let mut h = Self {
+    pub fn new(ctx: &egui::Context, shared: &Shared) -> Self {
+        let mut h = Self::empty(ctx);
+        h.scan(&shared.settings.save_dir, 0.0);
+        h
+    }
+
+    fn empty(ctx: &egui::Context) -> Self {
+        Self {
             page: Page::Start,
-            recents: Vec::new(),
-            rx: None,
+            entries: Vec::new(),
+            shown: Vec::new(),
+            counts: [0; 3],
+            filter: Period::All,
+            query: String::new(),
+            selected: None,
+            folder_missing: false,
+            thumbs: Thumbs::new(ctx),
+            textures: HashMap::new(),
+            frame: 0,
+            scan_rx: None,
             last_scan: -100.0,
+            mark: None,
             sample: crate::system::capture::sample_window(1000, 620),
             preview: None,
             preview_dirty: true,
             hotkey_status: None,
             requests: HomeRequests::default(),
             capturing: None,
-        };
-        h.scan(&shared.settings.save_dir, 0.0);
-        h
+        }
+    }
+
+    /// Home over these entries, never reading a folder, with a `Shared` for tests.
+    #[cfg(test)]
+    pub fn for_tests(entries: Vec<Entry>) -> (Self, Shared) {
+        let mut h = Self::empty(&egui::Context::default());
+        h.last_scan = f64::INFINITY;
+        h.set_entries(entries);
+        (h, Shared::for_tests())
     }
 
     /// Shows a page of the main window (About is a dialog the resident opens).
@@ -82,7 +155,6 @@ impl Home {
     }
 
     /// The page on screen (About is a dialog, never a page).
-    #[allow(dead_code)] // The TakeUI page pills read it from plan 5, Task 4.
     pub fn page(&self) -> crate::system::instance::Page {
         use crate::system::instance::Page as P;
         match self.page {
@@ -92,64 +164,180 @@ impl Home {
         }
     }
 
-    /// The gallery thumbnail of a capture, when Home has one (the tray menu shows it).
-    pub fn thumbnail(&self, path: &std::path::Path) -> Option<egui::TextureId> {
-        self.recents
-            .iter()
-            .find(|r| r.path == path)
-            .map(|r| r.tex.id())
+    pub fn filter(&self) -> Period {
+        self.filter
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// How many captures each filter shows: all, today, this week.
+    pub fn counts(&self) -> [usize; 3] {
+        self.counts
+    }
+
+    /// The captures on screen (positions for `entry`), newest first.
+    pub fn shown(&self) -> &[usize] {
+        &self.shown
+    }
+
+    pub fn entry(&self, i: usize) -> &Entry {
+        &self.entries[i]
+    }
+
+    pub fn selected(&self) -> Option<&Path> {
+        self.selected.as_deref()
+    }
+
+    pub fn folder_missing(&self) -> bool {
+        self.folder_missing
+    }
+
+    pub fn has_captures(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// A card's picture and the capture's size in pixels; the first call asks for the thumbnail.
+    pub fn card_thumb(&mut self, path: &Path) -> (CardThumb, Option<[u32; 2]>) {
+        let frame = self.frame;
+        match self.textures.get_mut(path) {
+            Some(Thumbnail::Ready { tex, size, used }) => {
+                *used = frame;
+                (CardThumb::Ready(tex.id(), tex.size_vec2()), Some(*size))
+            }
+            Some(Thumbnail::Pending) => (CardThumb::Loading, None),
+            Some(Thumbnail::Failed) => (CardThumb::Failed, None),
+            None => {
+                self.textures.insert(path.to_path_buf(), Thumbnail::Pending);
+                self.thumbs.request(path.to_path_buf());
+                (CardThumb::Loading, None)
+            }
+        }
+    }
+
+    /// How many thumbnails were asked for (tests).
+    #[cfg(test)]
+    pub fn thumb_requests(&self) -> usize {
+        self.textures.len()
+    }
+
+    /// The gallery thumbnail of a capture, when it is loaded (the tray menu shows it).
+    pub fn thumbnail(&self, path: &Path) -> Option<egui::TextureId> {
+        match self.textures.get(path) {
+            Some(Thumbnail::Ready { tex, .. }) => Some(tex.id()),
+            _ => None,
+        }
+    }
+
+    /// The theme's mark for the title bar, drawn once per look.
+    pub fn mark(&mut self, ctx: &egui::Context, t: &Tokens) -> egui::TextureId {
+        let look = (t.theme, t.dark);
+        match &self.mark {
+            Some((l, tex)) if *l == look => tex.id(),
+            _ => {
+                let tex = crate::ui::brand::mark_texture(ctx, t.theme, t.dark);
+                let id = tex.id();
+                self.mark = Some((look, tex));
+                id
+            }
+        }
+    }
+
+    fn set_entries(&mut self, entries: Vec<Entry>) {
+        self.entries = entries;
+        let present: std::collections::HashSet<&Path> =
+            self.entries.iter().map(|e| e.path.as_path()).collect();
+        self.textures.retain(|p, _| present.contains(p.as_path()));
+        if self
+            .selected
+            .as_deref()
+            .is_some_and(|s| !present.contains(s))
+        {
+            self.selected = None;
+        }
+        self.refilter();
+    }
+
+    fn refilter(&mut self) {
+        let now = chrono::Local::now();
+        self.shown = library::visible(&self.entries, self.filter, &self.query, now);
+        self.counts = library::counts(&self.entries, now);
     }
 
     fn scan(&mut self, dir: &str, now: f64) {
         self.last_scan = now;
         let dir = PathBuf::from(dir);
         let (tx, rx) = channel();
-        self.rx = Some(rx);
+        self.scan_rx = Some(rx);
         std::thread::spawn(move || {
-            let out = crate::system::recents::recent_captures(&dir, 8)
-                .into_iter()
-                .filter_map(|p| {
-                    let img = image::open(&p).ok()?.to_rgba8();
-                    Some((
-                        p,
-                        image::imageops::thumbnail(
-                            &img,
-                            320,
-                            (320.0 * img.height() as f32 / img.width().max(1) as f32) as u32,
-                        ),
-                    ))
-                })
-                .collect();
-            let _ = tx.send(out);
+            let _ = tx.send((dir.is_dir(), library::scan(&dir)));
         });
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, _frame: &eframe::Frame, shared: &mut Shared) -> Switch {
+    /// Drops the least recently drawn thumbnails past the cache size; they are asked again when
+    /// they come back on screen.
+    fn evict(&mut self) {
+        let ready = |t: &Thumbnail| matches!(t, Thumbnail::Ready { .. });
+        let n = self.textures.values().filter(|t| ready(t)).count();
+        if n <= THUMB_CACHE {
+            return;
+        }
+        let mut used: Vec<(u64, PathBuf)> = self
+            .textures
+            .iter()
+            .filter_map(|(p, t)| match t {
+                Thumbnail::Ready { used, .. } => Some((*used, p.clone())),
+                _ => None,
+            })
+            .collect();
+        used.sort();
+        for (_, p) in used.into_iter().take(n - THUMB_CACHE) {
+            self.textures.remove(&p);
+        }
+    }
+
+    /// Once per frame, before the skin draws: the folder's new listing, finished thumbnails,
+    /// dropped files, pasted pictures and Ctrl+O.
+    pub fn begin(&mut self, ui: &Ui, shared: &mut Shared) -> Vec<MainAction> {
         let ctx = ui.ctx().clone();
+        self.frame += 1;
         let now = ui.input(|i| i.time);
-        if let Some(rx) = &self.rx
-            && let Ok(list) = rx.try_recv()
+        if let Some(rx) = &self.scan_rx
+            && let Ok((exists, list)) = rx.try_recv()
         {
-            self.recents = list
-                .into_iter()
-                .enumerate()
-                .map(|(i, (path, img))| Recent {
-                    path,
+            self.scan_rx = None;
+            self.folder_missing = !exists;
+            self.set_entries(list);
+        }
+        if self.page == Page::Start
+            && self.scan_rx.is_none()
+            && now - self.last_scan > RESCAN_SECONDS
+        {
+            self.scan(&shared.settings.save_dir.clone(), now);
+        }
+        for (path, result) in self.thumbs.poll() {
+            if !self.textures.contains_key(&path) {
+                continue;
+            }
+            let thumb = match result {
+                Ok((img, size)) => Thumbnail::Ready {
                     tex: ctx.load_texture(
-                        format!("recent{i}"),
+                        format!("thumb-{}", path.display()),
                         color_image(&img),
                         egui::TextureOptions::LINEAR,
                     ),
-                })
-                .collect();
-            self.rx = None;
+                    size,
+                    used: self.frame,
+                },
+                Err(_) => Thumbnail::Failed,
+            };
+            self.textures.insert(path, thumb);
         }
-        if self.page == Page::Start && now - self.last_scan > 6.0 && self.rx.is_none() {
-            self.scan(&shared.settings.save_dir.clone(), now);
-        }
+        self.evict();
         shared.logo.sync(&ctx, &shared.settings.watermark);
 
-        // dropped files and pasted pictures open in the editor
+        let mut acts = Vec::new();
         let dropped: Vec<PathBuf> = ui.input(|i| {
             i.raw
                 .dropped_files
@@ -158,222 +346,116 @@ impl Home {
                 .filter(|p| !p.as_os_str().is_empty())
                 .collect()
         });
-        if let Some(p) = dropped.first() {
-            let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
+        if let Some(p) = dropped.into_iter().next() {
+            acts.push(MainAction::Edit(p));
         }
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::V))
-            || ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
-        {
-            open_clipboard(shared);
+        // A text field keeps its own paste and shortcuts.
+        if !ctx.egui_wants_keyboard_input() {
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::V))
+                || ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
+            {
+                open_clipboard(shared);
+            }
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O)) {
+                acts.push(MainAction::OpenImage);
+            }
         }
-
-        egui::Panel::left("nav")
-            .exact_size(214.0)
-            .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgb(17, 17, 20))
-                    .inner_margin(egui::Margin::symmetric(14, 18))
-                    .stroke(Stroke::new(1.0, BORDER)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
-                    ui.painter().rect_filled(r, 7.0, ACCENT);
-                    icons::paint(ui.painter(), r.shrink(5.0), Icon::Full, Color32::WHITE);
-                    ui.label(
-                        RichText::new("Takeshot")
-                            .size(17.0)
-                            .family(egui::FontFamily::Name("bold".into()))
-                            .color(Color32::WHITE),
-                    );
-                });
-                ui.add_space(22.0);
-                for (p, label, icon) in [
-                    (Page::Start, "Início", Icon::Full),
-                    (Page::Style, "Estilo e marca d'água", Icon::Edit),
-                    (Page::Settings, "Ajustes", Icon::Folder),
-                ] {
-                    if nav_item(ui, icon, label, self.page == p).clicked() {
-                        self.page = p;
-                    }
-                }
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    if ui
-                        .add(egui::Button::new(crate::ui::icon::text(
-                            crate::ui::icon::Ico::Info,
-                            15.0,
-                            MUTED,
-                        )))
-                        .on_hover_text(tr(Msg::About))
-                        .clicked()
-                    {
-                        self.requests.about = true;
-                    }
-                    match hotkey_text(self.hotkey_status.as_ref(), &shared.settings) {
-                        Ok(s) => ui.label(RichText::new(s).size(11.5).color(MUTED)),
-                        Err(e) => ui.label(
-                            RichText::new(e)
-                                .size(11.5)
-                                .color(Color32::from_rgb(230, 150, 90)),
-                        ),
-                    };
-                    ui.label(
-                        RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                            .size(11.0)
-                            .color(Color32::from_gray(90)),
-                    );
-                });
-            });
-
-        let mut switch = Switch::None;
-        egui::CentralPanel::no_frame()
-            .frame(
-                egui::Frame::new()
-                    .fill(widgets::BG)
-                    .inner_margin(egui::Margin::symmetric(30, 26)),
-            )
-            .show(ui, |ui| match self.page {
-                Page::Start => switch = self.start_page(ui, shared),
-                Page::Style => self.style_page(ui, shared),
-                Page::Settings => self.settings_page(ui, shared),
-            });
-        switch
+        acts
     }
 
-    fn start_page(&mut self, ui: &mut Ui, shared: &mut Shared) -> Switch {
-        let ctx = ui.ctx().clone();
-        ui.label(
-            RichText::new("Capturar")
-                .size(24.0)
-                .family(egui::FontFamily::Name("bold".into()))
-                .color(Color32::WHITE),
-        );
-        ui.label(
-            RichText::new(format!(
-                "Pressione {} em qualquer lugar, ou escolha abaixo.",
-                label(&shared.settings.hotkey_area)
-            ))
-            .color(MUTED),
-        );
-        ui.add_space(14.0);
-        let mut action: Option<Vec<&str>> = None;
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-            let (area_keys, full_keys) = (
-                label(&shared.settings.hotkey_area),
-                label(&shared.settings.hotkey_full),
-            );
-            if big_card(ui, Icon::Select, "Área", &area_keys, true).clicked() {
-                action = Some(vec!["--capture", "--wait"]);
+    /// Carries out what the user asked for. Resident matters (About) go to `requests`.
+    pub fn apply(&mut self, a: MainAction, ctx: &egui::Context, shared: &mut Shared) {
+        use crate::system::actions;
+        match a {
+            MainAction::Page(p) => self.open(p),
+            MainAction::Capture(Shot::Area) => self.capture(ctx, shared, &["--capture", "--wait"]),
+            MainAction::Capture(Shot::Full) => {
+                self.capture(ctx, shared, &["--capture", "--full", "--wait"])
             }
-            if big_card(ui, Icon::Full, "Tela inteira", &full_keys, false).clicked() {
-                action = Some(vec!["--capture", "--full", "--wait"]);
-            }
-            if big_card(ui, Icon::Timer, "Em 3 segundos", "temporizador", false).clicked() {
-                action = Some(vec!["--capture", "--delay", "3"]);
-            }
-            if big_card(
-                ui,
-                Icon::Open,
-                "Abrir imagem",
-                "ou arraste aqui · Ctrl+V",
-                false,
-            )
-            .clicked()
-                && let Some(p) = rfd::FileDialog::new()
-                    .add_filter("Imagem", &["png", "jpg", "jpeg", "webp", "bmp"])
+            MainAction::CaptureIn3s => self.capture(ctx, shared, &["--capture", "--delay", "3"]),
+            MainAction::OpenImage => {
+                if let Some(p) = rfd::FileDialog::new()
+                    .add_filter(tr(Msg::OpenImage), &["png", "jpg", "jpeg", "webp", "bmp"])
                     .pick_file()
-            {
-                let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
-            }
-        });
-        if let Some(args) = action {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            if let Err(e) = crate::system::actions::spawn_self(&args) {
-                shared.toast(format!("Não consegui iniciar a captura: {e}"));
-            }
-        }
-
-        ui.add_space(24.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Estilo aplicado")
-                    .size(15.0)
-                    .color(Color32::WHITE)
-                    .strong(),
-            );
-            ui.label(RichText::new("· vale para copiar e salvar direto da captura").color(MUTED));
-        });
-        ui.add_space(6.0);
-        let avail_w = ui.available_width();
-        ui.horizontal_top(|ui| {
-            let pw = (avail_w * 0.56).clamp(320.0, 620.0);
-            self.paint_preview(ui, shared, vec2(pw, pw * 0.62));
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                ui.set_width((avail_w - pw - 24.0).max(200.0));
-                ui.label(
-                    RichText::new("Recentes")
-                        .size(15.0)
-                        .color(Color32::WHITE)
-                        .strong(),
-                );
-                if self.recents.is_empty() {
-                    ui.label(
-                        RichText::new("As capturas salvas na sua pasta aparecem aqui.")
-                            .color(MUTED),
-                    );
+                {
+                    self.apply(MainAction::Edit(p), ctx, shared);
                 }
-                let mut open: Option<PathBuf> = None;
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-                    for r in &self.recents {
-                        let sz = r.tex.size_vec2();
-                        let w = 132.0;
-                        let h = (w * sz.y / sz.x).min(96.0);
-                        let (rect, resp) = ui.allocate_exact_size(vec2(w, 96.0), Sense::click());
-                        ui.painter().rect_filled(rect, 8.0, RAISED);
-                        let img_r = Rect::from_center_size(rect.center(), vec2(h * sz.x / sz.y, h));
-                        ui.painter().image(
-                            r.tex.id(),
-                            img_r,
-                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                            Color32::WHITE,
-                        );
-                        if resp.hovered() {
-                            ui.painter().rect_stroke(
-                                rect,
-                                8.0,
-                                Stroke::new(1.5, ACCENT),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                        let name = r
-                            .path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        if resp
-                            .on_hover_text(format!("{name}\nClique para editar"))
-                            .clicked()
-                        {
-                            open = Some(r.path.clone());
-                        }
+            }
+            MainAction::OpenFolder => actions::open_folder(Path::new(&shared.settings.save_dir)),
+            MainAction::ChooseFolder => {
+                if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                    shared.settings.save_dir = d.to_string_lossy().into_owned();
+                    shared.settings_dirty = true;
+                    self.last_scan = f64::NEG_INFINITY;
+                }
+            }
+            MainAction::Filter(p) => {
+                self.filter = p;
+                self.refilter();
+            }
+            MainAction::Search(q) => {
+                self.query = q;
+                self.refilter();
+            }
+            MainAction::Select(p) => self.selected = Some(p),
+            MainAction::Copy(p) => match image::open(&p) {
+                Ok(img) => match actions::copy_image(&img.to_rgba8()) {
+                    Ok(()) => shared.toast(tr(Msg::Copied).to_string()),
+                    Err(e) => shared.toast(e),
+                },
+                Err(e) => shared.toast(e.to_string()),
+            },
+            MainAction::Edit(p) => {
+                if let Err(e) = actions::spawn_self(&["--edit", &p.to_string_lossy()]) {
+                    shared.toast(e);
+                }
+            }
+            MainAction::ShowInFolder(p) => actions::show_in_folder(&p),
+            // `--pin` deletes the file it gets, so it gets a copy.
+            MainAction::Pin(p) => match image::open(&p) {
+                Ok(img) => {
+                    if let Some(tmp) = actions::temp_png(&img.to_rgba8()) {
+                        let _ = actions::spawn_self(&["--pin", &tmp.to_string_lossy()]);
                     }
-                });
-                if let Some(p) = open {
-                    let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
                 }
-                ui.add_space(6.0);
-                if ui.button("Abrir pasta das capturas").clicked() {
-                    crate::system::actions::open_folder(std::path::Path::new(
-                        &shared.settings.save_dir,
-                    ));
+                Err(e) => shared.toast(e.to_string()),
+            },
+            MainAction::Trash(p) => match library::move_to_trash(&p) {
+                Ok(()) => {
+                    shared.toast(tr(Msg::MovedToTrash).to_string());
+                    let rest = self
+                        .entries
+                        .iter()
+                        .filter(|e| e.path != p)
+                        .cloned()
+                        .collect();
+                    self.set_entries(rest);
                 }
-            });
-        });
-        Switch::None
+                Err(e) => shared.toast(e),
+            },
+            MainAction::SetMode(m) => {
+                shared.settings.ui_mode = m;
+                shared.settings_dirty = true;
+            }
+            MainAction::About => self.requests.about = true,
+            MainAction::Window(c) => crate::ui::chrome::act(ctx, c),
+        }
+    }
+
+    fn capture(&mut self, ctx: &egui::Context, shared: &mut Shared, args: &[&str]) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        if let Err(e) = crate::system::actions::spawn_self(args) {
+            shared.toast(e);
+        }
+    }
+
+    /// The style and settings pages as they were, until their TakeUI pages land.
+    pub fn legacy_page(&mut self, ui: &mut Ui, shared: &mut Shared) {
+        match self.page {
+            Page::Style => self.style_page(ui, shared),
+            Page::Settings => self.settings_page(ui, shared),
+            Page::Start => {}
+        }
     }
 
     fn paint_preview(&mut self, ui: &mut Ui, shared: &Shared, size: egui::Vec2) {
@@ -658,87 +740,6 @@ impl Home {
     }
 }
 
-fn nav_item(ui: &mut Ui, icon: Icon, label: &str, selected: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
-    let p = ui.painter();
-    if selected {
-        p.rect_filled(rect, 8.0, RAISED);
-        p.rect_filled(
-            Rect::from_min_size(rect.min + vec2(0.0, 9.0), vec2(3.0, 18.0)),
-            2.0,
-            ACCENT,
-        );
-    } else if resp.hovered() {
-        p.rect_filled(rect, 8.0, Color32::from_rgb(26, 26, 30));
-    }
-    let col = if selected {
-        Color32::WHITE
-    } else {
-        Color32::from_gray(175)
-    };
-    icons::paint(
-        p,
-        Rect::from_min_size(rect.min + vec2(12.0, 9.0), vec2(18.0, 18.0)),
-        icon,
-        col,
-    );
-    p.text(
-        rect.min + vec2(40.0, 18.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(13.5),
-        col,
-    );
-    resp
-}
-
-fn big_card(ui: &mut Ui, icon: Icon, title: &str, sub: &str, primary: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(178.0, 104.0), Sense::click());
-    let p = ui.painter();
-    let fill = if primary {
-        Color32::from_rgb(38, 22, 18)
-    } else if resp.hovered() {
-        HOVER
-    } else {
-        RAISED
-    };
-    p.rect_filled(rect, 12.0, fill);
-    let stroke = if primary {
-        Stroke::new(1.0, ACCENT.gamma_multiply(0.7))
-    } else if resp.hovered() {
-        Stroke::new(1.0, Color32::from_gray(80))
-    } else {
-        Stroke::new(1.0, BORDER)
-    };
-    p.rect_stroke(rect, 12.0, stroke, egui::StrokeKind::Inside);
-    let ib = Rect::from_min_size(rect.min + vec2(14.0, 14.0), vec2(34.0, 34.0));
-    p.rect_filled(
-        ib,
-        9.0,
-        if primary {
-            ACCENT
-        } else {
-            Color32::from_rgb(44, 44, 50)
-        },
-    );
-    icons::paint(p, ib.shrink(7.0), icon, Color32::WHITE);
-    p.text(
-        rect.min + vec2(14.0, 62.0),
-        egui::Align2::LEFT_TOP,
-        title,
-        egui::FontId::new(14.5, egui::FontFamily::Name("bold".into())),
-        Color32::WHITE,
-    );
-    p.text(
-        rect.min + vec2(14.0, 82.0),
-        egui::Align2::LEFT_TOP,
-        sub,
-        egui::FontId::proportional(11.5),
-        MUTED,
-    );
-    resp
-}
-
 fn open_clipboard(shared: &mut Shared) {
     match crate::system::actions::clipboard_image() {
         Some(img) => {
@@ -751,7 +752,7 @@ fn open_clipboard(shared: &mut Shared) {
 }
 
 /// The status line under the navigation: which keys capture, or why they do not.
-fn hotkey_text(
+pub(crate) fn hotkey_text(
     status: Option<&Status>,
     settings: &crate::system::settings::Settings,
 ) -> Result<String, String> {

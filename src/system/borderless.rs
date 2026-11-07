@@ -21,7 +21,6 @@ pub fn flatten_borderless(title: &str) {
 /// (through a 1 px frame the app paints over) and Windows 11 rounds its corners; Windows 10 just
 /// ignores the corner request.
 #[cfg(windows)]
-#[allow(dead_code)] // The TakeUI shell calls it from plan 5, Task 4.
 pub fn frameless_with_shadow(title: &str) {
     use windows_sys::Win32::Graphics::Dwm::{
         DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmExtendFrameIntoClientArea,
@@ -48,10 +47,6 @@ pub fn frameless_with_shadow(title: &str) {
         }
     });
 }
-
-#[cfg(not(windows))]
-#[allow(dead_code)] // The TakeUI shell calls it from plan 5, Task 4.
-pub fn frameless_with_shadow(_title: &str) {}
 
 /// Subclasses each window of this process titled `title` that is not done yet, then runs `extra`
 /// on it. Call from the thread that owns the windows, after they exist.

@@ -2,9 +2,6 @@
 //! click to maximize, resize from the edges, the window buttons, and the native fallback for the
 //! drivers that break borderless windows (`TAKESHOT_NATIVE_TITLEBAR=1`, `--native-titlebar`).
 
-// The TakeUI shell wires it in plan 5, Task 4; until then only the tests use parts of it.
-#![allow(dead_code)]
-
 use crate::ui::kit::{self, WindowControl};
 use crate::ui::tokens::Tokens;
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Response, Sense, Ui, ViewportCommand};
@@ -130,14 +127,14 @@ pub fn drag_area(ui: &mut Ui, rect: Rect) -> Response {
     let ctx = ui.ctx();
     if resp.double_clicked() {
         ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized(ctx)));
-    } else if resp.drag_started() {
+    } else if resp.drag_started_by(egui::PointerButton::Primary) {
         ctx.send_viewport_cmd(ViewportCommand::StartDrag);
     }
     resp
 }
 
-/// Minimize, maximize or restore, and close, right to left; none on macOS (the traffic lights) or
-/// with the native bar.
+/// Minimize, maximize or restore, and close, laid out by the caller right to left (Close first);
+/// none on macOS (the traffic lights) or with the native bar.
 pub fn window_buttons(ui: &mut Ui, t: &Tokens) -> Option<WindowControl> {
     if cfg!(target_os = "macos") || native() {
         return None;
@@ -154,6 +151,36 @@ pub fn window_buttons(ui: &mut Ui, t: &Tokens) -> Option<WindowControl> {
         }
     }
     chosen
+}
+
+/// Makes this process's window titled `title` take the theme's bar: no system frame on Windows
+/// (keeping the shadow), the traffic lights centred on macOS. Cheap when already done, so it can
+/// run every frame (a window shown again is a new window).
+pub fn adopt_window(title: &str) {
+    if native() {
+        return;
+    }
+    #[cfg(windows)]
+    crate::system::borderless::frameless_with_shadow(title);
+    #[cfg(target_os = "macos")]
+    crate::system::mac_titlebar::center_traffic_lights(title);
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let _ = title;
+}
+
+/// The window builder bits for the theme's bar: no system decorations, except on macOS, which
+/// keeps its frame and traffic lights over the content.
+pub fn frameless(vp: egui::ViewportBuilder) -> egui::ViewportBuilder {
+    if native() {
+        vp.with_decorations(true)
+    } else if cfg!(target_os = "macos") {
+        vp.with_decorations(true)
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_shown(false)
+    } else {
+        vp.with_decorations(false)
+    }
 }
 
 /// Carries out a window button; Close goes through the window's close request (the resident's X).

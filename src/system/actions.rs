@@ -123,6 +123,33 @@ pub fn temp_png(img: &RgbaImage) -> Option<PathBuf> {
     save_png(img, &p).ok().map(|_| p)
 }
 
+/// Opens the file's folder with the file selected (Windows, macOS) or the folder (Linux).
+pub fn show_in_folder(path: &Path) {
+    reveal(path);
+}
+
+#[cfg(windows)]
+fn reveal(path: &Path) {
+    let _ = std::process::Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn();
+}
+
+#[cfg(target_os = "macos")]
+fn reveal(path: &Path) {
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn();
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn reveal(path: &Path) {
+    if let Some(dir) = path.parent() {
+        open_folder(dir);
+    }
+}
+
 /// Starts another Takeshot process (capture, editor, pin) with `args`; the native title bar choice
 /// goes along (the environment variable is inherited anyway, the flag is passed on).
 pub fn spawn_self(args: &[&str]) -> Result<(), String> {

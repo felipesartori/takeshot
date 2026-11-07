@@ -196,6 +196,188 @@ pub fn icon_button(ui: &mut Ui, t: &Tokens, icon: Ico, active: bool, tip: &str) 
     resp.on_hover_text(tip)
 }
 
+/// A gallery filter: label and count in a pill; the active one uses the theme's tint.
+pub fn filter_pill(ui: &mut Ui, t: &Tokens, label: &str, count: usize, active: bool) -> Response {
+    let n = count.to_string();
+    let lw = text_size(ui, label, 13.0, Weight::Medium).x;
+    let nw = text_size(ui, &n, 11.0, Weight::Regular).x;
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(12.0 + lw + 6.0 + nw + 12.0, 28.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let bg = if active {
+        t.tint
+    } else {
+        mix(Color32::TRANSPARENT, t.raised, h)
+    };
+    p.rect_filled(rect, CornerRadius::same(14), bg);
+    let fg = if active {
+        t.accent
+    } else {
+        mix(t.muted, t.text, h)
+    };
+    let left = pos2(rect.left() + 12.0, rect.center().y);
+    draw_text(
+        p,
+        left,
+        Align2::LEFT_CENTER,
+        label,
+        13.0,
+        Weight::Medium,
+        dim(fg, ui),
+    );
+    let count_at = pos2(rect.right() - 12.0, rect.center().y);
+    let nc = if active {
+        t.accent.gamma_multiply(0.75)
+    } else {
+        t.faint
+    };
+    draw_text(
+        p,
+        count_at,
+        Align2::RIGHT_CENTER,
+        &n,
+        11.0,
+        Weight::Regular,
+        dim(nc, ui),
+    );
+    resp
+}
+
+/// The picture of a capture card.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CardThumb {
+    Loading,
+    /// The thumbnail texture and its size in pixels.
+    Ready(egui::TextureId, egui::Vec2),
+    /// The file is not a picture the app can read.
+    Failed,
+}
+
+/// What a capture card's hover buttons asked for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CardAction {
+    Copy,
+    Edit,
+    Folder,
+    Trash,
+}
+
+pub struct CardResponse {
+    pub resp: Response,
+    pub action: Option<CardAction>,
+}
+
+/// Height of the name and size lines under a card's picture.
+pub const CARD_TEXT_H: f32 = 44.0;
+
+/// The hover buttons over the top right of a card's picture, right to left: trash, folder, edit,
+/// copy (so they read copy, edit, folder, trash).
+pub fn card_action_rects(card: Rect) -> [(CardAction, Rect); 4] {
+    let s = 24.0;
+    let at = |i: f32| {
+        Rect::from_min_size(
+            pos2(card.right() - 10.0 - s - i * (s + 2.0), card.top() + 10.0),
+            vec2(s, s),
+        )
+    };
+    [
+        (CardAction::Trash, at(0.0)),
+        (CardAction::Folder, at(1.0)),
+        (CardAction::Edit, at(2.0)),
+        (CardAction::Copy, at(3.0)),
+    ]
+}
+
+/// A capture in the gallery: picture, name and size. Hover lifts the background and shows copy,
+/// edit, show in folder and trash over the picture; selected draws a 2 px primary ring. The size
+/// is the caller's (the grid's column width) and never depends on hover.
+pub fn capture_card(
+    ui: &mut Ui,
+    t: &Tokens,
+    size: egui::Vec2,
+    thumb: CardThumb,
+    name: &str,
+    meta: &str,
+    selected: bool,
+) -> CardResponse {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter().clone();
+    let radius = CornerRadius::same(t.radius);
+    p.rect_filled(rect, radius, mix(Color32::TRANSPARENT, t.raised, h));
+    let pic = Rect::from_min_max(
+        rect.min + vec2(6.0, 6.0),
+        pos2(rect.right() - 6.0, rect.bottom() - CARD_TEXT_H),
+    );
+    p.rect_filled(pic, CornerRadius::same(6), t.input);
+    match thumb {
+        CardThumb::Ready(id, px) if px.x > 0.0 && px.y > 0.0 => {
+            let k = (pic.width() / px.x).min(pic.height() / px.y);
+            let r = Rect::from_center_size(pic.center(), px * k);
+            p.image(
+                id,
+                r,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        CardThumb::Failed => draw_icon(&p, pic.center(), Ico::Images, 22.0, t.faint),
+        _ => {}
+    }
+    let width = rect.width() - 16.0;
+    let line = |s: &str, size: f32, w: Weight, c: Color32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(s.to_string(), font(size, w), c);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        ui.painter().layout_job(job)
+    };
+    let name_g = line(name, 12.0, Weight::Medium, dim(t.text, ui));
+    p.galley(pos2(rect.left() + 8.0, pic.bottom() + 8.0), name_g, t.text);
+    let meta_g = line(meta, 11.0, Weight::Regular, dim(t.faint, ui));
+    p.galley(
+        pos2(rect.left() + 8.0, pic.bottom() + 25.0),
+        meta_g,
+        t.faint,
+    );
+    if selected {
+        p.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(2.0, t.primary),
+            StrokeKind::Inside,
+        );
+    }
+    let mut action = None;
+    if resp.contains_pointer() {
+        let rects = card_action_rects(rect);
+        let strip = rects
+            .iter()
+            .fold(Rect::NOTHING, |a, (_, r)| a.union(*r))
+            .expand(2.0);
+        p.rect_filled(strip, CornerRadius::same(7), t.shell.gamma_multiply(0.92));
+        for (a, r) in rects {
+            let b = ui.interact(r, resp.id.with(("card-action", a as u8)), Sense::click());
+            let bh = hover_mix(ui, &b);
+            p.rect_filled(
+                r,
+                CornerRadius::same(5),
+                mix(Color32::TRANSPARENT, t.hover, bh),
+            );
+            let (icon, tip) = match a {
+                CardAction::Copy => (Ico::Copy, Msg::Copy),
+                CardAction::Edit => (Ico::Edit, Msg::EditInEditor),
+                CardAction::Folder => (Ico::FolderOpen, Msg::ShowInFolder),
+                CardAction::Trash => (Ico::Trash, Msg::Delete),
+            };
+            draw_icon(&p, r.center(), icon, 14.0, mix(t.muted, t.text, bh));
+            if b.on_hover_text(tr(tip)).clicked() {
+                action = Some(a);
+            }
+        }
+    }
+    CardResponse { resp, action }
+}
+
 /// A window button of the theme's title bar.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WindowControl {
@@ -1019,6 +1201,84 @@ mod tests {
             assert!(
                 off.abs() <= 1.0,
                 "{content:?}: text {off:+.1} px from the icon centre ({label:?} vs {icon:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn hover_buttons_act_on_their_card() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let size = egui::vec2(180.0, 160.0);
+        let card = Rect::from_min_size(egui::Pos2::ZERO, size);
+        for (want, at) in card_action_rects(card) {
+            let ctx = egui::Context::default();
+            crate::system::fonts::FontLib::load().install(&ctx);
+            let mut got = None;
+            let p = at.center();
+            let press = |down| egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed: down,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let frames = [
+                vec![],
+                vec![egui::Event::PointerMoved(p)],
+                vec![press(true)],
+                vec![press(false)],
+            ];
+            for (i, events) in frames.into_iter().enumerate() {
+                let input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 300.0),
+                    )),
+                    time: Some(i as f64 * 0.05),
+                    events,
+                    ..Default::default()
+                };
+                let mut full = ctx.run_ui(input, |ui| {
+                    let r = capture_card(ui, &t, size, CardThumb::Loading, "a.png", "1 × 1", false);
+                    got = got.or(r.action);
+                });
+                full.textures_delta.clear();
+            }
+            assert_eq!(got, Some(want), "{want:?} at {at:?}");
+        }
+    }
+
+    #[test]
+    fn cards_and_pills_keep_their_size_on_hover() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let cases: Vec<(&str, Widget)> = vec![
+            (
+                "capture_card",
+                Box::new(|ui| {
+                    capture_card(
+                        ui,
+                        &t,
+                        egui::vec2(180.0, 160.0),
+                        CardThumb::Failed,
+                        "a.png",
+                        "1 × 1",
+                        false,
+                    )
+                    .resp
+                }),
+            ),
+            (
+                "filter_pill",
+                Box::new(|ui| filter_pill(ui, &t, "Today", 12, false)),
+            ),
+        ];
+        for (name, f) in &cases {
+            let still = rect_of(false, f.as_ref());
+            let hovered = rect_of(true, f.as_ref());
+            assert!(!still.hovered && hovered.hovered, "{name}: pointer missed");
+            assert_eq!(still.alloc, hovered.alloc, "{name} moves on hover");
+            assert!(
+                hovered.alloc.contains_rect(hovered.painted),
+                "{name} paints outside"
             );
         }
     }

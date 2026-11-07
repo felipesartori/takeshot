@@ -4,6 +4,7 @@
 //! can open the tray menu while the main window (a child viewport) is hidden. On Linux the root is
 //! the main window itself: the desktop draws the tray menu, so nothing needs a pass while hidden.
 
+use crate::Shared;
 use crate::screens::about::{self, AboutAnswer, AboutInfo};
 use crate::screens::home::Home;
 use crate::screens::tray_menu::{MenuOutcome, TrayMenu};
@@ -18,7 +19,6 @@ use crate::system::tray::{TrayAction, TrayEntry, TrayEvent, tray_entries};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, BtnKind};
 use crate::ui::tokens::Tokens;
-use crate::{Shared, Switch};
 use egui::{ViewportCommand as Cmd, ViewportId};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -301,7 +301,7 @@ impl Shell {
                     .as_ref()
                     .map(|(_, i)| i.clone())
                     .unwrap_or_default();
-                let vp = egui::ViewportBuilder::default()
+                let vp = crate::ui::chrome::frameless(egui::ViewportBuilder::default())
                     .with_title("Takeshot")
                     .with_app_id("takeshot")
                     .with_inner_size([1160.0, 740.0])
@@ -330,7 +330,7 @@ impl Shell {
     fn main_contents(
         &mut self,
         ui: &mut egui::Ui,
-        frame: &eframe::Frame,
+        _frame: &eframe::Frame,
         resident: &mut Resident,
         home: &mut Home,
         shared: &mut Shared,
@@ -344,7 +344,11 @@ impl Shell {
                 XAction::Quit => self.quit(&ctx),
             }
         }
-        let _: Switch = home.ui(ui, frame, shared);
+        let t = shared.tokens(ctx.system_theme());
+        crate::skins::begin_frame(&ctx, &t);
+        for a in crate::skins::main_window(ui, &t, home, shared) {
+            home.apply(a, &ctx, shared);
+        }
         let req = std::mem::take(&mut home.requests);
         if req.about {
             self.about = true;

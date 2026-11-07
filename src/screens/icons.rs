@@ -18,12 +18,9 @@ pub enum Icon {
     Redo,
     Copy,
     Save,
-    Edit,
     Pin,
     Close,
     Full,
-    Timer,
-    Open,
     Folder,
 }
 
@@ -162,17 +159,6 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 st,
             ));
         }
-        Icon::Edit => {
-            // three sliders: "adjust and style"
-            for (i, k) in [6.0f32, 12.5, 9.0].iter().enumerate() {
-                let y = 5.5 + i as f32 * 4.5;
-                p.line_segment(
-                    [at(3.5, y), at(16.5, y)],
-                    Stroke::new(1.4 * s, color.gamma_multiply(0.6)),
-                );
-                p.circle_filled(at(*k, y), 1.9 * s, color);
-            }
-        }
         Icon::Pin => {
             p.add(Shape::closed_line(
                 vec![
@@ -203,30 +189,6 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                     st,
                 ));
             }
-        }
-        Icon::Timer => {
-            p.circle_stroke(at(10.0, 11.0), 6.0 * s, st);
-            p.line_segment([at(10.0, 11.0), at(10.0, 7.5)], st);
-            p.line_segment([at(8.0, 3.0), at(12.0, 3.0)], st);
-        }
-        Icon::Open => {
-            p.rect_stroke(
-                Rect::from_min_max(at(3.5, 4.5), at(16.5, 15.5)),
-                2.0 * s,
-                st,
-                egui::StrokeKind::Middle,
-            );
-            p.add(Shape::line(
-                vec![
-                    at(3.5, 13.0),
-                    at(8.0, 9.0),
-                    at(11.0, 12.0),
-                    at(13.0, 10.5),
-                    at(16.5, 13.5),
-                ],
-                st,
-            ));
-            p.circle_filled(at(12.8, 7.6), 1.3 * s, color);
         }
         Icon::Folder => {
             p.add(Shape::closed_line(

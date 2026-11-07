@@ -134,6 +134,24 @@ pub enum Msg {
     MinimizeWindow,
     MaximizeWindow,
     RestoreWindow,
+    HomeSubtitle,
+    OpenImage,
+    In3Seconds,
+    FilterAll,
+    ThisWeek,
+    SearchByName,
+    OpenFolder,
+    EditInEditor,
+    ShowInFolder,
+    PinOnScreen,
+    MovedToTrash,
+    NoCapturesYet,
+    FolderMissing,
+    ChooseFolder,
+    DarkMode,
+    LightMode,
+    CaptureMeta,
+    Copied,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -141,6 +159,12 @@ pub fn t(m: Msg) -> &'static str {
         Lang::En => en(m),
         Lang::Pt => pt(m),
     }
+}
+
+/// A key in every language (tests find painted text without depending on the global language).
+#[cfg(test)]
+pub fn every(m: Msg) -> [&'static str; 2] {
+    [en(m), pt(m)]
 }
 
 /// `t` with `{0}`, `{1}`… replaced by `args` in order.
@@ -245,6 +269,24 @@ fn en(m: Msg) -> &'static str {
         Msg::MinimizeWindow => "Minimize",
         Msg::MaximizeWindow => "Maximize",
         Msg::RestoreWindow => "Restore",
+        Msg::HomeSubtitle => "Press PrtSc anywhere or choose below.",
+        Msg::OpenImage => "Open image",
+        Msg::In3Seconds => "In 3 seconds",
+        Msg::FilterAll => "All",
+        Msg::ThisWeek => "This week",
+        Msg::SearchByName => "Search by name",
+        Msg::OpenFolder => "Open folder",
+        Msg::EditInEditor => "Open in editor",
+        Msg::ShowInFolder => "Show in folder",
+        Msg::PinOnScreen => "Pin on screen",
+        Msg::MovedToTrash => "Moved to trash",
+        Msg::NoCapturesYet => "No captures yet",
+        Msg::FolderMissing => "The captures folder does not exist",
+        Msg::ChooseFolder => "Choose folder",
+        Msg::DarkMode => "Dark mode",
+        Msg::LightMode => "Light mode",
+        Msg::CaptureMeta => "{0} × {1} · {2}",
+        Msg::Copied => "Copied",
     }
 }
 
@@ -341,6 +383,24 @@ fn pt(m: Msg) -> &'static str {
         Msg::MinimizeWindow => "Minimizar",
         Msg::MaximizeWindow => "Maximizar",
         Msg::RestoreWindow => "Restaurar",
+        Msg::HomeSubtitle => "Pressione PrtSc em qualquer lugar ou escolha abaixo.",
+        Msg::OpenImage => "Abrir imagem",
+        Msg::In3Seconds => "Em 3 segundos",
+        Msg::FilterAll => "Todas",
+        Msg::ThisWeek => "Esta semana",
+        Msg::SearchByName => "Buscar por nome",
+        Msg::OpenFolder => "Abrir pasta",
+        Msg::EditInEditor => "Abrir no editor",
+        Msg::ShowInFolder => "Mostrar na pasta",
+        Msg::PinOnScreen => "Fixar na tela",
+        Msg::MovedToTrash => "Movida para a lixeira",
+        Msg::NoCapturesYet => "Nenhuma captura ainda",
+        Msg::FolderMissing => "A pasta das capturas não existe",
+        Msg::ChooseFolder => "Escolher pasta",
+        Msg::DarkMode => "Modo escuro",
+        Msg::LightMode => "Modo claro",
+        Msg::CaptureMeta => "{0} × {1} · {2}",
+        Msg::Copied => "Copiado",
     }
 }
 
