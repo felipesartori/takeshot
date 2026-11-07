@@ -20,16 +20,16 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 - Texto com várias fontes do sistema (sans, negrito, serifada, elegante, mono, impacto, condensada, manuscrita) e opção de texto com fundo.
 - Toda marca continua editável, na captura e no editor: o que acabou de ser desenhado fica selecionado, e com Selecionar (`V`) um clique escolhe, `Shift`+clique soma à seleção, arrastar move e as alças redimensionam (pontas em linha e seta, oito alças em retângulo, elipse e borrar, quatro cantos em texto, traço e numeração).
 - Com algo selecionado, a barra de opções mostra a cor, a espessura e o preenchimento do objeto e muda o objeto.
-- Duplo clique num texto volta a editá-lo. Excluir um passo numerado não renumera os outros.
+- Duplo clique num texto, com Selecionar ou Texto, volta a editá-lo. Excluir um passo numerado não renumera os outros.
 - Desfazer e refazer cobrem criar, mover, redimensionar, mudar o estilo, duplicar e excluir; um arraste inteiro é um passo só.
 - Na captura, as ferramentas de desenho começam dentro da área escolhida.
-- Fechar o editor com mudanças que não foram copiadas nem salvas pergunta antes: Descartar, Copiar e fechar, ou Cancelar.
 
 **Editor**
 - 12 degradês prontos, degradê personalizado (duas cores e ângulo), cor sólida, fundo com a própria captura borrada ou transparente.
 - Margem, cantos arredondados, sombra, barra de janela e formatos 16:9, 4:3, 1:1 e 9:16.
 - Marca d'água com logo (PNG, JPG, WebP) e texto: 9 posições (cantos, bordas, centro) ou faixa superior/inferior com cor própria; tamanho, distância e opacidade ajustáveis; sobre o fundo ou sobre a captura.
 - Copiar, salvar, salvar como e fixar na tela.
+- Fechar o editor com mudanças que não foram copiadas nem salvas pergunta antes: Descartar, Cancelar, ou Copiar e fechar.
 
 **Saída**
 - Sempre PNG sem perdas na resolução original da tela. Nada de envio para nuvem nem busca de imagem.
@@ -47,14 +47,14 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 | `Shift+PrtSc` (Mac: `Ctrl+Shift+1`) | Tela inteira |
 | `P` `L` `A` `R` `O` `M` `T` `B` `N` | Caneta, linha, seta, retângulo, círculo, marcador, texto, borrar, numeração |
 | `V` | Selecionar: escolher, mover e redimensionar objetos, ou mover e ajustar a área |
-| `Delete` ou `Backspace` | Excluir o objeto selecionado |
-| `Ctrl+D` | Duplicar o objeto selecionado (12 px ao lado) |
-| setas / `Shift`+setas | Mover o objeto selecionado 1 px / 10 px |
+| `Delete` ou `Backspace` | Excluir os objetos selecionados |
+| `Ctrl+D` | Duplicar os objetos selecionados (12 px para a direita e para baixo) |
+| setas / `Shift`+setas | Mover os objetos selecionados 1 px / 10 px |
 | `Ctrl+C` / `Ctrl+S` | Copiar / salvar |
 | `Enter` ou `Ctrl+E` | Abrir no editor |
 | `Ctrl+T` | Fixar na tela |
 | `Ctrl+Z` / `Ctrl+Y` ou `Ctrl+Shift+Z` | Desfazer / refazer |
-| `Esc` | Limpar a seleção, depois sair da ferramenta, depois fechar a captura |
+| `Esc` | Limpar a seleção de objetos, depois voltar para Selecionar, depois fechar a captura |
 | `Ctrl+W` | Fechar o editor (pergunta se há mudanças não exportadas) |
 
 Os atalhos globais funcionam enquanto a janela principal estiver aberta (pode deixar minimizada).
