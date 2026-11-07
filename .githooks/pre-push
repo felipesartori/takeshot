@@ -1,0 +1,17 @@
+#!/bin/sh
+# Runs scripts/check.sh before a push when the pushed commits touch the Rust build: what CI checks,
+# here and on Linux/macOS. Enable once per clone: git config core.hooksPath .githooks
+zero=0000000000000000000000000000000000000000
+paths="src build.rs Cargo.toml Cargo.lock examples tests rust-toolchain.toml .github scripts/ci-linux"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # deleting a branch
+  if [ "$remote_sha" != "$zero" ]; then
+    # Unknown remote commit (not fetched) counts as "changed".
+    if changed=$(git diff --name-only "$remote_sha" "$local_sha" -- $paths 2> /dev/null); then
+      [ -z "$changed" ] && continue
+    fi
+  fi
+  scripts/check.sh --rev "$local_sha" || exit 1
+done
+exit 0
