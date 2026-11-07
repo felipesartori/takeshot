@@ -40,6 +40,7 @@ pub fn main_window(
                     ui.set_min_size(ui.available_size());
                     match home.page() {
                         Page::Start => super::home::start_page(ui, t, home, shared, &mut acts),
+                        Page::Style => super::style::style_page(ui, t, home, shared, &mut acts),
                         _ => home.legacy_page(ui, shared),
                     }
                 });

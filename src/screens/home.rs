@@ -6,7 +6,7 @@
 use crate::Shared;
 use crate::engine::render;
 use crate::screens::overlay::color_image;
-use crate::screens::widgets::{self, ACCENT, BORDER, MUTED, PANEL, TEXT};
+use crate::screens::widgets::{self, ACCENT, MUTED, TEXT};
 use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label, needs_modifier};
 use crate::system::library::{self, Entry, Period, Thumbs};
 use crate::system::settings::QuickStyle;
@@ -14,7 +14,7 @@ use crate::system::settings::{OnClose, TrayClick};
 use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{CardThumb, WindowControl};
 use crate::ui::tokens::{ThemeId, Tokens, UiMode};
-use egui::{Color32, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Color32, RichText, Ui, vec2};
 use image::RgbaImage;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -38,6 +38,10 @@ pub enum MainAction {
     ChooseFolder,
     Filter(Period),
     Search(String),
+    /// Style's "Restore default".
+    RestoreStyle,
+    /// Pick the watermark's logo file.
+    ChooseLogo,
     Select(PathBuf),
     Copy(PathBuf),
     Edit(PathBuf),
@@ -84,7 +88,10 @@ pub struct Home {
     mark: Option<((ThemeId, bool), egui::TextureHandle)>,
     sample: RgbaImage,
     preview: Option<egui::TextureHandle>,
-    preview_dirty: bool,
+    /// What the preview was drawn from (style and watermark), to draw it again only on a change.
+    preview_key: Option<String>,
+    #[cfg(test)]
+    renders: usize,
     /// The capture shortcuts' state, given by the resident each frame.
     pub hotkey_status: Option<Status>,
     /// What the user asked of the resident this frame (About, Quit, a new shortcut…).
@@ -127,7 +134,9 @@ impl Home {
             mark: None,
             sample: crate::system::capture::sample_window(1000, 620),
             preview: None,
-            preview_dirty: true,
+            preview_key: None,
+            #[cfg(test)]
+            renders: 0,
             hotkey_status: None,
             requests: HomeRequests::default(),
             capturing: None,
@@ -242,6 +251,55 @@ impl Home {
                 id
             }
         }
+    }
+
+    /// The live style preview: the sample picture through the current style and watermark, drawn
+    /// again only when one of them (or the logo) changed.
+    pub fn style_preview(
+        &mut self,
+        ctx: &egui::Context,
+        shared: &Shared,
+    ) -> Option<(egui::TextureId, egui::Vec2)> {
+        let s = &shared.settings;
+        let key = serde_json::to_string(&(&s.style, &s.watermark, shared.logo.image.is_some()))
+            .unwrap_or_default();
+        if self.preview.is_none() || self.preview_key.as_deref() != Some(key.as_str()) {
+            let (img, _) = render::compose(
+                &self.sample,
+                &s.style,
+                &s.watermark,
+                shared.logo.image.as_ref(),
+                &shared.fonts,
+                1.0,
+            );
+            let small = image::imageops::resize(
+                &img,
+                (img.width() / 2).max(1),
+                (img.height() / 2).max(1),
+                image::imageops::FilterType::Triangle,
+            );
+            match &mut self.preview {
+                Some(t) => t.set(color_image(&small), egui::TextureOptions::LINEAR),
+                None => {
+                    self.preview = Some(ctx.load_texture(
+                        "style-preview",
+                        color_image(&small),
+                        egui::TextureOptions::LINEAR,
+                    ))
+                }
+            }
+            self.preview_key = Some(key);
+            #[cfg(test)]
+            {
+                self.renders += 1;
+            }
+        }
+        self.preview.as_ref().map(|t| (t.id(), t.size_vec2()))
+    }
+
+    #[cfg(test)]
+    pub fn preview_renders(&self) -> usize {
+        self.renders
     }
 
     fn set_entries(&mut self, entries: Vec<Entry>) {
@@ -398,6 +456,19 @@ impl Home {
                 self.refilter();
             }
             MainAction::Select(p) => self.selected = Some(p),
+            MainAction::RestoreStyle => {
+                crate::system::settings::restore_default_style(&mut shared.settings);
+                shared.settings_dirty = true;
+            }
+            MainAction::ChooseLogo => {
+                if let Some(p) = rfd::FileDialog::new()
+                    .add_filter("Logo", &["png", "jpg", "jpeg", "webp"])
+                    .pick_file()
+                {
+                    shared.settings.watermark.logo_path = Some(p.to_string_lossy().into_owned());
+                    shared.settings_dirty = true;
+                }
+            }
             MainAction::Copy(p) => match image::open(&p) {
                 Ok(img) => match actions::copy_image(&img.to_rgba8()) {
                     Ok(()) => shared.toast(tr(Msg::Copied).to_string()),
@@ -449,100 +520,11 @@ impl Home {
         }
     }
 
-    /// The style and settings pages as they were, until their TakeUI pages land.
+    /// The settings page as it was, until its TakeUI page lands.
     pub fn legacy_page(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        match self.page {
-            Page::Style => self.style_page(ui, shared),
-            Page::Settings => self.settings_page(ui, shared),
-            Page::Start => {}
+        if self.page == Page::Settings {
+            self.settings_page(ui, shared);
         }
-    }
-
-    fn paint_preview(&mut self, ui: &mut Ui, shared: &Shared, size: egui::Vec2) {
-        if self.preview_dirty || self.preview.is_none() {
-            let (img, _) = render::compose(
-                &self.sample,
-                &shared.settings.style,
-                &shared.settings.watermark,
-                shared.logo.image.as_ref(),
-                &shared.fonts,
-                1.0,
-            );
-            let small = image::imageops::resize(
-                &img,
-                (img.width() / 2).max(1),
-                (img.height() / 2).max(1),
-                image::imageops::FilterType::Triangle,
-            );
-            match &mut self.preview {
-                Some(t) => t.set(color_image(&small), egui::TextureOptions::LINEAR),
-                None => {
-                    self.preview = Some(ui.ctx().load_texture(
-                        "style-preview",
-                        color_image(&small),
-                        egui::TextureOptions::LINEAR,
-                    ))
-                }
-            }
-            self.preview_dirty = false;
-        }
-        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().rect_filled(rect, 12.0, PANEL);
-        ui.painter().rect_stroke(
-            rect,
-            12.0,
-            Stroke::new(1.0, BORDER),
-            egui::StrokeKind::Inside,
-        );
-        if let Some(t) = &self.preview {
-            let sz = t.size_vec2();
-            let k = ((rect.width() - 24.0) / sz.x).min((rect.height() - 24.0) / sz.y);
-            let r = Rect::from_center_size(rect.center(), sz * k);
-            ui.painter().image(
-                t.id(),
-                r,
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-        }
-    }
-
-    fn style_page(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        ui.label(
-            RichText::new("Estilo e marca d'água")
-                .size(24.0)
-                .family(egui::FontFamily::Name("bold".into()))
-                .color(Color32::WHITE),
-        );
-        ui.label(
-            RichText::new("Padrão para novas capturas. No editor você ajusta cada uma.")
-                .color(MUTED),
-        );
-        ui.add_space(12.0);
-        let avail = ui.available_size();
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(320.0);
-                egui::ScrollArea::vertical()
-                    .max_height(avail.y)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if widgets::style_panel(
-                            ui,
-                            &mut shared.settings.style,
-                            &mut shared.settings.watermark,
-                            &mut shared.logo,
-                        ) {
-                            self.preview_dirty = true;
-                            shared.settings_dirty = true;
-                        }
-                        shared.logo.sync(ui.ctx(), &shared.settings.watermark);
-                    });
-            });
-            ui.add_space(16.0);
-            let w = (avail.x - 340.0).max(260.0);
-            self.paint_preview(ui, shared, vec2(w, (w * 0.66).min(avail.y)));
-        });
     }
 
     fn settings_page(&mut self, ui: &mut Ui, shared: &mut Shared) {
@@ -771,5 +753,25 @@ pub(crate) fn hotkey_text(
             Err(format!("{} em uso por outro programa", keys.join(" e ")))
         }
         Some(Status::Unavailable(e)) => Err(format!("Atalhos globais indisponíveis: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_preview_renders_once_per_change() {
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        let ctx = egui::Context::default();
+        home.style_preview(&ctx, &shared);
+        home.style_preview(&ctx, &shared);
+        assert_eq!(home.preview_renders(), 1, "nothing changed");
+        shared.settings.style.padding += 3.0;
+        home.style_preview(&ctx, &shared);
+        assert_eq!(home.preview_renders(), 2, "the margin changed");
+        shared.settings.watermark.enabled = !shared.settings.watermark.enabled;
+        home.style_preview(&ctx, &shared);
+        assert_eq!(home.preview_renders(), 3, "the watermark changed");
     }
 }

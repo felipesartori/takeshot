@@ -2,6 +2,7 @@
 
 pub mod home;
 pub mod shell;
+pub mod style;
 
 /// Headless frames over the main window, for the skin's tests.
 #[cfg(test)]

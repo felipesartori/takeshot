@@ -196,6 +196,171 @@ pub fn icon_button(ui: &mut Ui, t: &Tokens, icon: Ico, active: bool, tip: &str) 
     resp.on_hover_text(tip)
 }
 
+/// Paints a linear gradient (`stops` along `angle` degrees) in `rect` with rounded corners masked
+/// by `bg`, the colour behind it.
+pub fn paint_gradient(
+    p: &Painter,
+    rect: Rect,
+    stops: &[(f32, [u8; 3])],
+    angle: f32,
+    rounding: f32,
+    bg: Color32,
+) {
+    let n = 24;
+    let a = angle.to_radians();
+    let dir = vec2(a.sin(), -a.cos());
+    let half = (rect.width() * dir.x.abs() + rect.height() * dir.y.abs()) / 2.0;
+    let mut mesh = egui::Mesh::default();
+    let t_of = |q: egui::Pos2| {
+        ((q - rect.center()).dot(dir) / (2.0 * half.max(1e-3)) + 0.5).clamp(0.0, 1.0)
+    };
+    for i in 0..=n {
+        for j in 0..=n {
+            let q = pos2(
+                rect.left() + rect.width() * j as f32 / n as f32,
+                rect.top() + rect.height() * i as f32 / n as f32,
+            );
+            let c = crate::engine::presets::sample(stops, t_of(q));
+            mesh.colored_vertex(q, Color32::from_rgb(c[0], c[1], c[2]));
+        }
+    }
+    let w = n + 1;
+    for i in 0..n {
+        for j in 0..n {
+            let a0 = (i * w + j) as u32;
+            let b0 = a0 + 1;
+            let c0 = a0 + w as u32;
+            let d0 = c0 + 1;
+            mesh.add_triangle(a0, b0, c0);
+            mesh.add_triangle(b0, d0, c0);
+        }
+    }
+    p.add(egui::Shape::mesh(mesh));
+    if rounding > 0.0 {
+        let r = rounding;
+        for (corner, sx, sy) in [
+            (rect.left_top(), 1.0, 1.0),
+            (rect.right_top(), -1.0, 1.0),
+            (rect.left_bottom(), 1.0, -1.0),
+            (rect.right_bottom(), -1.0, -1.0),
+        ] {
+            let mut pts = vec![corner];
+            for k in 0..=8 {
+                let t = k as f32 / 8.0 * std::f32::consts::FRAC_PI_2;
+                let cx = corner.x + sx * r;
+                let cy = corner.y + sy * r;
+                pts.push(pos2(cx - sx * r * t.cos(), cy - sy * r * t.sin()));
+            }
+            p.add(egui::Shape::convex_polygon(pts, bg, Stroke::NONE));
+        }
+    }
+}
+
+/// What a background swatch shows: a gradient (stops and angle). The solid colour has its own
+/// colour picker instead.
+#[derive(Clone, Copy, Debug)]
+pub enum Swatch {
+    Gradient(&'static [(f32, [u8; 3])], f32),
+}
+
+/// A 44 × 36 background choice: the fill inset by 3 px, a 2 px primary ring when selected, a
+/// 1 px ring on hover, all inside its own area.
+pub fn swatch(ui: &mut Ui, t: &Tokens, fill: Swatch, selected: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 36.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let body = rect.shrink(3.0);
+    let Swatch::Gradient(stops, angle) = fill;
+    paint_gradient(p, body, stops, angle, 6.0, t.surf);
+    let ring = if selected {
+        Stroke::new(2.0, t.primary)
+    } else {
+        Stroke::new(1.0, mix(Color32::TRANSPARENT, t.muted, h))
+    };
+    p.rect_stroke(
+        rect.shrink(1.0),
+        CornerRadius::same(8),
+        ring,
+        StrokeKind::Inside,
+    );
+    resp
+}
+
+/// A collapsible section's header: chevron and title over the full width; a click toggles `open`.
+pub fn section_header(ui: &mut Ui, t: &Tokens, title: &str, open: &mut bool) -> Response {
+    let w = ui.available_width().max(120.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
+    if resp.clicked() {
+        *open = !*open;
+    }
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let fg = mix(t.text, t.accent, h * 0.5);
+    let chevron = if *open {
+        Ico::ChevronDown
+    } else {
+        Ico::ChevronRight
+    };
+    draw_icon(
+        p,
+        pos2(rect.left() + 8.0, rect.center().y),
+        chevron,
+        14.0,
+        t.muted,
+    );
+    draw_text(
+        p,
+        pos2(rect.left() + 22.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        title,
+        13.0,
+        Weight::Medium,
+        dim(fg, ui),
+    );
+    resp
+}
+
+/// Nine 28 × 20 cells, three by three, each with a dot at its anchor; returns the cell clicked.
+pub fn anchor_grid(ui: &mut Ui, t: &Tokens, selected: Option<usize>) -> Option<usize> {
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(3.0 * 28.0 + 2.0 * 4.0, 3.0 * 20.0 + 2.0 * 4.0),
+        Sense::hover(),
+    );
+    let mut chosen = None;
+    for i in 0..9 {
+        let (col, row) = ((i % 3) as f32, (i / 3) as f32);
+        let cell = Rect::from_min_size(rect.min + vec2(col * 32.0, row * 24.0), vec2(28.0, 20.0));
+        let r = ui.interact(cell, ui.scope_id().with(("anchor", i)), Sense::click());
+        let h = hover_mix(ui, &r);
+        let on = selected == Some(i);
+        let p = ui.painter();
+        p.rect_filled(
+            cell,
+            CornerRadius::same(4),
+            if on {
+                t.tint
+            } else {
+                mix(t.input, t.raised, h)
+            },
+        );
+        p.rect_stroke(
+            cell,
+            CornerRadius::same(4),
+            Stroke::new(1.0, if on { t.primary } else { t.border }),
+            StrokeKind::Inside,
+        );
+        let dot = pos2(
+            cell.left() + 6.0 + col * (cell.width() - 12.0) / 2.0,
+            cell.top() + 5.0 + row * (cell.height() - 10.0) / 2.0,
+        );
+        p.circle_filled(dot, 2.5, if on { t.accent } else { t.muted });
+        if r.clicked() {
+            chosen = Some(i);
+        }
+    }
+    chosen
+}
+
 /// A gallery filter: label and count in a pill; the active one uses the theme's tint.
 pub fn filter_pill(ui: &mut Ui, t: &Tokens, label: &str, count: usize, active: bool) -> Response {
     let n = count.to_string();
@@ -1244,6 +1409,41 @@ mod tests {
                 full.textures_delta.clear();
             }
             assert_eq!(got, Some(want), "{want:?} at {at:?}");
+        }
+    }
+
+    #[test]
+    fn sections_and_swatches_keep_their_size_on_hover() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let stops = crate::engine::presets::PRESETS[0].stops;
+        let cases: Vec<(&str, Widget)> = vec![
+            (
+                "section_header",
+                Box::new(|ui| {
+                    let mut open = true;
+                    section_header(ui, &t, "Frame", &mut open)
+                }),
+            ),
+            (
+                "swatch",
+                Box::new(|ui| swatch(ui, &t, Swatch::Gradient(stops, 135.0), false)),
+            ),
+            (
+                "swatch selected",
+                Box::new(|ui| swatch(ui, &t, Swatch::Gradient(stops, 45.0), true)),
+            ),
+        ];
+        for (name, f) in &cases {
+            let still = rect_of(false, f.as_ref());
+            let hovered = rect_of(true, f.as_ref());
+            assert!(!still.hovered && hovered.hovered, "{name}: pointer missed");
+            assert_eq!(still.alloc, hovered.alloc, "{name} moves on hover");
+            for run in [&still, &hovered] {
+                assert!(
+                    run.alloc.contains_rect(run.painted),
+                    "{name} paints outside"
+                );
+            }
         }
     }
 

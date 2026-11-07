@@ -325,9 +325,44 @@ impl Settings {
     }
 }
 
+/// Style's "Restore default": background, frame, watermark and the direct-copy style go back to
+/// their defaults; the chosen logo file stays (picking it again would be a chore).
+pub fn restore_default_style(s: &mut Settings) {
+    let logo = s.watermark.logo_path.take();
+    let d = Settings::default();
+    s.style = d.style;
+    s.watermark = d.watermark;
+    s.watermark.logo_path = logo;
+    s.quick_style = d.quick_style;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_default_keeps_the_logo() {
+        let mut s = Settings::default();
+        s.style.padding = 20.0;
+        s.style.background = Background::Solid;
+        s.watermark.enabled = true;
+        s.watermark.text = "@me".into();
+        s.watermark.logo_path = Some("logo.png".into());
+        s.quick_style = QuickStyle::Plain;
+        restore_default_style(&mut s);
+        assert_eq!(
+            serde_json::to_string(&s.style).unwrap(),
+            serde_json::to_string(&Style::default()).unwrap()
+        );
+        assert_eq!(s.quick_style, Settings::default().quick_style);
+        assert!(!s.watermark.enabled);
+        assert!(s.watermark.text.is_empty());
+        assert_eq!(
+            s.watermark.logo_path.as_deref(),
+            Some("logo.png"),
+            "the logo stays"
+        );
+    }
 
     #[test]
     fn old_settings_file_loads_with_new_defaults() {

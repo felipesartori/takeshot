@@ -2,7 +2,7 @@
 
 use crate::engine::annotator::Annotator;
 use crate::engine::model::*;
-use crate::engine::presets::{self, PRESETS};
+use crate::engine::presets::PRESETS;
 use crate::screens::icons::{self, Icon};
 use crate::system::fonts::FontLib;
 use crate::system::settings::{Aspect, Background, DrawOpts, Style, Watermark, WmPos};
@@ -324,55 +324,7 @@ pub fn paint_gradient(
     angle: f32,
     rounding: f32,
 ) {
-    let n = 24;
-    let a = angle.to_radians();
-    let dir = vec2(a.sin(), -a.cos());
-    let half = (rect.width() * dir.x.abs() + rect.height() * dir.y.abs()) / 2.0;
-    let mut mesh = egui::Mesh::default();
-    let t_of = |q: egui::Pos2| {
-        ((q - rect.center()).dot(dir) / (2.0 * half.max(1e-3)) + 0.5).clamp(0.0, 1.0)
-    };
-    for i in 0..=n {
-        for j in 0..=n {
-            let q = pos2(
-                rect.left() + rect.width() * j as f32 / n as f32,
-                rect.top() + rect.height() * i as f32 / n as f32,
-            );
-            let c = presets::sample(stops, t_of(q));
-            mesh.colored_vertex(q, Color32::from_rgb(c[0], c[1], c[2]));
-        }
-    }
-    let w = n + 1;
-    for i in 0..n {
-        for j in 0..n {
-            let a0 = (i * w + j) as u32;
-            let b0 = a0 + 1;
-            let c0 = a0 + w as u32;
-            let d0 = c0 + 1;
-            mesh.add_triangle(a0, b0, c0);
-            mesh.add_triangle(b0, d0, c0);
-        }
-    }
-    p.add(egui::Shape::mesh(mesh));
-    if rounding > 0.0 {
-        // mask the corners with the panel colour
-        let r = rounding;
-        for (corner, sx, sy) in [
-            (rect.left_top(), 1.0, 1.0),
-            (rect.right_top(), -1.0, 1.0),
-            (rect.left_bottom(), 1.0, -1.0),
-            (rect.right_bottom(), -1.0, -1.0),
-        ] {
-            let mut pts = vec![corner];
-            for k in 0..=8 {
-                let t = k as f32 / 8.0 * std::f32::consts::FRAC_PI_2;
-                let cx = corner.x + sx * r;
-                let cy = corner.y + sy * r;
-                pts.push(pos2(cx - sx * r * t.cos(), cy - sy * r * t.sin()));
-            }
-            p.add(egui::Shape::convex_polygon(pts, PANEL, Stroke::NONE));
-        }
-    }
+    crate::ui::kit::paint_gradient(p, rect, stops, angle, rounding, PANEL);
 }
 
 fn swatch(
