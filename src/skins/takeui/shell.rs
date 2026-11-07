@@ -24,12 +24,7 @@ pub fn main_window(
         .frame(Frame::new().fill(t.shell))
         .show(ui, |ui| title_bar(ui, t, home, shared, &mut acts));
     egui::CentralPanel::no_frame()
-        .frame(Frame::new().fill(t.shell).inner_margin(Margin {
-            left: 8,
-            right: 8,
-            top: 0,
-            bottom: 8,
-        }))
+        .frame(Frame::new().fill(t.shell).inner_margin(Margin::same(8)))
         .show(ui, |ui| {
             Frame::new()
                 .fill(t.surf)
@@ -41,7 +36,10 @@ pub fn main_window(
                     match home.page() {
                         Page::Start => super::home::start_page(ui, t, home, shared, &mut acts),
                         Page::Style => super::style::style_page(ui, t, home, shared, &mut acts),
-                        _ => home.legacy_page(ui, shared),
+                        Page::Settings => {
+                            super::settings::settings_page(ui, t, home, shared, &mut acts)
+                        }
+                        Page::About => {}
                     }
                 });
         });
@@ -108,12 +106,22 @@ fn title_bar(
 #[cfg(test)]
 mod tests {
     use crate::screens::home::{Home, MainAction};
-    use crate::skins::takeui::testing::{click, painted_at, run};
+    use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::ui::chrome::BAR_HEIGHT;
     use crate::ui::i18n::{Msg, every};
     use crate::ui::icon::{Ico, glyph};
     use crate::ui::tokens::UiMode;
+
+    #[test]
+    fn the_content_box_has_the_same_gap_under_the_bar_as_around_it() {
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        let (_, _, blocks) = run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let b = content_box(&blocks, &shared.tokens(None));
+        assert_eq!(b.left(), 8.0, "{b:?}");
+        assert_eq!(b.top() - BAR_HEIGHT, b.left(), "under the bar: {b:?}");
+        assert_eq!(740.0 - b.bottom(), b.left(), "at the bottom: {b:?}");
+    }
 
     #[test]
     fn the_title_bar_fits_at_the_minimum_size() {
@@ -137,6 +145,18 @@ mod tests {
                     !ra.shrink(0.5).intersects(rb.shrink(0.5)),
                     "{a:?} {ra:?} overlaps {b:?} {rb:?}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn every_page_survives_a_tiny_window() {
+        // Layout passes can hand a page next to no room (a first pass, a window being restored).
+        for page in [Page::Start, Page::Style, Page::Settings] {
+            for size in [(30.0, 30.0), (1.0, 1.0)] {
+                let (mut home, mut shared) = Home::for_tests(vec![]);
+                home.open(page);
+                run(&mut home, &mut shared, size, true, vec![]);
             }
         }
     }

@@ -361,6 +361,111 @@ pub fn anchor_grid(ui: &mut Ui, t: &Tokens, selected: Option<usize>) -> Option<u
     chosen
 }
 
+/// A settings row: label and a short hint on the left, the control on the right, over the full
+/// width. Its height follows the hint, never the hover.
+pub fn setting_row(
+    ui: &mut Ui,
+    t: &Tokens,
+    label: &str,
+    hint: Option<&str>,
+    control: impl FnOnce(&mut Ui),
+) -> Response {
+    let w = ui.available_width().max(240.0);
+    let h = if hint.is_some() { 52.0 } else { 40.0 };
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+    let p = ui.painter();
+    let top = if hint.is_some() {
+        rect.top() + 9.0
+    } else {
+        rect.center().y - 8.0
+    };
+    draw_text(
+        p,
+        pos2(rect.left() + 14.0, top),
+        Align2::LEFT_TOP,
+        label,
+        13.0,
+        Weight::Medium,
+        dim(t.text, ui),
+    );
+    if let Some(hint) = hint {
+        let room = (rect.width() * 0.62).max(160.0);
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            hint.to_string(),
+            font(12.0, Weight::Regular),
+            t.muted,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+        let g = ui.painter().layout_job(job);
+        ui.painter()
+            .galley(pos2(rect.left() + 14.0, rect.top() + 28.0), g, t.muted);
+    }
+    let area = Rect::from_min_max(
+        pos2(rect.center().x, rect.top()),
+        pos2(rect.right() - 14.0, rect.bottom()),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(area)
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        control,
+    );
+    resp
+}
+
+/// A theme to choose: a small picture of the main window in that theme's colours (in the current
+/// light or dark), and its name. Selected draws a 2 px primary ring; hover only colours the border.
+pub fn theme_card(ui: &mut Ui, t: &Tokens, theme: ThemeId, selected: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(148.0, 112.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let other = crate::ui::tokens::tokens(theme, t.dark);
+    let pic = Rect::from_min_size(rect.min + vec2(8.0, 8.0), vec2(rect.width() - 16.0, 70.0));
+    p.rect_filled(pic, CornerRadius::same(6), other.shell);
+    let panel = Rect::from_min_max(pic.min + vec2(28.0, 14.0), pic.max - vec2(6.0, 6.0));
+    p.rect_filled(panel, CornerRadius::same(4), other.surf);
+    p.rect_filled(
+        Rect::from_min_size(pic.min + vec2(6.0, 14.0), vec2(16.0, 50.0)),
+        CornerRadius::same(3),
+        other.raised,
+    );
+    p.rect_filled(
+        Rect::from_min_size(panel.min + vec2(8.0, 8.0), vec2(panel.width() * 0.45, 7.0)),
+        CornerRadius::same(3),
+        other.primary,
+    );
+    p.rect_filled(
+        Rect::from_min_size(pic.min + vec2(6.0, 4.0), vec2(26.0, 5.0)),
+        CornerRadius::same(2),
+        other.accent,
+    );
+    let name = tr(match theme {
+        ThemeId::TakeUi => Msg::ThemeTakeUi,
+        ThemeId::Coral => Msg::ThemeCoral,
+    });
+    draw_text(
+        p,
+        pos2(rect.left() + 10.0, pic.bottom() + 17.0),
+        Align2::LEFT_CENTER,
+        name,
+        13.0,
+        Weight::Medium,
+        dim(t.text, ui),
+    );
+    let ring = if selected {
+        Stroke::new(2.0, t.primary)
+    } else {
+        Stroke::new(1.0, mix(t.border, t.muted, h))
+    };
+    p.rect_stroke(
+        rect.shrink(1.0),
+        CornerRadius::same(8),
+        ring,
+        StrokeKind::Inside,
+    );
+    resp
+}
+
 /// A gallery filter: label and count in a pill; the active one uses the theme's tint.
 pub fn filter_pill(ui: &mut Ui, t: &Tokens, label: &str, count: usize, active: bool) -> Response {
     let n = count.to_string();
@@ -1431,6 +1536,48 @@ mod tests {
             (
                 "swatch selected",
                 Box::new(|ui| swatch(ui, &t, Swatch::Gradient(stops, 45.0), true)),
+            ),
+        ];
+        for (name, f) in &cases {
+            let still = rect_of(false, f.as_ref());
+            let hovered = rect_of(true, f.as_ref());
+            assert!(!still.hovered && hovered.hovered, "{name}: pointer missed");
+            assert_eq!(still.alloc, hovered.alloc, "{name} moves on hover");
+            for run in [&still, &hovered] {
+                assert!(
+                    run.alloc.contains_rect(run.painted),
+                    "{name} paints outside"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rows_and_theme_cards_keep_their_size_on_hover() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let cases: Vec<(&str, Widget)> = vec![
+            (
+                "setting_row",
+                Box::new(|ui| {
+                    setting_row(
+                        ui,
+                        &t,
+                        "Start with the system",
+                        Some("Opens minimized"),
+                        |ui| {
+                            let mut on = true;
+                            switch(ui, &t, &mut on);
+                        },
+                    )
+                }),
+            ),
+            (
+                "theme_card",
+                Box::new(|ui| theme_card(ui, &t, ThemeId::Coral, false)),
+            ),
+            (
+                "theme_card selected",
+                Box::new(|ui| theme_card(ui, &t, ThemeId::TakeUi, true)),
             ),
         ];
         for (name, f) in &cases {

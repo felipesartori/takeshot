@@ -204,7 +204,6 @@ impl Tray {
         Ok(Self { icon })
     }
 
-    #[allow(dead_code)] // The theme switch of plan 5 calls it.
     pub fn set_theme(&self, theme: ThemeId) {
         if let Ok(img) = tray_icon_image(theme) {
             #[cfg(target_os = "macos")]
@@ -378,7 +377,6 @@ impl Tray {
         Ok(Self)
     }
 
-    #[allow(dead_code)] // The theme switch of plan 5 calls it.
     pub fn set_theme(&self, theme: ThemeId) {
         gtk_thread::with_tray(move |tray| {
             if let Ok(img) = tray_icon_image(theme) {

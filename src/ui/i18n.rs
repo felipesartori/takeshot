@@ -40,6 +40,11 @@ pub fn set_lang(lang: Lang) {
     CURRENT.store(lang as u8, Ordering::Relaxed);
 }
 
+/// Applies a language choice now: the system's language for Automático, else the one chosen.
+pub fn apply_language(pref: LangPref) {
+    set_lang(resolve(pref, system_locale().as_deref()));
+}
+
 pub fn lang() -> Lang {
     match CURRENT.load(Ordering::Relaxed) {
         1 => Lang::Pt,
@@ -189,6 +194,40 @@ pub enum Msg {
     HotkeysBusy,
     HotkeysUnavailable,
     CannotPin,
+    SettingsGeneralHint,
+    Startup,
+    StartWithSystemHint,
+    Appearance,
+    ModeHint,
+    WindowAndTray,
+    OnCloseHint,
+    NoticeHint,
+    CaptureSection,
+    SaveSection,
+    ShortcutsSection,
+    KeepLastArea,
+    FullOpensEditor,
+    CapturesFolder,
+    Choose,
+    SaveStraight,
+    AlwaysPng,
+    GlobalShortcuts,
+    InCapture,
+    KeyShiftDrag,
+    KeyAltDrag,
+    KeyWheel,
+    KeyArrows,
+    KeyPickColor,
+    DescStraight,
+    DescFromCenter,
+    DescTools,
+    DescWidth,
+    DescCopySave,
+    DescOpenEditor,
+    DescUndoRedo,
+    DescMoveResize,
+    DescPickColor,
+    ShortcutStatus,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -363,6 +402,42 @@ fn en(m: Msg) -> &'static str {
         Msg::HotkeysBusy => "{0} in use by another app",
         Msg::HotkeysUnavailable => "Global shortcuts unavailable: {0}",
         Msg::CannotPin => "Could not pin {0}",
+        Msg::SettingsGeneralHint => "How Takeshot starts, looks and behaves when closed.",
+        Msg::Startup => "Startup",
+        Msg::StartWithSystemHint => {
+            "Opens minimized in the tray when the computer starts. Windows, macOS and Linux."
+        }
+        Msg::Appearance => "Appearance",
+        Msg::ModeHint => "Applies to every window, the capture and the tray menu.",
+        Msg::WindowAndTray => "Window and tray",
+        Msg::OnCloseHint => "Minimized, Takeshot stays in the tray and PrtSc keeps working.",
+        Msg::NoticeHint => "A discreet notice in the corner of the screen for a few seconds.",
+        Msg::CaptureSection => "Capture",
+        Msg::SaveSection => "Save",
+        Msg::ShortcutsSection => "Shortcuts",
+        Msg::KeepLastArea => "Remember the last area",
+        Msg::FullOpensEditor => "Full screen opens the editor",
+        Msg::CapturesFolder => "Captures folder",
+        Msg::Choose => "Choose",
+        Msg::SaveStraight => "Save straight to the folder",
+        Msg::AlwaysPng => "Always lossless PNG at the original resolution.",
+        Msg::GlobalShortcuts => "Global shortcuts",
+        Msg::InCapture => "In the capture",
+        Msg::KeyShiftDrag => "Shift (dragging)",
+        Msg::KeyAltDrag => "Alt (dragging)",
+        Msg::KeyWheel => "Mouse wheel",
+        Msg::KeyArrows => "Arrows / Shift+arrows",
+        Msg::KeyPickColor => "C (before selecting)",
+        Msg::DescStraight => "Straight line at 45°, square, perfect circle",
+        Msg::DescFromCenter => "Draw from the centre",
+        Msg::DescTools => "Pen, line, arrow, rectangle, circle, marker, text, blur, steps",
+        Msg::DescWidth => "Stroke width / text size",
+        Msg::DescCopySave => "Copy / save",
+        Msg::DescOpenEditor => "Open in the editor",
+        Msg::DescUndoRedo => "Undo / redo",
+        Msg::DescMoveResize => "Move / resize the selection",
+        Msg::DescPickColor => "Copy the colour under the pointer",
+        Msg::ShortcutStatus => "Status",
     }
 }
 
@@ -516,6 +591,46 @@ fn pt(m: Msg) -> &'static str {
         Msg::HotkeysBusy => "{0} em uso por outro app",
         Msg::HotkeysUnavailable => "Atalhos globais indisponíveis: {0}",
         Msg::CannotPin => "Não deu para fixar {0}",
+        Msg::SettingsGeneralHint => "Como o Takeshot inicia, aparece e se comporta ao fechar.",
+        Msg::Startup => "Inicialização",
+        Msg::StartWithSystemHint => {
+            "Abre minimizado na bandeja ao ligar o computador. Windows, macOS e Linux."
+        }
+        Msg::Appearance => "Aparência",
+        Msg::ModeHint => "Vale para todas as janelas, a captura e o menu da bandeja.",
+        Msg::WindowAndTray => "Janela e bandeja",
+        Msg::OnCloseHint => {
+            "Minimizado, o Takeshot continua na bandeja e o PrtSc segue funcionando."
+        }
+        Msg::NoticeHint => "Um aviso discreto no canto da tela por alguns segundos.",
+        Msg::CaptureSection => "Captura",
+        Msg::SaveSection => "Salvar",
+        Msg::ShortcutsSection => "Atalhos",
+        Msg::KeepLastArea => "Lembrar a última área",
+        Msg::FullOpensEditor => "Tela inteira abre no editor",
+        Msg::CapturesFolder => "Pasta das capturas",
+        Msg::Choose => "Escolher",
+        Msg::SaveStraight => "Salvar direto na pasta",
+        Msg::AlwaysPng => "Sempre PNG sem perdas na resolução original.",
+        Msg::GlobalShortcuts => "Atalhos globais",
+        Msg::InCapture => "Na captura",
+        Msg::KeyShiftDrag => "Shift (arrastando)",
+        Msg::KeyAltDrag => "Alt (arrastando)",
+        Msg::KeyWheel => "Roda do mouse",
+        Msg::KeyArrows => "Setas / Shift+setas",
+        Msg::KeyPickColor => "C (antes de selecionar)",
+        Msg::DescStraight => "Linha reta a 45°, quadrado, círculo perfeito",
+        Msg::DescFromCenter => "Desenhar a partir do centro",
+        Msg::DescTools => {
+            "Caneta, linha, seta, retângulo, círculo, marcador, texto, borrar, numeração"
+        }
+        Msg::DescWidth => "Espessura do traço / tamanho do texto",
+        Msg::DescCopySave => "Copiar / salvar",
+        Msg::DescOpenEditor => "Abrir no editor",
+        Msg::DescUndoRedo => "Desfazer / refazer",
+        Msg::DescMoveResize => "Mover / redimensionar a seleção",
+        Msg::DescPickColor => "Copiar a cor sob o cursor",
+        Msg::ShortcutStatus => "Status",
     }
 }
 

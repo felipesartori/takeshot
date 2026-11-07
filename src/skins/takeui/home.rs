@@ -17,6 +17,8 @@ const GAP: f32 = 12.0;
 
 /// Columns and card size for a grid `width` wide: pictures in 16:10 over the two text lines.
 pub fn grid(width: f32) -> (usize, egui::Vec2) {
+    // A layout pass can offer next to no room; a card is never narrower than the minimum.
+    let width = width.max(CARD_MIN);
     let cols = (((width + GAP) / (CARD_MIN + GAP)).floor() as usize).max(1);
     let w = (width - GAP * (cols - 1) as f32) / cols as f32;
     (cols, vec2(w, (w - 12.0) * 10.0 / 16.0 + 6.0 + CARD_TEXT_H))
@@ -202,8 +204,20 @@ fn capture_buttons(
 
 /// The grid; only the rows on screen are laid out and ask for thumbnails.
 fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
-    let (cols, card) = grid(ui.available_width() - 8.0);
     let shown = home.shown().to_vec();
+    // The scroll bar takes its room beside the cards, and only when they overflow.
+    let avail = ui.available_size();
+    let height = |w: f32| {
+        let (cols, card) = grid(w);
+        let rows = shown.len().div_ceil(cols) as f32;
+        rows * card.y + (rows - 1.0).max(0.0) * GAP
+    };
+    let width = if height(avail.x) > avail.y {
+        avail.x - ui.spacing().scroll.allocated_width()
+    } else {
+        avail.x
+    };
+    let (cols, card) = grid(width);
     let rows = shown.len().div_ceil(cols);
     ui.spacing_mut().item_spacing.y = GAP;
     egui::ScrollArea::vertical()
@@ -336,7 +350,9 @@ fn empty(
 #[cfg(test)]
 mod tests {
     use crate::screens::home::{Home, MainAction};
-    use crate::skins::takeui::testing::{click, double_click, painted_at, run};
+    use crate::skins::takeui::testing::{
+        click, content_box, double_click, painted_at, run, run_painted,
+    };
     use crate::system::library::{Entry, Period};
     use crate::ui::i18n::{Msg, every};
     use std::path::PathBuf;
@@ -349,6 +365,55 @@ mod tests {
             modified,
             bytes: 412_000,
         }
+    }
+
+    #[test]
+    fn a_grid_without_a_scroll_bar_takes_the_full_width() {
+        // Fourteen captures fit at this size: the cards line up with the buttons above.
+        let now = SystemTime::now();
+        let few = (0..14).map(|i| entry(&format!("{i}.png"), now)).collect();
+        let (mut home, mut shared) = Home::for_tests(few);
+        let (_, _, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![vec![]]);
+        let t = shared.tokens(None);
+        let b = content_box(&blocks, &t);
+        let last = blocks
+            .iter()
+            .filter(|(r, c)| *c == t.input && r.height() > 60.0 && r.width() > 100.0)
+            .map(|(r, _)| r.right())
+            .fold(f32::MIN, f32::max);
+        let edge = b.right() - 25.0 - 6.0;
+        assert!(
+            (last - edge).abs() <= 1.0,
+            "picture edge {last}, expected {edge}"
+        );
+    }
+
+    #[test]
+    fn the_grid_leaves_the_scroll_bar_its_room() {
+        let now = SystemTime::now();
+        let many = (0..40).map(|i| entry(&format!("{i}.png"), now)).collect();
+        let (mut home, mut shared) = Home::for_tests(many);
+        let (_, _, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![vec![]]);
+        let t = shared.tokens(None);
+        let b = content_box(&blocks, &t);
+        // Cards too wide for the room would push the box past the window's 8 px margin.
+        assert!((b.right() - (1160.0 - 8.0)).abs() <= 0.5, "{b:?}");
+        let ctx = egui::Context::default();
+        crate::ui::style::apply(&ctx, &t);
+        let room = ctx.global_style().spacing.scroll.allocated_width();
+        // A card's picture sits 6 px inside the card; the bar's track is narrow.
+        let last = blocks
+            .iter()
+            .filter(|(r, c)| *c == t.input && r.height() > 60.0 && r.width() > 100.0)
+            .map(|(r, _)| r.right())
+            .fold(f32::MIN, f32::max);
+        assert!(last > b.center().x, "the cards");
+        assert!(
+            last <= b.right() - 25.0 - room - 6.0 + 1.0,
+            "picture edge {last}, box {b:?}, bar room {room}"
+        );
     }
 
     #[test]

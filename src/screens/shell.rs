@@ -60,6 +60,9 @@ pub struct Shell {
     recents_version: Arc<std::sync::atomic::AtomicU64>,
     menu_version: u64,
     next_recents: f64,
+    /// The theme the tray icon shows, and the language the native menu was built in.
+    tray_theme: Option<crate::ui::tokens::ThemeId>,
+    lang: Option<crate::ui::i18n::Lang>,
 }
 
 impl Shell {
@@ -79,6 +82,8 @@ impl Shell {
             recents_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             menu_version: u64::MAX,
             next_recents: 0.0,
+            tray_theme: None,
+            lang: None,
         }
     }
 
@@ -91,6 +96,24 @@ impl Shell {
             self.refresh_recents(ctx, shared);
             ctx.request_repaint_after(std::time::Duration::from_secs(30));
         }
+        let theme = shared.overrides.theme.unwrap_or(shared.settings.ui_theme);
+        if self.theme_changed(theme) {
+            if let Some(tray) = &resident.tray {
+                tray.set_theme(theme);
+            }
+            // The hosted main window takes its icon from its builder each frame.
+            if !self.hosted {
+                ctx.send_viewport_cmd_to(
+                    ViewportId::ROOT,
+                    Cmd::Icon(Some(Arc::new(crate::ui::brand::window_icon(theme)))),
+                );
+            }
+        }
+        let lang = crate::ui::i18n::lang();
+        if self.lang != Some(lang) {
+            self.lang = Some(lang);
+            self.menu_version = u64::MAX;
+        }
         let v = self
             .recents_version
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -100,6 +123,15 @@ impl Shell {
             self.menu_version = v;
             tray.refresh_menu(&self.entries(shared));
         }
+    }
+
+    /// True once per theme change (and on the first call), when the icons must follow.
+    fn theme_changed(&mut self, now: crate::ui::tokens::ThemeId) -> bool {
+        if self.tray_theme == Some(now) {
+            return false;
+        }
+        self.tray_theme = Some(now);
+        true
     }
 
     fn theme(ctx: &egui::Context, shared: &Shared) -> Tokens {
@@ -507,6 +539,25 @@ fn draw_toast(ctx: &egui::Context, shared: &mut Shared) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tray_icon_follows_the_theme() {
+        use crate::ui::tokens::ThemeId;
+        let mut shell = Shell::new(true, true);
+        assert!(
+            shell.theme_changed(ThemeId::TakeUi),
+            "the first look sets the icon"
+        );
+        assert!(
+            !shell.theme_changed(ThemeId::TakeUi),
+            "same theme: nothing to do"
+        );
+        assert!(
+            shell.theme_changed(ThemeId::Coral),
+            "a new theme changes it"
+        );
+        assert!(!shell.theme_changed(ThemeId::Coral));
+    }
 
     #[test]
     fn the_native_menu_is_rebuilt_only_when_the_recents_change() {

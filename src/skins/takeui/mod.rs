@@ -1,6 +1,7 @@
 //! The TakeUI skin (option A of the prototypes): the TakeFlow family look.
 
 pub mod home;
+pub mod settings;
 pub mod shell;
 pub mod style;
 
@@ -9,7 +10,11 @@ pub mod style;
 pub(crate) mod testing {
     use crate::Shared;
     use crate::screens::home::{Home, MainAction};
-    use egui::{Event, Pos2, Rect};
+    use crate::ui::tokens::Tokens;
+    use egui::{Color32, Event, Pos2, Rect};
+
+    /// A painted rectangle and its fill.
+    pub type Block = (Rect, Color32);
 
     /// Runs a warm-up frame and then one frame per event list at `size`; returns every action and
     /// the texts painted in the last frame with their screen rects.
@@ -20,6 +25,18 @@ pub(crate) mod testing {
         dark: bool,
         frames: Vec<Vec<Event>>,
     ) -> (Vec<MainAction>, Vec<(String, Rect)>) {
+        let (acts, painted, _) = run_painted(home, shared, size, dark, frames);
+        (acts, painted)
+    }
+
+    /// `run`, plus the rectangles painted in the last frame.
+    pub fn run_painted(
+        home: &mut Home,
+        shared: &mut Shared,
+        size: (f32, f32),
+        dark: bool,
+        frames: Vec<Vec<Event>>,
+    ) -> (Vec<MainAction>, Vec<(String, Rect)>, Vec<Block>) {
         shared.settings.ui_mode = if dark {
             crate::ui::tokens::UiMode::Dark
         } else {
@@ -29,6 +46,7 @@ pub(crate) mod testing {
         crate::system::fonts::FontLib::load().install(&ctx);
         let mut acts = Vec::new();
         let mut painted = Vec::new();
+        let mut blocks = Vec::new();
         for (i, events) in std::iter::once(vec![]).chain(frames).enumerate() {
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(size.0, size.1))),
@@ -43,22 +61,34 @@ pub(crate) mod testing {
             });
             full.textures_delta.clear();
             painted.clear();
+            blocks.clear();
             for c in &full.shapes {
-                walk(&c.shape, &mut painted);
+                walk(&c.shape, &mut painted, &mut blocks);
             }
         }
-        (acts, painted)
+        (acts, painted, blocks)
     }
 
-    fn walk(s: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+    fn walk(s: &egui::Shape, texts: &mut Vec<(String, Rect)>, blocks: &mut Vec<Block>) {
         match s {
-            egui::Shape::Text(t) => out.push((
+            egui::Shape::Text(t) => texts.push((
                 t.galley.text().to_owned(),
                 t.galley.rect.translate(t.pos.to_vec2()),
             )),
-            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            egui::Shape::Rect(r) => blocks.push((r.rect, r.fill)),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, texts, blocks)),
             _ => {}
         }
+    }
+
+    /// The rounded box the pages sit in: the largest rectangle in the surface colour.
+    pub fn content_box(blocks: &[Block], t: &Tokens) -> Rect {
+        blocks
+            .iter()
+            .filter(|(_, c)| *c == t.surf)
+            .map(|(r, _)| *r)
+            .max_by(|a, b| a.area().total_cmp(&b.area()))
+            .expect("the content box")
     }
 
     /// The centre of the first painted text equal to one of `texts` whose rect passes `keep`.

@@ -6,15 +6,12 @@
 use crate::Shared;
 use crate::engine::render;
 use crate::screens::overlay::color_image;
-use crate::screens::widgets::{self, ACCENT, MUTED, TEXT};
 use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label, needs_modifier};
 use crate::system::library::{self, Entry, Period, Thumbs};
-use crate::system::settings::QuickStyle;
-use crate::system::settings::{OnClose, TrayClick};
 use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{CardThumb, WindowControl};
 use crate::ui::tokens::{ThemeId, Tokens, UiMode};
-use egui::{Color32, RichText, Ui, vec2};
+use egui::Ui;
 use image::RgbaImage;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,6 +22,17 @@ enum Page {
     Start,
     Style,
     Settings,
+}
+
+/// The sections of Settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SettingsSection {
+    #[default]
+    General,
+    Capture,
+    Save,
+    Shortcuts,
+    About,
 }
 
 /// What the user asked for in the main window; `Home::apply` carries it out.
@@ -44,6 +52,17 @@ pub enum MainAction {
     RestoreStyle,
     /// Pick the watermark's logo file.
     ChooseLogo,
+    Section(SettingsSection),
+    SetTheme(ThemeId),
+    SetLanguage(crate::ui::i18n::LangPref),
+    SetAutostart(bool),
+    /// Wait for the keys of a new shortcut.
+    StartRebind(Shot),
+    RestoreKeys(Shot),
+    OpenWindowsSettings,
+    /// Quit the resident (Linux, where the tray may be missing).
+    Quit,
+    ViewOnGitHub,
     Select(PathBuf),
     Copy(PathBuf),
     Edit(PathBuf),
@@ -73,6 +92,9 @@ const RESCAN_SECONDS: f64 = 5.0;
 
 pub struct Home {
     page: Page,
+    section: SettingsSection,
+    /// Whether the app starts with the system, read when Settings opens and after a change.
+    autostart: bool,
     entries: Vec<Entry>,
     /// The positions in `entries` the filter and the search let through, and the filters' counts,
     /// worked out when the list, the filter or the search changes.
@@ -123,6 +145,8 @@ impl Home {
     fn empty(ctx: &egui::Context) -> Self {
         Self {
             page: Page::Start,
+            section: SettingsSection::General,
+            autostart: false,
             entries: Vec::new(),
             shown: Vec::new(),
             counts: [0; 3],
@@ -163,9 +187,25 @@ impl Home {
         match page {
             P::Start => self.page = Page::Start,
             P::Style => self.page = Page::Style,
-            P::Settings => self.page = Page::Settings,
+            P::Settings => {
+                self.page = Page::Settings;
+                self.autostart = crate::system::autostart::autostart_enabled();
+            }
             P::About => self.requests.about = true,
         }
+    }
+
+    pub fn section(&self) -> SettingsSection {
+        self.section
+    }
+
+    /// The shortcut waiting for its new keys, if any.
+    pub fn capturing(&self) -> Option<Shot> {
+        self.capturing
+    }
+
+    pub fn autostart(&self) -> bool {
+        self.autostart
     }
 
     /// The page on screen (About is a dialog, never a page).
@@ -411,6 +451,29 @@ impl Home {
         shared.logo.sync(&ctx, &shared.settings.watermark);
 
         let mut acts = Vec::new();
+        // "Change" waits for the next keys: Esc cancels; a key needing Ctrl or Alt keeps waiting.
+        if let Some(shot) = self.capturing {
+            let pressed = ui.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+            });
+            if let Some((key, mods)) = pressed
+                && (key == egui::Key::Escape || !needs_modifier(key, mods))
+            {
+                self.capturing = None;
+                if let Some(keys) = keys_from_egui(key, mods) {
+                    self.requests.rebind = Some((shot, keys));
+                }
+            }
+            return acts;
+        }
         let dropped: Vec<PathBuf> = ui.input(|i| {
             i.raw
                 .dropped_files
@@ -472,6 +535,38 @@ impl Home {
                 self.refilter();
             }
             MainAction::Select(p) => self.selected = Some(p),
+            MainAction::Section(s) => {
+                self.section = s;
+                if s == SettingsSection::General {
+                    self.autostart = crate::system::autostart::autostart_enabled();
+                }
+            }
+            MainAction::SetTheme(th) => {
+                shared.settings.ui_theme = th;
+                shared.settings_dirty = true;
+            }
+            MainAction::SetLanguage(l) => {
+                shared.settings.lang = l;
+                crate::ui::i18n::apply_language(l);
+                shared.settings_dirty = true;
+            }
+            MainAction::SetAutostart(on) => {
+                if let Err(e) = crate::system::autostart::set_autostart(on) {
+                    shared.toast(e);
+                }
+                self.autostart = crate::system::autostart::autostart_enabled();
+            }
+            MainAction::StartRebind(shot) => self.capturing = Some(shot),
+            MainAction::RestoreKeys(shot) => {
+                self.requests.rebind = Some((shot, default_keys(shot).to_string()));
+            }
+            MainAction::OpenWindowsSettings => self.requests.open_windows_settings = true,
+            MainAction::Quit => self.requests.quit = true,
+            MainAction::ViewOnGitHub => {
+                ctx.open_url(egui::OpenUrl::new_tab(
+                    crate::screens::about::AboutInfo::current().github,
+                ));
+            }
             MainAction::RestoreStyle => {
                 crate::system::settings::restore_default_style(&mut shared.settings);
                 shared.settings_dirty = true;
@@ -540,207 +635,6 @@ impl Home {
             shared.toast(e);
         }
     }
-
-    /// The settings page as it was, until its TakeUI page lands.
-    pub fn legacy_page(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        if self.page == Page::Settings {
-            self.settings_page(ui, shared);
-        }
-    }
-
-    fn settings_page(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        ui.label(
-            RichText::new("Ajustes")
-                .size(24.0)
-                .family(egui::FontFamily::Name("bold".into()))
-                .color(Color32::WHITE),
-        );
-        ui.add_space(10.0);
-        self.general_section(ui, shared);
-        let s = &mut shared.settings;
-        let before = serde_json::to_string(s).ok();
-        widgets::section(ui, "Pasta das capturas");
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut s.save_dir).desired_width(420.0));
-            if ui.button("Escolher…").clicked()
-                && let Some(p) = rfd::FileDialog::new()
-                    .set_directory(&s.save_dir)
-                    .pick_folder()
-            {
-                s.save_dir = p.to_string_lossy().into_owned();
-            }
-            if ui.button("Abrir").clicked() {
-                crate::system::actions::open_folder(std::path::Path::new(&s.save_dir));
-            }
-        });
-        ui.checkbox(
-            &mut s.auto_save,
-            "Salvar direto na pasta, sem perguntar o nome",
-        );
-        ui.label(
-            RichText::new("Sempre em PNG sem perdas, na resolução original da tela.")
-                .color(MUTED)
-                .size(12.0),
-        );
-
-        widgets::section(ui, "Captura");
-        ui.checkbox(&mut s.keep_selection, "Lembrar a última área selecionada");
-        ui.checkbox(
-            &mut s.open_editor_after_full,
-            "Tela inteira abre no editor (desligado: salva na hora)",
-        );
-        ui.checkbox(&mut s.show_bubbles, "Mostrar aviso ao copiar e salvar");
-        ui.label("Ao copiar ou salvar direto da captura, aplicar:");
-        ui.horizontal(|ui| {
-            for (q, l) in [
-                (QuickStyle::Full, "Estilo completo"),
-                (QuickStyle::CornersOnly, "Só cantos arredondados"),
-                (QuickStyle::Plain, "Nada (imagem pura)"),
-            ] {
-                if widgets::chip(ui, s.quick_style == q, l).clicked() {
-                    s.quick_style = q;
-                }
-            }
-        });
-
-        widgets::section(ui, "Atalhos");
-        ui.checkbox(&mut s.hotkeys, "Atalhos globais (vale ao reabrir o app)");
-        self.shortcut_rows(ui, s);
-        egui::Grid::new("keys").num_columns(2).spacing(vec2(24.0, 6.0)).show(ui, |ui| {
-            for (k, d) in [
-                ("Shift (arrastando)", "Linha reta a 45°, quadrado, círculo perfeito"),
-                ("Alt (arrastando)", "Desenhar a partir do centro"),
-                ("P L A R O M T B N", "Caneta, linha, seta, retângulo, círculo, marcador, texto, borrar, numeração"),
-                ("Roda do mouse", "Espessura do traço / tamanho do texto"),
-                ("Ctrl+C / Ctrl+S", "Copiar / salvar"),
-                ("Enter", "Abrir no editor"),
-                ("Ctrl+Z / Ctrl+Y", "Desfazer / refazer"),
-                ("Setas / Shift+setas", "Mover / redimensionar a seleção"),
-                ("C (antes de selecionar)", "Copiar a cor sob o cursor"),
-            ] {
-                ui.label(RichText::new(k).monospace().color(TEXT));
-                ui.label(RichText::new(d).color(MUTED));
-                ui.end_row();
-            }
-        });
-        if serde_json::to_string(s).ok() != before {
-            shared.settings_dirty = true;
-        }
-    }
-
-    /// Start with the system, the X, the tray icon click, and Quit on Linux (no tray there for sure).
-    fn general_section(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        widgets::section(ui, tr(Msg::GeneralSection));
-        let mut on = crate::system::autostart::autostart_enabled();
-        if ui.checkbox(&mut on, tr(Msg::StartWithSystem)).changed()
-            && let Err(e) = crate::system::autostart::set_autostart(on)
-        {
-            shared.toast(e);
-        }
-        let s = &mut shared.settings;
-        let (close, click) = (s.on_close, s.tray_click);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(tr(Msg::OnCloseLabel)).color(TEXT));
-            for (v, m) in [
-                (OnClose::Ask, Msg::AskOnClose),
-                (OnClose::Minimize, Msg::MinimizeToTray),
-                (OnClose::Quit, Msg::Quit),
-            ] {
-                if widgets::chip(ui, s.on_close == v, tr(m)).clicked() {
-                    s.on_close = v;
-                }
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(tr(Msg::TrayClickLabel)).color(TEXT));
-            for (v, m) in [
-                (TrayClick::OpenHome, Msg::OpenHome),
-                (TrayClick::CaptureArea, Msg::CaptureArea),
-            ] {
-                if widgets::chip(ui, s.tray_click == v, tr(m)).clicked() {
-                    s.tray_click = v;
-                }
-            }
-        });
-        if (close, click) != (s.on_close, s.tray_click) {
-            shared.settings_dirty = true;
-        }
-        if cfg!(target_os = "linux") && ui.button(tr(Msg::QuitTakeshot)).clicked() {
-            self.requests.quit = true;
-        }
-    }
-
-    /// The two capture shortcuts with Change and Restore default, the PrtSc conflict help, the
-    /// priority switch (Windows) and the Wayland note.
-    fn shortcut_rows(&mut self, ui: &mut Ui, s: &mut crate::system::settings::Settings) {
-        if let Some(shot) = self.capturing {
-            ui.label(RichText::new(tr(Msg::PressKeys)).color(ACCENT));
-            let pressed = ui.input(|i| {
-                i.events.iter().find_map(|e| match e {
-                    egui::Event::Key {
-                        key,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } => Some((*key, *modifiers)),
-                    _ => None,
-                })
-            });
-            // Esc cancels; a key that needs Ctrl or Alt keeps the wait going.
-            if let Some((key, mods)) = pressed
-                && (key == egui::Key::Escape || !needs_modifier(key, mods))
-            {
-                self.capturing = None;
-                if let Some(keys) = keys_from_egui(key, mods) {
-                    self.requests.rebind = Some((shot, keys));
-                }
-            }
-        }
-        for (shot, keys, m) in [
-            (Shot::Area, s.hotkey_area.clone(), Msg::CaptureArea),
-            (Shot::Full, s.hotkey_full.clone(), Msg::FullScreen),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label(&keys)).monospace().color(TEXT));
-                ui.label(RichText::new(tr(m)).color(MUTED));
-                if ui.button(tr(Msg::ChangeKeys)).clicked() {
-                    self.capturing = Some(shot);
-                }
-                if keys != default_keys(shot) && ui.button(tr(Msg::RestoreDefault)).clicked() {
-                    self.requests.rebind = Some((shot, default_keys(shot).to_string()));
-                }
-            });
-        }
-        let prtsc_busy = matches!(&self.hotkey_status, Some(Status::Busy { keys }) if keys.iter().any(|k| k.contains("PrtSc")));
-        if cfg!(windows) {
-            if prtsc_busy {
-                ui.label(
-                    RichText::new(tr(Msg::PrtScConflictHelp))
-                        .color(Color32::from_rgb(230, 150, 90)),
-                );
-                if ui.button(tr(Msg::OpenWindowsSettings)).clicked() {
-                    self.requests.open_windows_settings = true;
-                }
-            }
-            ui.checkbox(&mut s.prtsc_priority, tr(Msg::PrtScPriority));
-            ui.label(
-                RichText::new(tr(Msg::PrtScPriorityHint))
-                    .color(MUTED)
-                    .size(12.0),
-            );
-        }
-        if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            let exe = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "takeshot".into());
-            for args in ["--capture", "--capture --full"] {
-                ui.label(
-                    RichText::new(tf(Msg::WaylandHotkeyHelp, &[&format!("{exe} {args}")]))
-                        .color(MUTED),
-                );
-            }
-        }
-    }
 }
 
 fn open_clipboard(shared: &mut Shared) {
@@ -785,7 +679,7 @@ mod tests {
         for i in 0..THUMB_CACHE + 10 {
             let tex = ctx.load_texture(
                 format!("t{i}"),
-                egui::ColorImage::new([1, 1], vec![Color32::WHITE]),
+                egui::ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
                 egui::TextureOptions::LINEAR,
             );
             home.textures.insert(
