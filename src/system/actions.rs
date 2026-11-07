@@ -29,9 +29,8 @@ pub fn copy_image(img: &RgbaImage) -> Result<(), String> {
             }
         });
         CLIPBOARD_KEEPERS.lock().unwrap().push(h);
-        return rx
-            .recv()
-            .unwrap_or(Err("área de transferência indisponível".into()));
+        rx.recv()
+            .unwrap_or(Err("área de transferência indisponível".into()))
     }
     #[cfg(not(target_os = "linux"))]
     {
