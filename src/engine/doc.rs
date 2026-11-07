@@ -3,9 +3,6 @@
 //! Objects are stored back to front. History is a stack of snapshots of the object list, one per
 //! action (a whole drag is one action); the selection lives outside the history.
 
-// Until the Annotator moves onto the document (plan 3, Task 3), only the tests use it.
-#![allow(dead_code)]
-
 use crate::engine::model::{
     Ann, MARKER_WIDTH_FACTOR, Shape, Tool, arrow_geom, constrain, counter_radius, norm_rect,
 };
@@ -536,14 +533,17 @@ impl Doc {
         self.changed();
     }
 
+    #[allow(dead_code)] // The object list (TakeUI) and floating bar (Coral UI) call it from plans 5 and 6.
     pub fn bring_to_front(&mut self) {
         self.reorder(false);
     }
 
+    #[allow(dead_code)] // The object list (TakeUI) and floating bar (Coral UI) call it from plans 5 and 6.
     pub fn send_to_back(&mut self) {
         self.reorder(true);
     }
 
+    #[allow(dead_code)] // The object list (TakeUI) and floating bar (Coral UI) call it from plans 5 and 6.
     pub fn set_hidden(&mut self, id: ObjId, hidden: bool) {
         let Some(i) = self.objs.iter().position(|o| o.id == id) else {
             return;

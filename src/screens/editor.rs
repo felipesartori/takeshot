@@ -1,6 +1,7 @@
 //! Editor: the captured picture on a styled background, with drawing tools and export.
 
-use crate::engine::annotator::{Annotator, View};
+use crate::engine::annotator::{Annotator, View, text_measure};
+use crate::engine::cursor::{self, Area, CursorCtx};
 use crate::engine::doc::Doc;
 use crate::engine::model::*;
 use crate::engine::render::{self, Layout};
@@ -133,7 +134,7 @@ impl Editor {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    widgets::tool_buttons(ui, &mut self.an, &mut shared.settings.draw, false);
+                    widgets::tool_buttons(ui, &mut self.an, &mut shared.settings.draw, true);
                     widgets::separator(ui);
                     if widgets::icon_button(ui, Icon::Undo, false, "Desfazer (Ctrl+Z)").clicked() {
                         self.an.undo();
@@ -188,16 +189,26 @@ impl Editor {
                         }
                     });
                 });
-                if self.an.tool != Tool::Select {
+                // With Select the bar shows the picked object's options, and changing them restyles it.
+                let bar_tool = if self.an.tool != Tool::Select {
+                    Some(self.an.tool)
+                } else {
+                    self.an.doc.selected().first().and_then(|id| {
+                        self.an
+                            .doc
+                            .objs()
+                            .iter()
+                            .find(|o| o.id == *id)
+                            .map(|o| o.ann.shape.tool())
+                    })
+                };
+                if let Some(tool) = bar_tool {
                     ui.add_space(4.0);
+                    let before = shared.settings.draw.clone();
                     ui.horizontal(|ui| {
-                        widgets::options_row(
-                            ui,
-                            self.an.tool,
-                            &mut shared.settings.draw,
-                            &shared.fonts,
-                        )
+                        widgets::options_row(ui, tool, &mut shared.settings.draw, &shared.fonts)
                     });
+                    self.an.restyle_from_opts(&before, &shared.settings.draw);
                 }
             });
 
@@ -302,18 +313,43 @@ impl Editor {
                     Sense::click_and_drag(),
                 );
                 let typing = self.an.handle_typing(ui, &shared.settings.draw);
-                if self.an.tool != Tool::Select {
-                    self.an
-                        .handle_pointer(ui, &resp, &view, &shared.settings.draw);
-                    if resp.hovered() {
-                        ctx.set_cursor_icon(if self.an.tool == Tool::Text {
-                            egui::CursorIcon::Text
-                        } else {
-                            egui::CursorIcon::Crosshair
-                        });
-                    }
-                }
                 let clip = ui.painter_at(img_rect.expand(40.0));
+                {
+                    // The measure borrows the fonts; the shortcuts below need `shared` mutably.
+                    let measure = text_measure(&shared.fonts);
+                    self.an
+                        .handle_canvas(ui, &resp, &view, &measure, &mut shared.settings.draw);
+                    if (resp.hovered() || self.an.dragging.is_some())
+                        && let Some(p) = ui.input(|i| i.pointer.hover_pos())
+                    {
+                        // While a new shape is drawn, handles and objects underneath keep the pointer.
+                        let (handle, over_object) = if self.an.live.is_some() {
+                            (None, false)
+                        } else {
+                            self.an.hover(view.to_img(p), &view, &measure)
+                        };
+                        ctx.set_cursor_icon(cursor::pick(&CursorCtx {
+                            tool: self.an.tool,
+                            over_image: resp.rect.contains(p),
+                            over_chrome: false,
+                            handle,
+                            over_object,
+                            typing: self.an.draft.is_some(),
+                            dragging: self.an.dragging.is_some(),
+                            space_pan: false,
+                            area: Area::NotApplicable,
+                        }));
+                    }
+                    let theme = crate::ui::tokens::tokens(
+                        shared.settings.ui_theme,
+                        crate::ui::tokens::effective_dark(
+                            shared.settings.ui_mode,
+                            ctx.system_theme(),
+                        ),
+                    );
+                    self.an
+                        .paint_selection(&clip, &view, &theme, &shared.fonts, &measure);
+                }
                 self.an.paint_live(
                     &clip,
                     &view,
@@ -322,15 +358,17 @@ impl Editor {
                     ui.input(|i| i.time),
                 );
                 if !typing && !ctx.egui_wants_keyboard_input() {
-                    widgets::tool_shortcuts(ui, &mut self.an, &mut shared.settings.draw, false);
+                    self.an.handle_object_keys(ui);
+                    widgets::tool_shortcuts(ui, &mut self.an, &mut shared.settings.draw, true);
                     let cmd = Modifiers::COMMAND;
-                    if ui.input_mut(|i| i.consume_key(cmd, Key::Z)) {
-                        self.an.undo();
-                    }
+                    // Redo first: egui also matches Ctrl+Shift+Z against the plain Ctrl+Z pattern.
                     if ui.input_mut(|i| {
                         i.consume_key(cmd, Key::Y) || i.consume_key(cmd | Modifiers::SHIFT, Key::Z)
                     }) {
                         self.an.redo();
+                    }
+                    if ui.input_mut(|i| i.consume_key(cmd, Key::Z)) {
+                        self.an.undo();
                     }
                     if ui.input_mut(|i| i.consume_key(cmd, Key::C)) {
                         self.copy(shared);

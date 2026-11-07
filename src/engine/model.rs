@@ -150,6 +150,23 @@ pub enum Shape {
     },
 }
 
+impl Shape {
+    /// The tool that draws this shape, so the options bar can show its options.
+    pub fn tool(&self) -> Tool {
+        match self {
+            Shape::Pen(_) => Tool::Pen,
+            Shape::Marker(_) => Tool::Marker,
+            Shape::Line(..) => Tool::Line,
+            Shape::Arrow(..) => Tool::Arrow,
+            Shape::Rect(..) => Tool::Rect,
+            Shape::Ellipse(..) => Tool::Ellipse,
+            Shape::Blur(..) => Tool::Blur,
+            Shape::Text { .. } => Tool::Text,
+            Shape::Counter { .. } => Tool::Counter,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Ann {
     pub shape: Shape,

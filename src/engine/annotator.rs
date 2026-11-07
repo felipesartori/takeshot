@@ -250,10 +250,97 @@ impl Annotator {
         }
     }
 
+    /// Everything a press, drag or click on the picture does: a double click re-opens a text, then
+    /// handles and objects take the pointer, then the active drawing tool draws. `Missed` only with
+    /// Select on empty space, so the capture can move its area instead.
+    pub fn handle_canvas(
+        &mut self,
+        ui: &Ui,
+        resp: &Response,
+        view: &View,
+        m: TextMeasure,
+        opts: &mut DrawOpts,
+    ) -> SelectOutcome {
+        if resp.double_clicked()
+            && matches!(self.tool, Tool::Select | Tool::Text)
+            && let Some(p) = ui.input(|i| i.pointer.interact_pos())
+            && self.edit_text_at(view.to_img(p), m, opts)
+        {
+            return SelectOutcome::Consumed;
+        }
+        if self.handle_select_pointer(ui, resp, view, m, opts) == SelectOutcome::Consumed {
+            return SelectOutcome::Consumed;
+        }
+        if self.tool == Tool::Select {
+            return SelectOutcome::Missed;
+        }
+        self.handle_pointer(ui, resp, view, opts);
+        SelectOutcome::Consumed
+    }
+
+    /// Object shortcuts, only with a selection: Delete or Backspace deletes, Ctrl+D copies 12 px
+    /// away, arrows nudge 1 px (Shift 10 px, one undo step per press), Esc clears the selection.
+    /// Returns whether a key was used, so the screen can give the rest its own meaning.
+    pub fn handle_object_keys(&mut self, ui: &Ui) -> bool {
+        use egui::{Key, Modifiers as M};
+        if self.doc.selected().is_empty() {
+            return false;
+        }
+        let mut used = false;
+        ui.input_mut(|i| {
+            if i.consume_key(M::COMMAND, Key::D) {
+                self.doc.duplicate_selected(vec2(12.0, 12.0));
+                used = true;
+            }
+            if i.consume_key(M::NONE, Key::Delete) || i.consume_key(M::NONE, Key::Backspace) {
+                self.doc.delete_selected();
+                used = true;
+            }
+            for (k, dir) in [
+                (Key::ArrowLeft, vec2(-1.0, 0.0)),
+                (Key::ArrowRight, vec2(1.0, 0.0)),
+                (Key::ArrowUp, vec2(0.0, -1.0)),
+                (Key::ArrowDown, vec2(0.0, 1.0)),
+            ] {
+                // Shift first: a plain pattern also matches Shift+key in egui.
+                let step = if i.consume_key(M::SHIFT, k) {
+                    10.0
+                } else if i.consume_key(M::NONE, k) {
+                    1.0
+                } else {
+                    continue;
+                };
+                if !self.doc.selected().is_empty() {
+                    self.doc.begin_change();
+                    self.doc.translate_selected(dir * step);
+                    used = true;
+                }
+            }
+            if !self.doc.selected().is_empty() && i.consume_key(M::NONE, Key::Escape) {
+                self.doc.select(None, false);
+                used = true;
+            }
+        });
+        used
+    }
+
+    /// For the pointer: the handle under `p_img` (or the one being dragged) and whether an object is there.
+    pub fn hover(&self, p_img: Pos2, view: &View, m: TextMeasure) -> (Option<Handle>, bool) {
+        let handle = match self.dragging {
+            Some(Drag::Resize { handle, .. }) => Some(handle),
+            _ => self
+                .doc
+                .handle_at(p_img, HANDLE_REACH / view.k, m)
+                .map(|(_, h)| h),
+        };
+        let over = matches!(self.dragging, Some(Drag::Move { .. }))
+            || self.doc.hit(p_img, HIT_REACH / view.k, m).is_some();
+        (handle, over)
+    }
+
     /// Selection, moving and resizing on a canvas response. Handles of selected objects answer with
     /// any tool; picking and moving by the body only with Select. `Missed` leaves the interaction to
     /// drawing (`handle_pointer`) or to the capture area.
-    #[allow(dead_code)] // The editor and the capture call it from plan 3, Tasks 4 and 5.
     pub fn handle_select_pointer(
         &mut self,
         ui: &Ui,
@@ -347,7 +434,6 @@ impl Annotator {
     }
 
     /// Applies to the selection what the options bar changed between `before` and `after`.
-    #[allow(dead_code)] // The editor and the capture call it from plan 3, Tasks 4 and 5.
     pub fn restyle_from_opts(&mut self, before: &DrawOpts, after: &DrawOpts) {
         let color = (after.color != before.color).then_some(after.color);
         let width = (after.width != before.width).then_some(after.width);
@@ -359,7 +445,6 @@ impl Annotator {
 
     /// Double click on a text object: takes it out of the picture and reopens it for typing,
     /// with its font, size, background and colour back in the options.
-    #[allow(dead_code)] // The editor and the capture call it from plan 3, Tasks 4 and 5.
     pub fn edit_text_at(&mut self, p_img: Pos2, m: TextMeasure, opts: &mut DrawOpts) -> bool {
         self.commit_draft(opts);
         let Some(id) = self.doc.hit(p_img, 0.0, m) else {
@@ -512,7 +597,6 @@ impl Annotator {
     /// Paints the dragged objects live (they are out of the baked picture) and, on every selected
     /// object, the theme's selection marker and its handles: white squares with a 2 px primary
     /// border, round on line and arrow ends.
-    #[allow(dead_code)] // The editor and the capture call it from plan 3, Tasks 4 and 5.
     pub fn paint_selection(
         &self,
         painter: &Painter,
@@ -554,7 +638,6 @@ impl Annotator {
 }
 
 /// Measures text as the final render draws it, background spacing included on both sides.
-#[allow(dead_code)] // The editor and the capture call it from plan 3, Tasks 4 and 5.
 pub fn text_measure(fonts: &FontLib) -> impl Fn(&str, usize, f32, bool) -> egui::Vec2 + '_ {
     move |text, font, size, boxed| {
         let (w, h) = fonts::measure(&fonts.get(font).font, size, text);
@@ -714,7 +797,7 @@ pub fn dashed_rect(p: &Painter, r: egui::Rect, col: Color32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::doc::{Doc, ObjId, ann_bounds};
+    use crate::engine::doc::{Doc, Handle, ObjId, ann_bounds};
     use crate::ui::tokens::{ThemeId, tokens};
     use egui::{Event, Modifiers, PointerButton, Rect, Sense, Vec2};
 
@@ -1071,5 +1154,249 @@ mod tests {
         an.dragging = Some(Drag::Move { last: Pos2::ZERO });
         let (_, texts) = paint(&an);
         assert_eq!(texts, vec!["hi".to_owned()]);
+    }
+
+    /// Runs `f` once per frame of events over a full-screen canvas, after a warm-up frame.
+    fn run<T>(
+        held: Modifiers,
+        frames: Vec<Vec<Event>>,
+        mut f: impl FnMut(&Ui, &egui::Response) -> T,
+    ) -> Vec<T> {
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let canvas = |ui: &mut Ui| {
+            ui.interact(
+                ui.max_rect(),
+                ui.scope_id().with("canvas"),
+                Sense::click_and_drag(),
+            )
+        };
+        let warm = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        ctx.run_ui(warm, |ui| {
+            canvas(ui);
+        })
+        .textures_delta
+        .clear();
+        let mut out = Vec::new();
+        for (i, events) in frames.into_iter().enumerate() {
+            let mut all = vec![Event::ModifiersChanged(held)];
+            all.extend(events);
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(0.016 + i as f64 * 0.016),
+                events: all,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                let resp = canvas(ui);
+                out.push(f(ui, &resp));
+            })
+            .textures_delta
+            .clear();
+        }
+        out
+    }
+
+    fn key(k: egui::Key, modifiers: Modifiers) -> Vec<Event> {
+        vec![Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }]
+    }
+
+    #[test]
+    fn a_drawn_object_ends_selected_and_the_tool_stays() {
+        let (mut an, _) = with(Tool::Rect, vec![]);
+        let mut opts = DrawOpts::default();
+        let frames = drag(
+            pos2(100.0, 100.0),
+            &[pos2(150.0, 150.0), pos2(200.0, 200.0)],
+        );
+        run(Modifiers::NONE, frames, |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert_eq!(an.doc.objs().len(), 1);
+        assert_eq!(an.doc.selected(), &[an.doc.objs()[0].id]);
+        assert_eq!(an.tool, Tool::Rect);
+    }
+
+    #[test]
+    fn select_misses_on_empty_space_so_the_capture_can_move_its_area() {
+        let (mut an, _) = with(
+            Tool::Select,
+            vec![rect_ann((0.0, 0.0), (100.0, 100.0), true)],
+        );
+        let mut opts = DrawOpts::default();
+        let out = run(
+            Modifiers::NONE,
+            drag(pos2(400.0, 400.0), &[pos2(450.0, 450.0)]),
+            |ui, resp| an.handle_canvas(ui, resp, &VIEW, &m, &mut opts),
+        );
+        assert!(out.iter().all(|o| *o == SelectOutcome::Missed));
+        let out = run(
+            Modifiers::NONE,
+            drag(pos2(50.0, 50.0), &[pos2(80.0, 50.0)]),
+            |ui, resp| an.handle_canvas(ui, resp, &VIEW, &m, &mut opts),
+        );
+        assert!(out.contains(&SelectOutcome::Consumed));
+    }
+
+    #[test]
+    fn double_click_on_a_text_reopens_it_from_the_canvas() {
+        let text = Ann {
+            shape: Shape::Text {
+                pos: pos2(100.0, 100.0),
+                text: "hi".into(),
+                font: 0,
+                size: 20.0,
+                boxed: false,
+            },
+            color: [0, 0, 255, 255],
+            width: 3.0,
+            filled: false,
+        };
+        let (mut an, _) = with(Tool::Select, vec![text]);
+        let mut opts = DrawOpts::default();
+        let p = pos2(105.0, 105.0);
+        let mut frames = click(p);
+        frames.extend(click(p));
+        run(Modifiers::NONE, frames, |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert_eq!(an.draft.as_ref().map(|d| d.text.as_str()), Some("hi"));
+        assert!(an.doc.objs().is_empty());
+    }
+
+    #[test]
+    fn object_keys_delete_duplicate_nudge_and_escape() {
+        use egui::Key;
+        let (mut an, ids) = with(
+            Tool::Select,
+            vec![rect_ann((100.0, 100.0), (200.0, 200.0), true)],
+        );
+        let min = |an: &Annotator| bounds(an, an.doc.selected()[0]).min;
+        an.doc.select(Some(ids[0]), false);
+        let start = min(&an);
+        let used = run(
+            Modifiers::NONE,
+            vec![
+                key(Key::ArrowRight, Modifiers::NONE),
+                key(Key::ArrowDown, Modifiers::SHIFT),
+            ],
+            |ui, _| an.handle_object_keys(ui),
+        );
+        assert_eq!(used, vec![true, true]);
+        assert!(min(&an).distance(start + vec2(1.0, 10.0)) < 0.01);
+        an.undo();
+        assert!(
+            min(&an).distance(start + vec2(1.0, 0.0)) < 0.01,
+            "one step per press"
+        );
+
+        run(
+            Modifiers::NONE,
+            vec![key(Key::D, Modifiers::COMMAND)],
+            |ui, _| an.handle_object_keys(ui),
+        );
+        assert_eq!(an.doc.objs().len(), 2);
+        assert!(
+            min(&an).distance(start + vec2(13.0, 12.0)) < 0.01,
+            "the copy is 12 px off"
+        );
+
+        for k in [Key::Delete, Key::Backspace] {
+            let before = an.doc.objs().len();
+            an.doc.select(Some(an.doc.objs()[0].id), false);
+            run(Modifiers::NONE, vec![key(k, Modifiers::NONE)], |ui, _| {
+                an.handle_object_keys(ui)
+            });
+            assert_eq!(an.doc.objs().len(), before - 1, "{k:?}");
+            an.undo();
+        }
+
+        an.doc.select(Some(ids[0]), false);
+        let esc = run(
+            Modifiers::NONE,
+            vec![
+                key(Key::Escape, Modifiers::NONE),
+                key(Key::Escape, Modifiers::NONE),
+            ],
+            |ui, _| an.handle_object_keys(ui),
+        );
+        assert_eq!(
+            esc,
+            vec![true, false],
+            "Esc clears first, then is left to the screen"
+        );
+        assert!(an.doc.selected().is_empty());
+        let arrows = run(
+            Modifiers::NONE,
+            vec![key(Key::ArrowLeft, Modifiers::NONE)],
+            |ui, _| an.handle_object_keys(ui),
+        );
+        assert_eq!(
+            arrows,
+            vec![false],
+            "without a selection the arrows move the capture area"
+        );
+    }
+
+    #[test]
+    fn hover_reports_the_handle_and_the_object_under_the_pointer() {
+        let (mut an, ids) = with(
+            Tool::Select,
+            vec![rect_ann((100.0, 100.0), (200.0, 200.0), true)],
+        );
+        assert_eq!(an.hover(pos2(150.0, 150.0), &VIEW, &m), (None, true));
+        assert_eq!(
+            an.hover(pos2(200.0, 200.0), &VIEW, &m).0,
+            None,
+            "not selected yet"
+        );
+        an.doc.select(Some(ids[0]), false);
+        assert_eq!(
+            an.hover(pos2(201.0, 199.0), &VIEW, &m),
+            (Some(Handle::SE), true)
+        );
+        assert_eq!(an.hover(pos2(400.0, 400.0), &VIEW, &m), (None, false));
+        an.dragging = Some(Drag::Resize {
+            id: ids[0],
+            handle: Handle::N,
+        });
+        assert_eq!(an.hover(pos2(400.0, 400.0), &VIEW, &m).0, Some(Handle::N));
+    }
+
+    #[test]
+    fn each_shape_maps_to_the_tool_that_draws_it() {
+        let p = pos2(0.0, 0.0);
+        let cases = [
+            (Shape::Pen(vec![p]), Tool::Pen),
+            (Shape::Marker(vec![p]), Tool::Marker),
+            (Shape::Line(p, p), Tool::Line),
+            (Shape::Arrow(p, p), Tool::Arrow),
+            (Shape::Rect(p, p), Tool::Rect),
+            (Shape::Ellipse(p, p), Tool::Ellipse),
+            (Shape::Blur(p, p, BlurMode::Blur), Tool::Blur),
+            (
+                Shape::Text {
+                    pos: p,
+                    text: String::new(),
+                    font: 0,
+                    size: 1.0,
+                    boxed: false,
+                },
+                Tool::Text,
+            ),
+            (Shape::Counter { center: p, n: 1 }, Tool::Counter),
+        ];
+        for (s, t) in cases {
+            assert_eq!(s.tool(), t, "{s:?}");
+        }
     }
 }
