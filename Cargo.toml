@@ -25,6 +25,7 @@ serde_json = "1"
 mouse_position = "0.1"
 epaint_default_fonts = "0.37"
 sys-locale = "0.3.2"
+interprocess = "2.4.7"
 
 [profile.release]
 opt-level = 3

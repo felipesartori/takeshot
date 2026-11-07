@@ -3,4 +3,5 @@
 pub mod actions;
 pub mod capture;
 pub mod fonts;
+pub mod instance;
 pub mod settings;
