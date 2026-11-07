@@ -15,9 +15,10 @@ The redesign that introduces the two themes is in progress on `feat/redesign`. U
 | `src/main.rs` | entry point: arguments, shared state, window modes |
 | `src/engine/` | drawing engine: annotations, objects, pointer policy, rendering, background presets |
 | `src/system/` | operating system and data: screen capture, clipboard and files, fonts, settings (tray, hotkeys and autostart join here) |
-| `src/ui/` | design system: tokens, translations, icons, style, component kit, brand |
+| `src/ui/` | design system: `tokens` (colours per theme and mode), `i18n` (strings), `icon` (Lucide), `style` (egui visuals), `kit` (components), `brand` (icons and mark), `gallery` (all of it on one screen) |
 | `src/screens/` | current windows; the skins replace them screen by screen |
-| `src/skins/` | `takeui/` and `coral/`: they only draw and call engine and system code |
+| `src/skins/` | planned: `takeui/` and `coral/`, which only draw and call engine and system code |
+| `assets/` | embedded fonts with their licenses, and the brand SVG masters with the PNG, ICO and ICNS files generated from them |
 
 Every `.rs` file starts with a `//!` doc comment (after any crate attributes) stating its responsibility; read those lines to find your way, and give every new file one. Behavior lives in `engine/` and `system/` so both skins share it.
 
@@ -25,7 +26,8 @@ Every `.rs` file starts with a `//!` doc comment (after any crate attributes) st
 
 - Hover and press change color only; every widget keeps its size and position (egui `expansion` stays 0).
 - The pointer shows what a click will do: arrow on bars and panels, crosshair only while drawing on the image, move over draggable objects and inside the capture area, resize on handles, text cursor while typing.
-- Every user-facing string exists in English and Portuguese, added in the same change.
+- Every user-facing string is a `Msg` key in `src/ui/i18n.rs` with English and Portuguese text; the exhaustive `match` turns a missing translation into a compile error. Show it with `t(Msg::…)`.
+- Widgets come from `src/ui/kit.rs` and colours from `Tokens`; a new widget joins the kit with a size that never depends on hover, and the kit test covers it.
 - Motion is limited to 80 ms color transitions and the 150 ms "Copied" notice.
 - All code, assets and values are original work or come from openly licensed sources listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -34,7 +36,12 @@ Every `.rs` file starts with a `//!` doc comment (after any crate attributes) st
 1. `cargo fmt --check` prints nothing.
 2. `cargo clippy --all-targets -- -D warnings` finishes with zero warnings, pre-existing ones included.
 3. `mkdir -p shots` once (the folder is git-ignored), then `cargo test > shots/test.log 2>&1` and read the log. Send test output to a file and run one test command at a time: a pipe holds a hung run open.
-4. For visible changes, `takeshot --screenshot out.png` renders the window and saves it; compare it with the design file. Theme, mode, language and page flags arrive with the redesign.
+4. For visible changes, render the screens and compare them with the design file. `takeshot --screenshot out.png` saves the window after ~120 frames; `--theme takeui|coral`, `--mode light|dark|system`, `--lang en|pt|auto` and `--page componentes` choose what it shows without touching the saved settings. `scripts/screenshots.sh` renders the component gallery in all four theme/mode combinations into `shots/` (build with `cargo build --release` first).
+
+## Tools
+
+- `scripts/dev.sh [takeshot arguments]`: live preview. Rebuilds into `target/dev-watch` and reopens the window whenever `src/`, `assets/` or `Cargo.toml` change (default `--page componentes`).
+- `cargo run --example brand`: renders `assets/brand/*.svg` into the PNGs, `takeshot.ico` and `Takeshot.icns`. Run it after changing an SVG and commit the outputs; `build.rs` embeds `takeshot.ico` in the Windows executable.
 
 ## Git
 
