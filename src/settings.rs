@@ -1,3 +1,5 @@
+//! User settings saved to settings.json: style, watermark, drawing options and app behavior.
+
 use crate::model::{BlurMode, DEFAULT_COLOR, DEFAULT_WIDTH, Tool};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
