@@ -101,6 +101,9 @@ pub enum Msg {
     Discard,
     CopyAndClose,
     Cancel,
+    CaptureIn3s,
+    OpenTakeshot,
+    StyleAndWatermark,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -173,6 +176,9 @@ fn en(m: Msg) -> &'static str {
         Msg::Discard => "Discard",
         Msg::CopyAndClose => "Copy and close",
         Msg::Cancel => "Cancel",
+        Msg::CaptureIn3s => "Capture in 3 seconds",
+        Msg::OpenTakeshot => "Open Takeshot",
+        Msg::StyleAndWatermark => "Style and watermark",
     }
 }
 
@@ -230,6 +236,9 @@ fn pt(m: Msg) -> &'static str {
         Msg::Discard => "Descartar",
         Msg::CopyAndClose => "Copiar e fechar",
         Msg::Cancel => "Cancelar",
+        Msg::CaptureIn3s => "Capturar em 3 segundos",
+        Msg::OpenTakeshot => "Abrir o Takeshot",
+        Msg::StyleAndWatermark => "Estilo e marca d'água",
     }
 }
 

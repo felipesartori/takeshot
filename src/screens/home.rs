@@ -69,24 +69,9 @@ impl Home {
         let (tx, rx) = channel();
         self.rx = Some(rx);
         std::thread::spawn(move || {
-            let mut files: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(&dir)
-                .map(|rd| {
-                    rd.flatten()
-                        .filter(|e| {
-                            e.path()
-                                .extension()
-                                .map(|x| x.eq_ignore_ascii_case("png"))
-                                .unwrap_or(false)
-                        })
-                        .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
-                        .collect()
-                })
-                .unwrap_or_default();
-            files.sort_by_key(|f| std::cmp::Reverse(f.1));
-            let out = files
+            let out = crate::system::recents::recent_captures(&dir, 8)
                 .into_iter()
-                .take(8)
-                .filter_map(|(p, _)| {
+                .filter_map(|p| {
                     let img = image::open(&p).ok()?.to_rgba8();
                     Some((
                         p,

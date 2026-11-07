@@ -7,4 +7,6 @@ pub mod fonts;
 pub mod hotkeys;
 pub mod instance;
 pub mod prtsc_hook;
+pub mod recents;
 pub mod settings;
+pub mod tray;
