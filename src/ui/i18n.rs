@@ -184,6 +184,11 @@ pub enum Msg {
     TextColor,
     WatermarkTextHint,
     ChooseLogo,
+    HotkeysReady,
+    HotkeysOff,
+    HotkeysBusy,
+    HotkeysUnavailable,
+    CannotPin,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -301,7 +306,7 @@ fn en(m: Msg) -> &'static str {
         Msg::MinimizeWindow => "Minimize",
         Msg::MaximizeWindow => "Maximize",
         Msg::RestoreWindow => "Restore",
-        Msg::HomeSubtitle => "Press PrtSc anywhere or choose below.",
+        Msg::HomeSubtitle => "Press {0} anywhere or choose below.",
         Msg::OpenImage => "Open image",
         Msg::In3Seconds => "In 3 seconds",
         Msg::FilterAll => "All",
@@ -353,6 +358,11 @@ fn en(m: Msg) -> &'static str {
         Msg::TextColor => "Text color",
         Msg::WatermarkTextHint => "@your_name or site",
         Msg::ChooseLogo => "Choose logo",
+        Msg::HotkeysReady => "{0} capture · {1} full screen",
+        Msg::HotkeysOff => "Global shortcuts off",
+        Msg::HotkeysBusy => "{0} in use by another app",
+        Msg::HotkeysUnavailable => "Global shortcuts unavailable: {0}",
+        Msg::CannotPin => "Could not pin {0}",
     }
 }
 
@@ -449,7 +459,7 @@ fn pt(m: Msg) -> &'static str {
         Msg::MinimizeWindow => "Minimizar",
         Msg::MaximizeWindow => "Maximizar",
         Msg::RestoreWindow => "Restaurar",
-        Msg::HomeSubtitle => "Pressione PrtSc em qualquer lugar ou escolha abaixo.",
+        Msg::HomeSubtitle => "Pressione {0} em qualquer lugar ou escolha abaixo.",
         Msg::OpenImage => "Abrir imagem",
         Msg::In3Seconds => "Em 3 segundos",
         Msg::FilterAll => "Todas",
@@ -501,6 +511,11 @@ fn pt(m: Msg) -> &'static str {
         Msg::TextColor => "Cor do texto",
         Msg::WatermarkTextHint => "@seu_nome ou site",
         Msg::ChooseLogo => "Escolher logo",
+        Msg::HotkeysReady => "{0} captura · {1} tela inteira",
+        Msg::HotkeysOff => "Atalhos globais desligados",
+        Msg::HotkeysBusy => "{0} em uso por outro app",
+        Msg::HotkeysUnavailable => "Atalhos globais indisponíveis: {0}",
+        Msg::CannotPin => "Não deu para fixar {0}",
     }
 }
 

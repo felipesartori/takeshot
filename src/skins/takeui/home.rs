@@ -83,7 +83,7 @@ pub fn start_page(
             Some(acts),
         );
     } else if !home.has_captures() {
-        let hint = tr(Msg::HomeSubtitle).replace("PrtSc", &area);
+        let hint = tf(Msg::HomeSubtitle, &[&area]);
         empty(
             ui,
             t,
@@ -100,7 +100,9 @@ pub fn start_page(
 /// Title and subtitle with the capture buttons on their right, or under them when the window is
 /// too narrow for one row. The buttons' width is remembered from the frame before.
 fn header(ui: &mut Ui, t: &Tokens, area: &str, full: &str, acts: &mut Vec<MainAction>) {
-    let (title, sub) = (tr(Msg::Home), tr(Msg::HomeSubtitle));
+    let title = tr(Msg::Home);
+    let sub = tf(Msg::HomeSubtitle, &[area]);
+    let sub = sub.as_str();
     let title_w = {
         let p = ui.painter();
         let w = |s: &str, f| p.layout_no_wrap(s.to_string(), f, t.text).size().x;
@@ -365,9 +367,13 @@ mod tests {
             true,
             double_click(b),
         );
-        assert!(
-            acts.contains(&MainAction::Edit(PathBuf::from("b.png"))),
-            "{acts:?}"
+        assert_eq!(
+            acts,
+            vec![
+                MainAction::Select(PathBuf::from("b.png")),
+                MainAction::Edit(PathBuf::from("b.png"))
+            ],
+            "a double click selects, then opens, and nothing else"
         );
     }
 
@@ -416,6 +422,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_card_buttons_act_on_their_card() {
+        use crate::ui::icon::{Ico, glyph};
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let card = painted_at(&painted, &["a.png"], |_| true).unwrap();
+        let hover = vec![vec![egui::Event::PointerMoved(card)]];
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, hover.clone());
+        let a = PathBuf::from("a.png");
+        for (icon, want) in [
+            (Ico::Copy, MainAction::Copy(a.clone())),
+            (Ico::Edit, MainAction::Edit(a.clone())),
+            (Ico::FolderOpen, MainAction::ShowInFolder(a.clone())),
+            (Ico::Trash, MainAction::Trash(a.clone())),
+        ] {
+            let g = glyph(icon).to_string();
+            // The card's own button: over its picture, under the header and the filters.
+            let at = painted_at(&painted, &[g.as_str()], |r| {
+                r.center().y > 180.0 && r.center().y < card.y
+            })
+            .expect("button painted");
+            let mut frames = hover.clone();
+            frames.extend(click(at));
+            let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, frames);
+            assert_eq!(acts, vec![want.clone()], "{icon:?}");
+        }
+    }
+
+    #[test]
+    fn paste_and_open_wait_while_typing_in_search() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let paste = egui::Event::Paste("x".into());
+        let ctrl_o = egui::Event::Key {
+            key: egui::Key::O,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        let (acts, painted) = run(
+            &mut home,
+            &mut shared,
+            (1160.0, 740.0),
+            true,
+            vec![vec![paste.clone()], vec![ctrl_o.clone()]],
+        );
+        assert!(acts.contains(&MainAction::Paste), "{acts:?}");
+        assert!(acts.contains(&MainAction::OpenImage), "{acts:?}");
+        let search = painted_at(&painted, &every(Msg::SearchByName), |_| true).unwrap();
+        let mut frames = click(search);
+        frames.push(vec![paste]);
+        frames.push(vec![ctrl_o]);
+        let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, frames);
+        assert!(!acts.contains(&MainAction::Paste), "{acts:?}");
+        assert!(!acts.contains(&MainAction::OpenImage), "{acts:?}");
     }
 
     #[test]

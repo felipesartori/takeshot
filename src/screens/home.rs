@@ -38,6 +38,8 @@ pub enum MainAction {
     ChooseFolder,
     Filter(Period),
     Search(String),
+    /// A picture pasted into the window (outside a text field): it opens in the editor.
+    Paste,
     /// Style's "Restore default".
     RestoreStyle,
     /// Pick the watermark's logo file.
@@ -82,6 +84,8 @@ pub struct Home {
     folder_missing: bool,
     thumbs: Thumbs,
     textures: HashMap<PathBuf, Thumbnail>,
+    /// The cards drawn in the last frame; a waiting thumbnail not among them is dropped.
+    drawn: std::collections::HashSet<PathBuf>,
     frame: u64,
     scan_rx: Option<Receiver<(bool, Vec<Entry>)>>,
     last_scan: f64,
@@ -112,7 +116,7 @@ pub struct HomeRequests {
 impl Home {
     pub fn new(ctx: &egui::Context, shared: &Shared) -> Self {
         let mut h = Self::empty(ctx);
-        h.scan(&shared.settings.save_dir, 0.0);
+        h.scan(ctx, shared.captures_dir(), 0.0);
         h
     }
 
@@ -128,6 +132,7 @@ impl Home {
             folder_missing: false,
             thumbs: Thumbs::new(ctx),
             textures: HashMap::new(),
+            drawn: std::collections::HashSet::new(),
             frame: 0,
             scan_rx: None,
             last_scan: -100.0,
@@ -210,6 +215,7 @@ impl Home {
     /// A card's picture and the capture's size in pixels; the first call asks for the thumbnail.
     pub fn card_thumb(&mut self, path: &Path) -> (CardThumb, Option<[u32; 2]>) {
         let frame = self.frame;
+        self.drawn.insert(path.to_path_buf());
         match self.textures.get_mut(path) {
             Some(Thumbnail::Ready { tex, size, used }) => {
                 *used = frame;
@@ -323,13 +329,15 @@ impl Home {
         self.counts = library::counts(&self.entries, now);
     }
 
-    fn scan(&mut self, dir: &str, now: f64) {
+    fn scan(&mut self, ctx: &egui::Context, dir: &str, now: f64) {
         self.last_scan = now;
         let dir = PathBuf::from(dir);
         let (tx, rx) = channel();
         self.scan_rx = Some(rx);
+        let ctx = ctx.clone();
         std::thread::spawn(move || {
             let _ = tx.send((dir.is_dir(), library::scan(&dir)));
+            ctx.request_repaint();
         });
     }
 
@@ -368,12 +376,19 @@ impl Home {
             self.folder_missing = !exists;
             self.set_entries(list);
         }
-        if self.page == Page::Start
-            && self.scan_rx.is_none()
-            && now - self.last_scan > RESCAN_SECONDS
-        {
-            self.scan(&shared.settings.save_dir.clone(), now);
+        if self.page == Page::Start {
+            if self.scan_rx.is_none() && now - self.last_scan > RESCAN_SECONDS {
+                self.scan(&ctx, shared.captures_dir(), now);
+            }
+            // The folder is read again while Home is on screen, input or not.
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(RESCAN_SECONDS));
         }
+        // Thumbnails still waiting for cards that left the screen are not made; they are asked
+        // again when the cards come back.
+        self.thumbs.keep(&self.drawn);
+        let drawn = std::mem::take(&mut self.drawn);
+        self.textures
+            .retain(|p, t| !matches!(t, Thumbnail::Pending) || drawn.contains(p));
         for (path, result) in self.thumbs.poll() {
             if !self.textures.contains_key(&path) {
                 continue;
@@ -408,11 +423,11 @@ impl Home {
             acts.push(MainAction::Edit(p));
         }
         // A text field keeps its own paste and shortcuts.
-        if !ctx.egui_wants_keyboard_input() {
+        if !ctx.text_edit_focused() {
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::V))
                 || ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
             {
-                open_clipboard(shared);
+                acts.push(MainAction::Paste);
             }
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O)) {
                 acts.push(MainAction::OpenImage);
@@ -439,7 +454,8 @@ impl Home {
                     self.apply(MainAction::Edit(p), ctx, shared);
                 }
             }
-            MainAction::OpenFolder => actions::open_folder(Path::new(&shared.settings.save_dir)),
+            MainAction::OpenFolder => actions::open_folder(Path::new(shared.captures_dir())),
+            MainAction::Paste => open_clipboard(shared),
             MainAction::ChooseFolder => {
                 if let Some(d) = rfd::FileDialog::new().pick_folder() {
                     shared.settings.save_dir = d.to_string_lossy().into_owned();
@@ -484,11 +500,14 @@ impl Home {
             MainAction::ShowInFolder(p) => actions::show_in_folder(&p),
             // `--pin` deletes the file it gets, so it gets a copy.
             MainAction::Pin(p) => match image::open(&p) {
-                Ok(img) => {
-                    if let Some(tmp) = actions::temp_png(&img.to_rgba8()) {
-                        let _ = actions::spawn_self(&["--pin", &tmp.to_string_lossy()]);
+                Ok(img) => match actions::temp_png(&img.to_rgba8()) {
+                    Some(tmp) => {
+                        if let Err(e) = actions::spawn_self(&["--pin", &tmp.to_string_lossy()]) {
+                            shared.toast(e);
+                        }
                     }
-                }
+                    None => shared.toast(tf(Msg::CannotPin, &[&p.to_string_lossy()])),
+                },
                 Err(e) => shared.toast(e.to_string()),
             },
             MainAction::Trash(p) => match library::move_to_trash(&p) {
@@ -514,6 +533,8 @@ impl Home {
     }
 
     fn capture(&mut self, ctx: &egui::Context, shared: &mut Shared, args: &[&str]) {
+        // The new capture shows as soon as the window is back.
+        self.last_scan = f64::NEG_INFINITY;
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         if let Err(e) = crate::system::actions::spawn_self(args) {
             shared.toast(e);
@@ -739,26 +760,73 @@ pub(crate) fn hotkey_text(
     settings: &crate::system::settings::Settings,
 ) -> Result<String, String> {
     let ready = || {
-        Ok(format!(
-            "{} captura · {} tela inteira",
-            label(&settings.hotkey_area),
-            label(&settings.hotkey_full)
+        Ok(tf(
+            Msg::HotkeysReady,
+            &[&label(&settings.hotkey_area), &label(&settings.hotkey_full)],
         ))
     };
     match status {
         None if settings.hotkeys => ready(),
-        None | Some(Status::Off) => Err("Atalhos globais desligados".into()),
+        None | Some(Status::Off) => Err(tr(Msg::HotkeysOff).to_string()),
         Some(Status::Ready) => ready(),
-        Some(Status::Busy { keys }) => {
-            Err(format!("{} em uso por outro programa", keys.join(" e ")))
-        }
-        Some(Status::Unavailable(e)) => Err(format!("Atalhos globais indisponíveis: {e}")),
+        Some(Status::Busy { keys }) => Err(tf(Msg::HotkeysBusy, &[&keys.join(" + ")])),
+        Some(Status::Unavailable(e)) => Err(tf(Msg::HotkeysUnavailable, &[e])),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_thumbnail_cache_keeps_the_most_recently_drawn() {
+        let (mut home, _shared) = Home::for_tests(vec![]);
+        let ctx = egui::Context::default();
+        for i in 0..THUMB_CACHE + 10 {
+            let tex = ctx.load_texture(
+                format!("t{i}"),
+                egui::ColorImage::new([1, 1], vec![Color32::WHITE]),
+                egui::TextureOptions::LINEAR,
+            );
+            home.textures.insert(
+                PathBuf::from(format!("{i}.png")),
+                Thumbnail::Ready {
+                    tex,
+                    size: [1, 1],
+                    used: i as u64,
+                },
+            );
+        }
+        home.evict();
+        assert_eq!(home.textures.len(), THUMB_CACHE);
+        for i in 0..10 {
+            assert!(
+                !home
+                    .textures
+                    .contains_key(&PathBuf::from(format!("{i}.png"))),
+                "{i} is the oldest"
+            );
+        }
+        assert!(
+            home.textures
+                .contains_key(&PathBuf::from(format!("{}.png", THUMB_CACHE + 9)))
+        );
+    }
+
+    #[test]
+    fn home_wakes_up_to_read_the_folder_again() {
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        let ctx = egui::Context::default();
+        let mut full = ctx.run_ui(egui::RawInput::default(), |ui| {
+            home.begin(ui, &mut shared);
+        });
+        full.textures_delta.clear();
+        let delay = full.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+        assert!(
+            delay <= std::time::Duration::from_secs_f64(RESCAN_SECONDS),
+            "{delay:?}"
+        );
+    }
 
     #[test]
     fn the_preview_renders_once_per_change() {

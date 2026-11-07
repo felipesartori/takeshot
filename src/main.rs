@@ -11,6 +11,7 @@
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
 //!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only (every window)
 //!   --native-titlebar      the system's title bar instead of the theme's (also TAKESHOT_NATIVE_TITLEBAR=1)
+//!   --captures-dir path    the gallery reads this folder for this run only
 
 mod engine;
 mod screens;
@@ -36,10 +37,12 @@ pub struct Shared {
     pub overrides: RunOverrides,
 }
 
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct RunOverrides {
     pub theme: Option<ui::tokens::ThemeId>,
     pub mode: Option<ui::tokens::UiMode>,
+    /// `--captures-dir`: the gallery reads this folder instead of the saved one.
+    pub captures_dir: Option<String>,
 }
 
 impl Shared {
@@ -60,6 +63,14 @@ impl Shared {
             toast: None,
             overrides: RunOverrides::default(),
         }
+    }
+
+    /// The folder the gallery reads: the run's override, else the setting.
+    pub fn captures_dir(&self) -> &str {
+        self.overrides
+            .captures_dir
+            .as_deref()
+            .unwrap_or(&self.settings.save_dir)
     }
 
     /// The look now: the run's override, else the setting; `system` decides the System mode.
@@ -116,6 +127,7 @@ struct Args {
     lang: Option<ui::i18n::LangPref>,
     /// The main window's page to open on (`--page inicio|estilo|ajustes`).
     page: Option<system::instance::Page>,
+    captures_dir: Option<String>,
 }
 
 /// What `--page` names: a page of the main window, or the component gallery.
@@ -146,6 +158,7 @@ fn parse_args() -> Args {
         mode: None,
         lang: None,
         page: None,
+        captures_dir: None,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut full = false;
@@ -160,6 +173,10 @@ fn parse_args() -> Args {
             "--capture" => capture = true,
             "--minimized" => a.minimized = true,
             "--native-titlebar" => ui::chrome::init(true),
+            "--captures-dir" => {
+                a.captures_dir = v.get(i + 1).cloned();
+                i += 1;
+            }
             "--full" => full = true,
             "--sample" => a.sample = true,
             "--wait" => a.delay = a.delay.max(0.3),
@@ -627,6 +644,7 @@ fn main() -> eframe::Result {
                 overrides: RunOverrides {
                     theme: args.theme,
                     mode: args.mode,
+                    captures_dir: args.captures_dir.clone(),
                 },
             };
             shared.logo.sync(ctx, &shared.settings.watermark);

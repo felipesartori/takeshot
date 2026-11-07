@@ -4,9 +4,10 @@
 
 use chrono::{DateTime, Datelike, Local, NaiveTime};
 use image::RgbaImage;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::SystemTime;
 
 /// One image in the folder.
@@ -109,24 +110,68 @@ pub type Thumb = Result<(RgbaImage, [u32; 2]), String>;
 
 const THUMB_SIDE: u32 = 320;
 
-/// Makes thumbnails on one background thread, in the order asked; each result wakes the app.
+/// The thumbnails still to make: the newest request first (what just came on screen), each path
+/// once, and requests that left the screen dropped before they are decoded.
+#[derive(Default)]
+pub struct ThumbQueue {
+    items: Vec<PathBuf>,
+}
+
+impl ThumbQueue {
+    pub fn push(&mut self, path: PathBuf) {
+        self.items.retain(|p| *p != path);
+        self.items.push(path);
+    }
+
+    /// Drops the waiting requests not in `wanted`.
+    pub fn keep(&mut self, wanted: &HashSet<PathBuf>) {
+        self.items.retain(|p| wanted.contains(p));
+    }
+
+    pub fn pop(&mut self) -> Option<PathBuf> {
+        self.items.pop()
+    }
+}
+
+/// The queue and whether the owner went away, shared with the worker.
+type Shared = (Mutex<(ThumbQueue, bool)>, Condvar);
+
+/// Makes thumbnails on one background thread, newest request first; each result wakes the app.
 pub struct Thumbs {
-    tx: Sender<PathBuf>,
+    jobs: Arc<Shared>,
     rx: Mutex<Receiver<(PathBuf, Thumb)>>,
 }
 
 impl Thumbs {
     pub fn new(ctx: &egui::Context) -> Self {
-        let (tx, jobs) = channel::<PathBuf>();
+        let jobs: Arc<Shared> =
+            Arc::new((Mutex::new((ThumbQueue::default(), false)), Condvar::new()));
         let (done, rx) = channel();
         let ctx = ctx.clone();
+        let queue = jobs.clone();
         let spawned = std::thread::Builder::new()
             .name("takeshot-thumbs".into())
             .spawn(move || {
-                for path in jobs {
+                loop {
+                    let path = {
+                        let (lock, ready) = &*queue;
+                        let Ok(mut guard) = lock.lock() else { return };
+                        loop {
+                            if guard.1 {
+                                return;
+                            }
+                            if let Some(p) = guard.0.pop() {
+                                break p;
+                            }
+                            guard = match ready.wait(guard) {
+                                Ok(g) => g,
+                                Err(_) => return,
+                            };
+                        }
+                    };
                     let thumb = make_thumb(&path);
                     if done.send((path, thumb)).is_err() {
-                        break;
+                        return;
                     }
                     ctx.request_repaint();
                 }
@@ -135,13 +180,24 @@ impl Thumbs {
             eprintln!("takeshot: no thumbnails: {e}");
         }
         Self {
-            tx,
+            jobs,
             rx: Mutex::new(rx),
         }
     }
 
     pub fn request(&self, path: PathBuf) {
-        let _ = self.tx.send(path);
+        let (lock, ready) = &*self.jobs;
+        if let Ok(mut g) = lock.lock() {
+            g.0.push(path);
+            ready.notify_one();
+        }
+    }
+
+    /// Forgets the waiting requests not in `wanted` (the cards that left the screen).
+    pub fn keep(&self, wanted: &HashSet<PathBuf>) {
+        if let Ok(mut g) = self.jobs.0.lock() {
+            g.0.keep(wanted);
+        }
     }
 
     /// The thumbnails finished since the last call.
@@ -150,6 +206,16 @@ impl Thumbs {
             .lock()
             .map(|rx| rx.try_iter().collect())
             .unwrap_or_default()
+    }
+}
+
+impl Drop for Thumbs {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.jobs;
+        if let Ok(mut g) = lock.lock() {
+            g.1 = true;
+            ready.notify_all();
+        }
     }
 }
 
@@ -316,6 +382,21 @@ mod tests {
         let (img, dims) = find(&big).unwrap().as_ref().unwrap();
         assert_eq!(*dims, [1000, 500], "the original size");
         assert_eq!(img.dimensions(), (320, 160), "longest side 320");
+    }
+
+    #[test]
+    fn the_newest_request_goes_first_and_dropped_ones_never_decode() {
+        let mut q = ThumbQueue::default();
+        for p in ["a.png", "b.png", "c.png"] {
+            q.push(PathBuf::from(p));
+        }
+        q.push(PathBuf::from("a.png"));
+        let keep: std::collections::HashSet<PathBuf> =
+            ["a.png", "c.png"].into_iter().map(PathBuf::from).collect();
+        q.keep(&keep);
+        assert_eq!(q.pop(), Some(PathBuf::from("a.png")), "asked again: newest");
+        assert_eq!(q.pop(), Some(PathBuf::from("c.png")));
+        assert_eq!(q.pop(), None, "b left the screen; a is not asked twice");
     }
 
     #[test]
