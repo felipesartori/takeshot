@@ -6,4 +6,5 @@ pub mod icons;
 pub mod notice;
 pub mod overlay;
 pub mod pin;
+pub mod tray_menu;
 pub mod widgets;

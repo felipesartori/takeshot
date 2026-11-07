@@ -104,6 +104,10 @@ pub enum Msg {
     CaptureIn3s,
     OpenTakeshot,
     StyleAndWatermark,
+    OpenCapturesFolder,
+    Today,
+    Yesterday,
+    RecentHint,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -179,6 +183,10 @@ fn en(m: Msg) -> &'static str {
         Msg::CaptureIn3s => "Capture in 3 seconds",
         Msg::OpenTakeshot => "Open Takeshot",
         Msg::StyleAndWatermark => "Style and watermark",
+        Msg::OpenCapturesFolder => "Open captures folder",
+        Msg::Today => "Today",
+        Msg::Yesterday => "Yesterday",
+        Msg::RecentHint => "Click copies · Shift+click opens",
     }
 }
 
@@ -239,6 +247,10 @@ fn pt(m: Msg) -> &'static str {
         Msg::CaptureIn3s => "Capturar em 3 segundos",
         Msg::OpenTakeshot => "Abrir o Takeshot",
         Msg::StyleAndWatermark => "Estilo e marca d'água",
+        Msg::OpenCapturesFolder => "Abrir pasta das capturas",
+        Msg::Today => "Hoje",
+        Msg::Yesterday => "Ontem",
+        Msg::RecentHint => "Clique copia · Shift+clique abre",
     }
 }
 

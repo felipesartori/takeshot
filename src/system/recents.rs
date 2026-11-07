@@ -22,6 +22,32 @@ pub fn recent_captures(dir: &Path, n: usize) -> Vec<PathBuf> {
     files.into_iter().take(n).map(|(p, _)| p).collect()
 }
 
+/// How a recent capture is named in menus: "Today 14:32", "Yesterday 09:10", "05/11 18:00", or the
+/// file name when the file has no date.
+pub fn recent_label(path: &Path) -> String {
+    use crate::ui::i18n::{Msg, t};
+    use chrono::{DateTime, Duration, Local};
+    let Some(when) = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .map(DateTime::<Local>::from)
+    else {
+        return path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+    };
+    let today = Local::now().date_naive();
+    let time = when.format("%H:%M");
+    if when.date_naive() == today {
+        format!("{} {time}", t(Msg::Today))
+    } else if when.date_naive() == today - Duration::days(1) {
+        format!("{} {time}", t(Msg::Yesterday))
+    } else {
+        when.format("%d/%m %H:%M").to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

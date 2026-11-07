@@ -1,0 +1,513 @@
+//! The tray menu Takeshot draws itself on Windows and macOS: a borderless window by the tray icon, in the theme.
+
+// The resident opens it from plan 4, Task 6; until then only the tests use it.
+#![allow(dead_code)]
+
+use crate::system::tray::{TrayAction, TrayEntry};
+use crate::ui::i18n::{Msg, t as tr};
+use crate::ui::kit::{self, Ico};
+use crate::ui::style::{Weight, font};
+use crate::ui::tokens::{Tokens, UiMode};
+use egui::{Color32, Pos2, Rect, Sense, Stroke, TextureId, Ui, Vec2, pos2, vec2};
+use std::path::{Path, PathBuf};
+
+const MENU_WIDTH: f32 = 280.0;
+const SUB_WIDTH: f32 = 270.0;
+const PAD: f32 = 6.0;
+const ROW: f32 = 32.0;
+const HEADER: f32 = 38.0;
+const SEPARATOR: f32 = 9.0;
+const RECENT_ROW: f32 = 44.0;
+
+/// The submenus: recent captures and the light/dark mode.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Sub {
+    Recents,
+    Mode,
+}
+
+pub enum MenuOutcome {
+    Open,
+    Closed,
+    Chosen(TrayAction),
+}
+
+/// Where the menu goes: its right edge on the icon's, above the icon when it fits (taskbar at the
+/// bottom), below it otherwise (macOS menu bar), always inside the monitor.
+pub fn menu_pos(icon: Rect, menu: Vec2, monitor: Rect) -> Pos2 {
+    let x = (icon.max.x - menu.x).clamp(monitor.min.x, (monitor.max.x - menu.x).max(monitor.min.x));
+    let above = icon.min.y - menu.y - 4.0;
+    let y = if above >= monitor.min.y {
+        above
+    } else {
+        icon.max.y + 4.0
+    };
+    pos2(
+        x,
+        y.clamp(monitor.min.y, (monitor.max.y - menu.y).max(monitor.min.y)),
+    )
+}
+
+/// The menu closes on Esc, or when focus leaves it after it had focus (a click elsewhere). Before it
+/// first gets focus it stays: the window was just opened.
+pub fn should_close(esc: bool, focused: Option<bool>, had_focus: bool) -> bool {
+    esc || (had_focus && focused == Some(false))
+}
+
+fn menu_size(entries: &[TrayEntry]) -> Vec2 {
+    let h: f32 = entries
+        .iter()
+        .map(|e| match e {
+            TrayEntry::Separator => SEPARATOR,
+            _ => ROW,
+        })
+        .sum();
+    vec2(MENU_WIDTH, HEADER + h + PAD * 2.0)
+}
+
+fn sub_size(sub: Sub, recents: usize) -> Vec2 {
+    let h = match sub {
+        Sub::Recents => recents as f32 * RECENT_ROW + SEPARATOR + ROW,
+        Sub::Mode => 3.0 * ROW,
+    };
+    vec2(SUB_WIDTH, h + PAD * 2.0)
+}
+
+fn separator(ui: &mut Ui, t: &Tokens) {
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), SEPARATOR), Sense::hover());
+    ui.painter()
+        .hline(r.x_range(), r.center().y, Stroke::new(1.0, t.line));
+}
+
+fn icon_for(a: &TrayAction) -> Ico {
+    match a {
+        TrayAction::Capture(crate::system::hotkeys::Shot::Area) => Ico::Scan,
+        TrayAction::Capture(crate::system::hotkeys::Shot::Full) => Ico::Monitor,
+        TrayAction::CaptureIn3s => Ico::Timer,
+        TrayAction::Show(crate::system::instance::Page::Start) => Ico::Home,
+        TrayAction::Show(crate::system::instance::Page::Style) => Ico::Palette,
+        TrayAction::Show(crate::system::instance::Page::Settings) => Ico::Settings,
+        TrayAction::Show(crate::system::instance::Page::About) => Ico::Info,
+        TrayAction::Quit => Ico::Power,
+        _ => Ico::Images,
+    }
+}
+
+/// What the main menu body did this frame: a chosen action, and the submenu row under the pointer.
+pub struct MainOutcome {
+    pub chosen: Option<TrayAction>,
+    pub sub: Option<(Sub, Rect)>,
+}
+
+/// The main menu: a header with the PrtSc status, then the entries.
+pub fn main_body(ui: &mut Ui, t: &Tokens, entries: &[TrayEntry], ready: bool) -> MainOutcome {
+    let mut out = MainOutcome {
+        chosen: None,
+        sub: None,
+    };
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.horizontal(|ui| {
+        ui.set_height(HEADER);
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("Takeshot")
+                .font(font(13.0, Weight::Bold))
+                .color(t.text),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            kit::status_chip(ui, t, ready);
+        });
+    });
+    for e in entries {
+        match e {
+            TrayEntry::Separator => separator(ui, t),
+            TrayEntry::Item {
+                label,
+                keys,
+                action,
+            } => {
+                if kit::menu_item(ui, t, Some(icon_for(action)), label, keys.as_deref(), false)
+                    .clicked()
+                {
+                    out.chosen = Some(action.clone());
+                }
+            }
+            TrayEntry::Recents(_) => {
+                let r = kit::menu_item(ui, t, Some(Ico::Images), tr(Msg::Recent), None, true);
+                if r.hovered() || r.clicked() {
+                    out.sub = Some((Sub::Recents, r.rect));
+                }
+            }
+            TrayEntry::Mode(_) => {
+                let r = kit::menu_item(ui, t, Some(Ico::SunMoon), tr(Msg::Theme), None, true);
+                if r.hovered() || r.clicked() {
+                    out.sub = Some((Sub::Mode, r.rect));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The recent captures: click copies, Shift+click opens in the editor; then "Open captures folder".
+pub fn recents_body(
+    ui: &mut Ui,
+    t: &Tokens,
+    files: &[PathBuf],
+    thumb: &dyn Fn(&Path) -> Option<TextureId>,
+) -> Option<TrayAction> {
+    let mut chosen = None;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    for f in files {
+        let (rect, resp) =
+            ui.allocate_exact_size(vec2(ui.available_width(), RECENT_ROW), Sense::click());
+        let p = ui.painter();
+        if resp.hovered() {
+            p.rect_filled(rect, t.radius, t.hover);
+        }
+        let img = Rect::from_min_size(rect.min + vec2(8.0, 7.0), vec2(44.0, 30.0));
+        match thumb(f) {
+            Some(id) => {
+                p.image(
+                    id,
+                    img,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            None => {
+                p.rect_filled(img, 3.0, t.raised);
+            }
+        }
+        let x = img.max.x + 10.0;
+        p.text(
+            pos2(x, rect.min.y + 8.0),
+            egui::Align2::LEFT_TOP,
+            crate::system::recents::recent_label(f),
+            font(12.5, Weight::Medium),
+            t.text,
+        );
+        p.text(
+            pos2(x, rect.min.y + 25.0),
+            egui::Align2::LEFT_TOP,
+            tr(Msg::RecentHint),
+            font(11.0, Weight::Regular),
+            t.faint,
+        );
+        if resp.clicked() {
+            let shift = ui.input(|i| i.modifiers.shift);
+            chosen = Some(if shift {
+                TrayAction::EditRecent(f.clone())
+            } else {
+                TrayAction::CopyRecent(f.clone())
+            });
+        }
+    }
+    separator(ui, t);
+    if kit::menu_item(
+        ui,
+        t,
+        Some(Ico::FolderOpen),
+        tr(Msg::OpenCapturesFolder),
+        None,
+        false,
+    )
+    .clicked()
+    {
+        chosen = Some(TrayAction::OpenCapturesFolder);
+    }
+    chosen
+}
+
+/// Light, Dark and System, with a check on the current one.
+pub fn mode_body(ui: &mut Ui, t: &Tokens, current: UiMode) -> Option<TrayAction> {
+    let mut chosen = None;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    for (m, msg) in [
+        (UiMode::Light, Msg::ModeLight),
+        (UiMode::Dark, Msg::ModeDark),
+        (UiMode::System, Msg::ModeSystem),
+    ] {
+        let icon = (m == current).then_some(Ico::Check);
+        if kit::menu_item(ui, t, icon, tr(msg), None, false).clicked() {
+            chosen = Some(TrayAction::SetMode(m));
+        }
+    }
+    chosen
+}
+
+/// The open menu and its submenu, each a borderless always-on-top window.
+pub struct TrayMenu {
+    at: Option<Pos2>,
+    monitor: Rect,
+    had_focus: bool,
+    sub: Option<(Sub, Pos2)>,
+}
+
+impl Default for TrayMenu {
+    fn default() -> Self {
+        Self {
+            at: None,
+            monitor: Rect::NOTHING,
+            had_focus: false,
+            sub: None,
+        }
+    }
+}
+
+impl TrayMenu {
+    /// Opens next to the tray icon (`icon` and `monitor` in points).
+    pub fn open(&mut self, icon: Rect, monitor: Rect, entries: &[TrayEntry]) {
+        self.at = Some(menu_pos(icon, menu_size(entries), monitor));
+        self.monitor = monitor;
+        self.had_focus = false;
+        self.sub = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.at.is_some()
+    }
+
+    pub fn close(&mut self) {
+        self.at = None;
+        self.sub = None;
+    }
+
+    /// Draws the menu windows for this frame and reports what happened.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        t: &Tokens,
+        entries: &[TrayEntry],
+        ready: bool,
+        thumb: &dyn Fn(&Path) -> Option<TextureId>,
+    ) -> MenuOutcome {
+        let Some(at) = self.at else {
+            return MenuOutcome::Closed;
+        };
+        let recents: Vec<PathBuf> = entries
+            .iter()
+            .find_map(|e| match e {
+                TrayEntry::Recents(r) => Some(r.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let mode = entries
+            .iter()
+            .find_map(|e| match e {
+                TrayEntry::Mode(m) => Some(*m),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let frame = egui::Frame::new()
+            .fill(t.surf)
+            .stroke(Stroke::new(1.0, t.border))
+            .corner_radius(10)
+            .inner_margin(PAD);
+        let builder = |pos: Pos2, size: Vec2| {
+            egui::ViewportBuilder::default()
+                .with_title("Takeshot")
+                .with_decorations(false)
+                .with_always_on_top()
+                .with_taskbar(false)
+                .with_resizable(false)
+                .with_position(pos)
+                .with_inner_size(size)
+        };
+        let mut chosen = None;
+        let mut focused = false;
+        let mut esc = false;
+        let main_id = egui::ViewportId::from_hash_of("takeshot-tray-menu");
+        let first = !self.had_focus;
+        let hovered_sub =
+            ctx.show_viewport_immediate(main_id, builder(at, menu_size(entries)), |ui, _| {
+                if first {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                focused |= ui.input(|i| i.viewport().focused.unwrap_or(false));
+                esc |= ui.input(|i| i.key_pressed(egui::Key::Escape));
+                let mut out = None;
+                egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+                    let r = main_body(ui, t, entries, ready);
+                    chosen = chosen.take().or(r.chosen);
+                    out = r.sub;
+                });
+                out.map(|(s, row)| (s, at.y + row.min.y - PAD))
+            });
+        if let Some((s, row_y)) = hovered_sub {
+            let size = sub_size(s, recents.len());
+            // Opens to the left of the menu (the tray sits at the right), or to the right without room.
+            let left = at.x - size.x - 4.0;
+            let x = if left >= self.monitor.min.x {
+                left
+            } else {
+                at.x + MENU_WIDTH + 4.0
+            };
+            let y = row_y.clamp(self.monitor.min.y, (self.monitor.max.y - size.y).max(0.0));
+            self.sub = Some((s, pos2(x, y)));
+        }
+        if let Some((s, pos)) = self.sub {
+            let sub_id = egui::ViewportId::from_hash_of(("takeshot-tray-sub", s as u8));
+            ctx.show_viewport_immediate(
+                sub_id,
+                builder(pos, sub_size(s, recents.len())),
+                |ui, _| {
+                    focused |= ui.input(|i| i.viewport().focused.unwrap_or(false));
+                    esc |= ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+                        let r = match s {
+                            Sub::Recents => recents_body(ui, t, &recents, thumb),
+                            Sub::Mode => mode_body(ui, t, mode),
+                        };
+                        chosen = chosen.take().or(r);
+                    });
+                },
+            );
+        }
+        self.had_focus |= focused;
+        if let Some(a) = chosen {
+            self.close();
+            return MenuOutcome::Chosen(a);
+        }
+        if should_close(esc, Some(focused), self.had_focus) {
+            self.close();
+            return MenuOutcome::Closed;
+        }
+        MenuOutcome::Open
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::hotkeys::Shot;
+    use crate::system::tray::tray_entries;
+    use crate::ui::tokens::{ThemeId, tokens};
+    use egui::{Event, Modifiers, PointerButton};
+
+    #[test]
+    fn menu_sits_above_the_icon_and_inside_the_monitor() {
+        let monitor = Rect::from_min_size(Pos2::ZERO, vec2(1920.0, 1080.0));
+        let menu = vec2(300.0, 420.0);
+        // Windows taskbar at the bottom, icon near the right edge.
+        let icon = Rect::from_min_size(pos2(1800.0, 1050.0), vec2(24.0, 24.0));
+        let at = menu_pos(icon, menu, monitor);
+        let r = Rect::from_min_size(at, menu);
+        assert!(r.max.y <= icon.min.y, "above the icon: {r:?}");
+        assert!(monitor.contains_rect(r), "inside the monitor: {r:?}");
+        // macOS menu bar at the top: below the icon.
+        let icon = Rect::from_min_size(pos2(1500.0, 0.0), vec2(24.0, 24.0));
+        let r = Rect::from_min_size(menu_pos(icon, menu, monitor), menu);
+        assert!(r.min.y >= icon.max.y, "below the icon: {r:?}");
+        assert!(monitor.contains_rect(r), "{r:?}");
+    }
+
+    #[test]
+    fn menu_closes_on_escape_or_lost_focus_without_acting() {
+        assert!(should_close(true, Some(true), true), "Esc");
+        assert!(
+            should_close(false, Some(false), true),
+            "focus went elsewhere"
+        );
+        assert!(
+            !should_close(false, Some(false), false),
+            "not focused yet: just opened"
+        );
+        assert!(!should_close(false, Some(true), true));
+        assert!(!should_close(false, None, false));
+    }
+
+    /// Runs a body over a few frames with these events, returning the last frame's answer and the
+    /// screen rect of every painted text.
+    fn drive<T>(
+        mut body: impl FnMut(&mut egui::Ui) -> Option<T>,
+        frames: Vec<Vec<Event>>,
+    ) -> (Option<T>, Vec<(String, Rect)>) {
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        let mut answer = None;
+        let mut painted = Vec::new();
+        for (i, ev) in std::iter::once(vec![]).chain(frames).enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 800.0))),
+                time: Some(i as f64 * 0.016),
+                events: ev,
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                answer = body(ui);
+            });
+            full.textures_delta.clear();
+            painted.clear();
+            for c in &full.shapes {
+                if let egui::Shape::Text(t) = &c.shape {
+                    painted.push((
+                        t.galley.text().to_owned(),
+                        t.galley.rect.translate(t.pos.to_vec2()),
+                    ));
+                }
+            }
+        }
+        (answer, painted)
+    }
+
+    fn click_at(p: Pos2, shift: bool) -> Vec<Vec<Event>> {
+        let m = if shift {
+            Modifiers::SHIFT
+        } else {
+            Modifiers::NONE
+        };
+        let b = |down| Event::PointerButton {
+            pos: p,
+            button: PointerButton::Primary,
+            pressed: down,
+            modifiers: m,
+        };
+        vec![
+            vec![Event::ModifiersChanged(m), Event::PointerMoved(p)],
+            vec![Event::ModifiersChanged(m), b(true)],
+            vec![Event::ModifiersChanged(m), b(false)],
+        ]
+    }
+
+    fn center_of(painted: &[(String, Rect)], text: &str) -> Pos2 {
+        painted
+            .iter()
+            .find(|(s, _)| s == text)
+            .map(|(_, r)| r.center())
+            .unwrap_or_else(|| panic!("{text:?} not painted"))
+    }
+
+    #[test]
+    fn choosing_a_main_row_returns_its_action() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let entries = tray_entries(&[], UiMode::Dark, "PrintScreen", "shift+PrintScreen");
+        let label = match &entries[0] {
+            TrayEntry::Item { label, .. } => label.clone(),
+            _ => unreachable!(),
+        };
+        let body = |ui: &mut egui::Ui| main_body(ui, &t, &entries, true).chosen;
+        let (none, painted) = drive(body, vec![]);
+        assert!(none.is_none());
+        let at = center_of(&painted, &label);
+        let (chosen, _) = drive(body, click_at(at, false));
+        assert_eq!(chosen, Some(TrayAction::Capture(Shot::Area)));
+    }
+
+    #[test]
+    fn shift_click_on_a_recent_opens_it_in_the_editor() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let files = vec![PathBuf::from("a.png"), PathBuf::from("b.png")];
+        let names: Vec<String> = files
+            .iter()
+            .map(|f| crate::system::recents::recent_label(f))
+            .collect();
+        let body = |ui: &mut egui::Ui| recents_body(ui, &t, &files, &|_| None);
+        let (_, painted) = drive(body, vec![]);
+        let at = center_of(&painted, &names[1]);
+        let (copy, _) = drive(body, click_at(at, false));
+        assert_eq!(copy, Some(TrayAction::CopyRecent(files[1].clone())));
+        let (edit, _) = drive(body, click_at(at, true));
+        assert_eq!(edit, Some(TrayAction::EditRecent(files[1].clone())));
+    }
+}
