@@ -29,6 +29,14 @@ Every `.rs` file starts with a `//!` doc comment (after any crate attributes) st
 - Every user-facing string is a `Msg` key in `src/ui/i18n.rs` with English and Portuguese text; the exhaustive `match` turns a missing translation into a compile error. Show it with `t(Msg::…)`.
 - Widgets come from `src/ui/kit.rs` and colours from `Tokens`; a new widget joins the kit with a size that never depends on hover, and the kit test covers it.
 - Motion is limited to 80 ms color transitions and the 150 ms "Copied" notice.
+
+## Objects on the picture
+
+Editor and capture share one behaviour, so both skins get it for free:
+
+- Annotations are objects in `engine::doc::Doc`: ids, selection, transforms and an undo history of snapshots. A whole drag is one undo step (call `begin_change` once, then `translate_selected` or `resize` per frame). Selecting never changes `revision`, which is how the editor knows there is nothing to save.
+- Screens route the pointer and keys through `Annotator::handle_canvas`, `handle_object_keys` and `handle_history_keys`, and set the pointer from `engine::cursor::pick`; they never pick cursor icons by hand.
+- Each frame: `bake()` first (it returns annotations to render only when the picture is out of date), then the pointer, then `paint_selection`. During a drag only its start re-bakes, to take the dragged objects out, and `paint_selection` paints `painted_live()` until the drop re-bakes. A big capture never re-renders while something moves.
 - All code, assets and values are original work or come from openly licensed sources listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Verify before calling work done
