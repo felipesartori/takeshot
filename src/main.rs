@@ -11,6 +11,7 @@
 mod engine;
 mod screens;
 mod system;
+mod ui;
 
 use engine::{model, render};
 use screens::{editor, home, icons, notice, overlay, pin, widgets};
