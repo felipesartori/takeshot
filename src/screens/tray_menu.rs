@@ -26,6 +26,7 @@ pub enum Sub {
     Mode,
 }
 
+#[derive(Clone, PartialEq, Debug)]
 pub enum MenuOutcome {
     Open,
     Closed,
@@ -48,10 +49,33 @@ pub fn menu_pos(icon: Rect, menu: Vec2, monitor: Rect) -> Pos2 {
     )
 }
 
-/// The menu closes on Esc, or when focus leaves it after it had focus (a click elsewhere). Before it
-/// first gets focus it stays: the window was just opened.
-pub fn should_close(esc: bool, focused: Option<bool>, had_focus: bool) -> bool {
-    esc || (had_focus && focused == Some(false))
+/// Watches focus across the menu and its flyout. The menu closes on Esc, or once neither window
+/// has had focus for two frames in a row after one of them had it (a click elsewhere; moving from
+/// one window to the other can read as a single frame without focus). Before the first focus it
+/// stays: the windows were just opened.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct FocusWatch {
+    had: bool,
+    unfocused: u8,
+}
+
+impl FocusWatch {
+    /// Feeds one frame's focus of the menu and of the flyout (`None` when unknown or absent);
+    /// true when the menu should close.
+    pub fn step(&mut self, main: Option<bool>, sub: Option<bool>, esc: bool) -> bool {
+        if esc {
+            return true;
+        }
+        if main == Some(true) || sub == Some(true) {
+            self.had = true;
+            self.unfocused = 0;
+            return false;
+        }
+        if self.had && (main.is_some() || sub.is_some()) {
+            self.unfocused = self.unfocused.saturating_add(1);
+        }
+        self.unfocused >= 2
+    }
 }
 
 fn menu_size(entries: &[TrayEntry]) -> Vec2 {
@@ -97,6 +121,8 @@ fn icon_for(a: &TrayAction) -> Ico {
 pub struct MainOutcome {
     pub chosen: Option<TrayAction>,
     pub sub: Option<(Sub, Rect)>,
+    /// The pointer is on a plain row, so an open flyout should close.
+    pub plain_hovered: bool,
 }
 
 /// The main menu: a header with the PrtSc status, then the entries.
@@ -104,6 +130,7 @@ pub fn main_body(ui: &mut Ui, t: &Tokens, entries: &[TrayEntry], ready: bool) ->
     let mut out = MainOutcome {
         chosen: None,
         sub: None,
+        plain_hovered: false,
     };
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.horizontal(|ui| {
@@ -126,9 +153,10 @@ pub fn main_body(ui: &mut Ui, t: &Tokens, entries: &[TrayEntry], ready: bool) ->
                 keys,
                 action,
             } => {
-                if kit::menu_item(ui, t, Some(icon_for(action)), label, keys.as_deref(), false)
-                    .clicked()
-                {
+                let r =
+                    kit::menu_item(ui, t, Some(icon_for(action)), label, keys.as_deref(), false);
+                out.plain_hovered |= r.hovered();
+                if r.clicked() {
                     out.chosen = Some(action.clone());
                 }
             }
@@ -240,7 +268,7 @@ pub fn mode_body(ui: &mut Ui, t: &Tokens, current: UiMode) -> Option<TrayAction>
 pub struct TrayMenu {
     at: Option<Pos2>,
     monitor: Rect,
-    had_focus: bool,
+    focus: FocusWatch,
     sub: Option<(Sub, Pos2)>,
 }
 
@@ -249,7 +277,7 @@ impl Default for TrayMenu {
         Self {
             at: None,
             monitor: Rect::NOTHING,
-            had_focus: false,
+            focus: FocusWatch::default(),
             sub: None,
         }
     }
@@ -260,7 +288,7 @@ impl TrayMenu {
     pub fn open(&mut self, icon: Rect, monitor: Rect, entries: &[TrayEntry]) {
         self.at = Some(menu_pos(icon, menu_size(entries), monitor));
         self.monitor = monitor;
-        self.had_focus = false;
+        self.focus = FocusWatch::default();
         self.sub = None;
     }
 
@@ -311,29 +339,33 @@ impl TrayMenu {
                 .with_always_on_top()
                 .with_taskbar(false)
                 .with_resizable(false)
+                .with_transparent(true)
                 .with_position(pos)
                 .with_inner_size(size)
         };
         let mut chosen = None;
-        let mut focused = false;
+        let mut main_focus = None;
+        let mut sub_focus = None;
         let mut esc = false;
         let main_id = egui::ViewportId::from_hash_of("takeshot-tray-menu");
-        let first = !self.had_focus;
-        let hovered_sub =
+        let (hovered_sub, plain) =
             ctx.show_viewport_immediate(main_id, builder(at, menu_size(entries)), |ui, _| {
-                if first {
+                main_focus = ui.input(|i| i.viewport().focused);
+                if main_focus != Some(true) && sub_focus.is_none() && self.sub.is_none() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
-                focused |= ui.input(|i| i.viewport().focused.unwrap_or(false));
                 esc |= ui.input(|i| i.key_pressed(egui::Key::Escape));
-                let mut out = None;
+                let mut out = (None, false);
                 egui::CentralPanel::default().frame(frame).show(ui, |ui| {
                     let r = main_body(ui, t, entries, ready);
                     chosen = chosen.take().or(r.chosen);
-                    out = r.sub;
+                    out = (r.sub, r.plain_hovered);
                 });
-                out.map(|(s, row)| (s, at.y + row.min.y - PAD))
+                (out.0.map(|(s, row)| (s, at.y + row.min.y - PAD)), out.1)
             });
+        if plain {
+            self.sub = None;
+        }
         if let Some((s, row_y)) = hovered_sub {
             let size = sub_size(s, recents.len());
             // Opens to the left of the menu (the tray sits at the right), or to the right without room.
@@ -343,7 +375,10 @@ impl TrayMenu {
             } else {
                 at.x + MENU_WIDTH + 4.0
             };
-            let y = row_y.clamp(self.monitor.min.y, (self.monitor.max.y - size.y).max(0.0));
+            // min then max, not clamp: a monitor smaller than the flyout must not panic.
+            let y = row_y
+                .min(self.monitor.max.y - size.y)
+                .max(self.monitor.min.y);
             self.sub = Some((s, pos2(x, y)));
         }
         if let Some((s, pos)) = self.sub {
@@ -352,7 +387,7 @@ impl TrayMenu {
                 sub_id,
                 builder(pos, sub_size(s, recents.len())),
                 |ui, _| {
-                    focused |= ui.input(|i| i.viewport().focused.unwrap_or(false));
+                    sub_focus = ui.input(|i| i.viewport().focused);
                     esc |= ui.input(|i| i.key_pressed(egui::Key::Escape));
                     egui::CentralPanel::default().frame(frame).show(ui, |ui| {
                         let r = match s {
@@ -364,16 +399,16 @@ impl TrayMenu {
                 },
             );
         }
-        self.had_focus |= focused;
-        if let Some(a) = chosen {
-            self.close();
-            return MenuOutcome::Chosen(a);
-        }
-        if should_close(esc, Some(focused), self.had_focus) {
-            self.close();
-            return MenuOutcome::Closed;
-        }
-        MenuOutcome::Open
+        let close = self.focus.step(main_focus, sub_focus, esc);
+        let outcome = match chosen {
+            Some(a) => MenuOutcome::Chosen(a),
+            None if close => MenuOutcome::Closed,
+            None => return MenuOutcome::Open,
+        };
+        self.close();
+        // The windows only go away on the next pass, when they are no longer shown: ask for it.
+        ctx.request_repaint();
+        outcome
     }
 }
 
@@ -382,7 +417,7 @@ mod tests {
     use super::*;
     use crate::system::hotkeys::Shot;
     use crate::system::tray::tray_entries;
-    use crate::ui::tokens::{ThemeId, tokens};
+    use crate::ui::tokens::{ThemeId, UiMode, tokens};
     use egui::{Event, Modifiers, PointerButton};
 
     #[test]
@@ -403,18 +438,86 @@ mod tests {
     }
 
     #[test]
-    fn menu_closes_on_escape_or_lost_focus_without_acting() {
-        assert!(should_close(true, Some(true), true), "Esc");
+    fn focus_keeps_the_menu_while_the_menu_or_its_flyout_has_it() {
+        let mut w = FocusWatch::default();
+        assert!(!w.step(None, None, false), "unknown focus");
         assert!(
-            should_close(false, Some(false), true),
+            !w.step(Some(false), None, false),
+            "just opened: no focus yet"
+        );
+        assert!(!w.step(Some(true), None, false));
+        assert!(
+            !w.step(Some(false), Some(true), false),
+            "moved into the flyout"
+        );
+        assert!(
+            !w.step(Some(false), Some(false), false),
+            "one frame between windows"
+        );
+        assert!(
+            w.step(Some(false), Some(false), false),
             "focus went elsewhere"
         );
-        assert!(
-            !should_close(false, Some(false), false),
-            "not focused yet: just opened"
+        assert!(FocusWatch::default().step(None, None, true), "Esc");
+    }
+
+    #[test]
+    fn the_real_menu_closes_on_escape_and_after_a_choice() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let entries = tray_entries(&[], UiMode::Dark, "PrintScreen", "shift+PrintScreen");
+        let icon = Rect::from_min_size(pos2(560.0, 760.0), vec2(24.0, 24.0));
+        let monitor = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 800.0));
+        let mut menu = TrayMenu::default();
+        menu.open(icon, monitor, &entries);
+        let esc = Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let mut last = None;
+        let step = |ui: &mut egui::Ui, menu: &mut TrayMenu, last: &mut Option<MenuOutcome>| {
+            let o = menu.show(ui.ctx(), &t, &entries, true, &|_| None);
+            if !matches!(o, MenuOutcome::Open) {
+                *last = Some(o);
+            }
+        };
+        drive(
+            |ui| {
+                step(ui, &mut menu, &mut last);
+                None::<()>
+            },
+            vec![vec![], vec![esc]],
         );
-        assert!(!should_close(false, Some(true), true));
-        assert!(!should_close(false, None, false));
+        assert!(matches!(last.take(), Some(MenuOutcome::Closed)));
+        assert!(!menu.is_open());
+
+        menu.open(icon, monitor, &entries);
+        let label = match &entries[0] {
+            TrayEntry::Item { label, .. } => label.clone(),
+            _ => unreachable!(),
+        };
+        let (_, painted) = drive(
+            |ui| {
+                step(ui, &mut menu, &mut last);
+                None::<()>
+            },
+            vec![vec![]],
+        );
+        let at = center_of(&painted, &label);
+        drive(
+            |ui| {
+                step(ui, &mut menu, &mut last);
+                None::<()>
+            },
+            click_at(at, false),
+        );
+        assert!(matches!(
+            last,
+            Some(MenuOutcome::Chosen(TrayAction::Capture(Shot::Area)))
+        ));
+        assert!(!menu.is_open());
     }
 
     /// Runs a body over a few frames with these events, returning the last frame's answer and the
