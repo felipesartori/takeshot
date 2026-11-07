@@ -35,8 +35,9 @@ pub fn settings_page(
     let before = serde_json::to_string(&shared.settings).ok();
     let avail = ui.available_size();
     ui.horizontal_top(|ui| {
-        // The list keeps the box's 24 px padding on its right too, before the line.
-        ui.spacing_mut().item_spacing.x = 0.0;
+        // The list keeps the box's 24 px padding on its right too, before the line; the row's
+        // own spacing counts towards it (and stays as it is for the controls inside).
+        let pad = (24.0 - ui.spacing().item_spacing.x).max(0.0);
         ui.vertical(|ui| {
             ui.set_width(180.0);
             for (s, icon, msg) in SECTIONS {
@@ -45,10 +46,10 @@ pub fn settings_page(
                 }
             }
         });
-        ui.add_space(24.0);
+        ui.add_space(pad);
         let (line, _) = ui.allocate_exact_size(vec2(1.0, avail.y.max(0.0)), egui::Sense::hover());
         ui.painter().rect_filled(line, 0.0, t.border);
-        ui.add_space(24.0);
+        ui.add_space(pad);
         ui.vertical(|ui| {
             egui::ScrollArea::vertical()
                 .id_salt("takeui-settings")
@@ -497,7 +498,7 @@ mod tests {
     use crate::screens::home::{Home, MainAction, SettingsSection};
     use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
-    use crate::ui::i18n::{Lang, LangPref, Msg, apply_language, every, lang, set_lang};
+    use crate::ui::i18n::{Lang, LangPref, Msg, apply_language, every, lang, lang_lock, set_lang};
     use crate::ui::tokens::{ThemeId, UiMode};
     use egui::vec2;
 
@@ -538,6 +539,9 @@ mod tests {
 
     #[test]
     fn every_section_fits_at_the_minimum_size() {
+        // Nothing past the box's padding, and no text running into another (a hint under its
+        // row's control, a label under a chip).
+        let _lang = lang_lock();
         let before = lang();
         for l in [Lang::Pt, Lang::En] {
             set_lang(l);
@@ -563,15 +567,38 @@ mod tests {
                     (b.right() - (900.0 - 8.0)).abs() <= 0.5,
                     "{l:?} {s:?}: {b:?}"
                 );
-                for (text, r) in painted.iter().filter(|(_, r)| r.top() > b.top()) {
+                let texts: Vec<_> = painted.iter().filter(|(_, r)| r.top() > b.top()).collect();
+                for (i, (text, r)) in texts.iter().enumerate() {
                     assert!(
                         r.right() <= b.right() - 25.0 + 1.0,
                         "{l:?} {s:?}: {text:?} {r:?} outside {b:?}"
                     );
+                    for (other, o) in &texts[i + 1..] {
+                        assert!(
+                            !r.shrink(0.5).intersects(o.shrink(0.5)),
+                            "{l:?} {s:?}: {text:?} {r:?} runs into {other:?} {o:?}"
+                        );
+                    }
                 }
             }
         }
         set_lang(before);
+    }
+
+    #[test]
+    fn the_theme_cards_keep_their_spacing() {
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(Page::Settings);
+        let (_, _, blocks) = run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let mut cards: Vec<_> = blocks
+            .iter()
+            .map(|(r, _)| r.expand(1.0))
+            .filter(|r| r.size() == vec2(148.0, 112.0))
+            .collect();
+        cards.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        assert_eq!(cards.len(), 2, "{cards:?}");
+        let gap = cards[1].left() - cards[0].right();
+        assert!(gap >= 8.0, "gap {gap}");
     }
 
     #[test]
@@ -622,14 +649,33 @@ mod tests {
 
     #[test]
     fn mode_and_language_apply_at_once() {
+        let _lang = lang_lock();
+        let before = lang();
+        set_lang(Lang::Pt);
         let (mut home, mut shared) = Home::for_tests(vec![]);
         home.open(Page::Settings);
         let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
         let light = painted_at(&painted, &every(Msg::ModeLight), |_| true).expect("Light");
         run(&mut home, &mut shared, (1160.0, 740.0), true, click(light));
         assert_eq!(shared.settings.ui_mode, UiMode::Light);
-        let before = lang();
-        apply_language(LangPref::En);
+        // The language goes from the click through the action to the strings on screen.
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let english = painted_at(&painted, &every(Msg::LangEn), |_| true).expect("English");
+        let (acts, _) = run(
+            &mut home,
+            &mut shared,
+            (1160.0, 740.0),
+            true,
+            click(english),
+        );
+        assert!(
+            acts.contains(&MainAction::SetLanguage(LangPref::En)),
+            "{acts:?}"
+        );
+        for a in acts {
+            home.apply(a, &egui::Context::default(), &mut shared);
+        }
+        assert_eq!(shared.settings.lang, LangPref::En);
         assert_eq!(lang(), Lang::En);
         apply_language(LangPref::Pt);
         assert_eq!(lang(), Lang::Pt);

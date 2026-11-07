@@ -40,6 +40,13 @@ pub fn set_lang(lang: Lang) {
     CURRENT.store(lang as u8, Ordering::Relaxed);
 }
 
+/// Held by every test that changes the process-wide language, so parallel tests take turns.
+#[cfg(test)]
+pub fn lang_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Applies a language choice now: the system's language for Automático, else the one chosen.
 pub fn apply_language(pref: LangPref) {
     set_lang(resolve(pref, system_locale().as_deref()));
@@ -429,14 +436,14 @@ fn en(m: Msg) -> &'static str {
         Msg::KeyArrows => "Arrows / Shift+arrows",
         Msg::KeyPickColor => "C (before selecting)",
         Msg::DescStraight => "Straight line at 45°, square, perfect circle",
-        Msg::DescFromCenter => "Draw from the centre",
+        Msg::DescFromCenter => "Draw from the center",
         Msg::DescTools => "Pen, line, arrow, rectangle, circle, marker, text, blur, steps",
         Msg::DescWidth => "Stroke width / text size",
         Msg::DescCopySave => "Copy / save",
         Msg::DescOpenEditor => "Open in the editor",
         Msg::DescUndoRedo => "Undo / redo",
         Msg::DescMoveResize => "Move / resize the selection",
-        Msg::DescPickColor => "Copy the colour under the pointer",
+        Msg::DescPickColor => "Copy the color under the pointer",
         Msg::ShortcutStatus => "Status",
     }
 }
@@ -660,6 +667,7 @@ mod tests {
 
     #[test]
     fn translates_and_formats() {
+        let _lang = lang_lock();
         set_lang(Lang::Pt);
         assert_eq!(t(Msg::ModeSystem), "Sistema");
         set_lang(Lang::En);

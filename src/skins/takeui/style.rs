@@ -394,10 +394,11 @@ mod tests {
     use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::system::settings::QuickStyle;
-    use crate::ui::i18n::{Lang, Msg, every, lang, set_lang};
+    use crate::ui::i18n::{Lang, Msg, every, lang, lang_lock, set_lang};
 
     #[test]
     fn the_page_fits_in_its_box_at_the_minimum_size() {
+        let _lang = lang_lock();
         let before = lang();
         for l in [Lang::Pt, Lang::En] {
             set_lang(l);

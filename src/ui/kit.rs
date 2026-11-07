@@ -362,7 +362,8 @@ pub fn anchor_grid(ui: &mut Ui, t: &Tokens, selected: Option<usize>) -> Option<u
 }
 
 /// A settings row: label and a short hint on the left, the control on the right, over the full
-/// width. Its height follows the hint, never the hover.
+/// width. The control is laid out first; label and hint are cut with "…" where it begins. Its
+/// height follows the hint, never the hover.
 pub fn setting_row(
     ui: &mut Ui,
     t: &Tokens,
@@ -373,43 +374,39 @@ pub fn setting_row(
     let w = ui.available_width().max(240.0);
     let h = if hint.is_some() { 52.0 } else { 40.0 };
     let (rect, resp) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-    let p = ui.painter();
+    let left = rect.left() + 14.0;
+    let used = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_min_max(
+                    pos2(left, rect.top()),
+                    pos2(rect.right() - 14.0, rect.bottom()),
+                ))
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            control,
+        )
+        .response
+        .rect;
+    let room = (used.left() - 16.0 - left).max(0.0);
+    let line = |text: &str, size: f32, weight: Weight, color: Color32| {
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(text.to_string(), font(size, weight), color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+        ui.painter().layout_job(job)
+    };
     let top = if hint.is_some() {
         rect.top() + 9.0
     } else {
         rect.center().y - 8.0
     };
-    draw_text(
-        p,
-        pos2(rect.left() + 14.0, top),
-        Align2::LEFT_TOP,
-        label,
-        13.0,
-        Weight::Medium,
-        dim(t.text, ui),
-    );
+    let color = dim(t.text, ui);
+    let g = line(label, 13.0, Weight::Medium, color);
+    ui.painter().galley(pos2(left, top), g, color);
     if let Some(hint) = hint {
-        let room = (rect.width() * 0.62).max(160.0);
-        let mut job = egui::text::LayoutJob::simple_singleline(
-            hint.to_string(),
-            font(12.0, Weight::Regular),
-            t.muted,
-        );
-        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
-        let g = ui.painter().layout_job(job);
+        let g = line(hint, 12.0, Weight::Regular, t.muted);
         ui.painter()
-            .galley(pos2(rect.left() + 14.0, rect.top() + 28.0), g, t.muted);
+            .galley(pos2(left, rect.top() + 28.0), g, t.muted);
     }
-    let area = Rect::from_min_max(
-        pos2(rect.center().x, rect.top()),
-        pos2(rect.right() - 14.0, rect.bottom()),
-    );
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(area)
-            .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        control,
-    );
     resp
 }
 

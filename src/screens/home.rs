@@ -1,7 +1,6 @@
 //! Main window state and behaviour, shared by both themes: the page on screen, the captures
 //! library (filter, search, selection, thumbnails), what the user asked for (`MainAction`) and
-//! carrying it out. The skins draw it; the style and settings pages still draw here until their
-//! TakeUI pages land.
+//! carrying it out. The skins draw it.
 
 use crate::Shared;
 use crate::engine::render;
@@ -184,6 +183,8 @@ impl Home {
     /// Shows a page of the main window (About is a dialog the resident opens).
     pub fn open(&mut self, page: crate::system::instance::Page) {
         use crate::system::instance::Page as P;
+        // A shortcut waiting for its keys only waits while its row is on screen.
+        self.capturing = None;
         match page {
             P::Start => self.page = Page::Start,
             P::Style => self.page = Page::Style,
@@ -537,6 +538,7 @@ impl Home {
             MainAction::Select(p) => self.selected = Some(p),
             MainAction::Section(s) => {
                 self.section = s;
+                self.capturing = None;
                 if s == SettingsSection::General {
                     self.autostart = crate::system::autostart::autostart_enabled();
                 }
@@ -671,6 +673,26 @@ pub(crate) fn hotkey_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leaving_shortcuts_stops_waiting_for_keys() {
+        // Otherwise the next F-key pressed on any page would become the shortcut.
+        let ctx = egui::Context::default();
+        use crate::system::instance::Page as P;
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(P::Settings);
+        home.apply(MainAction::StartRebind(Shot::Area), &ctx, &mut shared);
+        assert_eq!(home.capturing(), Some(Shot::Area));
+        home.apply(
+            MainAction::Section(SettingsSection::General),
+            &ctx,
+            &mut shared,
+        );
+        assert_eq!(home.capturing(), None, "another section");
+        home.apply(MainAction::StartRebind(Shot::Full), &ctx, &mut shared);
+        home.apply(MainAction::Page(P::Start), &ctx, &mut shared);
+        assert_eq!(home.capturing(), None, "another page");
+    }
 
     #[test]
     fn the_thumbnail_cache_keeps_the_most_recently_drawn() {
