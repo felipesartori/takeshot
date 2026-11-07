@@ -5,7 +5,6 @@ use crate::ui::brand;
 use crate::ui::i18n::{self, LangPref, Msg, t, tf};
 use crate::ui::icon::{self, ALL, Ico};
 use crate::ui::kit::{self, BtnKind};
-use crate::ui::style;
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::{self, ThemeId, Tokens, UiMode};
 use egui::{Color32, CornerRadius, RichText, Stroke, StrokeKind, Ui, vec2};
@@ -55,7 +54,7 @@ impl Gallery {
     fn reapply(&mut self, ctx: &egui::Context) {
         let dark = tokens::effective_dark(self.ui_mode, ctx.system_theme());
         self.tokens = tokens::tokens(self.theme, dark);
-        style::apply(ctx, &self.tokens);
+        crate::skins::begin_frame(ctx, &self.tokens);
         i18n::set_lang(i18n::resolve(self.lang, i18n::system_locale().as_deref()));
         ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
             brand::window_icon(self.theme),

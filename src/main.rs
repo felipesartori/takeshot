@@ -6,12 +6,14 @@
 //!   --capture [--full] [--delay S] [--wait] [--sample]   area capture overlay
 //!   --edit [file]          editor for a picture (a sample when no file)
 //!   --pin file             picture pinned on top of other windows
+//!   --page inicio|estilo|ajustes   main window on that page
 //!   --page componentes     component gallery of the design system
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
-//!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only
+//!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only (every window)
 
 mod engine;
 mod screens;
+mod skins;
 mod system;
 mod ui;
 
@@ -29,9 +31,24 @@ pub struct Shared {
     pub fonts: Arc<fonts::FontLib>,
     pub logo: widgets::LogoCache,
     toast: Option<(String, std::time::Instant)>,
+    /// `--theme` and `--mode` for this run only; the saved settings stay as they are.
+    pub overrides: RunOverrides,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct RunOverrides {
+    pub theme: Option<ui::tokens::ThemeId>,
+    pub mode: Option<ui::tokens::UiMode>,
 }
 
 impl Shared {
+    /// The look now: the run's override, else the setting; `system` decides the System mode.
+    pub fn tokens(&self, system: Option<egui::Theme>) -> ui::tokens::Tokens {
+        let theme = self.overrides.theme.unwrap_or(self.settings.ui_theme);
+        let mode = self.overrides.mode.unwrap_or(self.settings.ui_mode);
+        ui::tokens::tokens(theme, ui::tokens::effective_dark(mode, system))
+    }
+
     pub fn toast(&mut self, msg: String) {
         self.toast = Some((msg, std::time::Instant::now()));
     }
@@ -77,6 +94,25 @@ struct Args {
     theme: Option<ui::tokens::ThemeId>,
     mode: Option<ui::tokens::UiMode>,
     lang: Option<ui::i18n::LangPref>,
+    /// The main window's page to open on (`--page inicio|estilo|ajustes`).
+    page: Option<system::instance::Page>,
+}
+
+/// What `--page` names: a page of the main window, or the component gallery.
+pub enum PageArg {
+    Main(system::instance::Page),
+    Gallery,
+}
+
+pub fn parse_page(s: &str) -> Option<PageArg> {
+    use system::instance::Page;
+    Some(match s {
+        "inicio" => PageArg::Main(Page::Start),
+        "estilo" => PageArg::Main(Page::Style),
+        "ajustes" => PageArg::Main(Page::Settings),
+        "componentes" => PageArg::Gallery,
+        _ => return None,
+    })
 }
 
 fn parse_args() -> Args {
@@ -89,6 +125,7 @@ fn parse_args() -> Args {
         theme: None,
         mode: None,
         lang: None,
+        page: None,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut full = false;
@@ -146,10 +183,11 @@ fn parse_args() -> Args {
                 i += 1;
             }
             "--page" => {
-                match v.get(i + 1).map(String::as_str) {
-                    Some("componentes") => a.launch = Launch::Gallery,
-                    other => {
-                        unknown_value::<()>("--page", other);
+                match v.get(i + 1).map(String::as_str).and_then(parse_page) {
+                    Some(PageArg::Gallery) => a.launch = Launch::Gallery,
+                    Some(PageArg::Main(p)) => a.page = Some(p),
+                    None => {
+                        unknown_value::<()>("--page", v.get(i + 1).map(String::as_str));
                     }
                 }
                 i += 1;
@@ -543,6 +581,10 @@ fn main() -> eframe::Result {
                 fonts,
                 logo: widgets::LogoCache::new(),
                 toast: None,
+                overrides: RunOverrides {
+                    theme: args.theme,
+                    mode: args.mode,
+                },
             };
             shared.logo.sync(ctx, &shared.settings.watermark);
             let mode = match args.launch {
@@ -604,13 +646,23 @@ fn main() -> eframe::Result {
                     let resident =
                         system::resident::Resident::start(ctx, &shared.settings, listener.take());
                     let shell = screens::shell::Shell::new(screens::shell::HOSTED, !args.minimized);
+                    let mut home = home::Home::new(ctx, &shared);
+                    if let Some(p) = args.page {
+                        home.open(p);
+                    }
                     Mode::Resident {
-                        home: Box::new(home::Home::new(ctx, &shared)),
+                        home: Box::new(home),
                         shell: Box::new(shell),
                         resident: Box::new(resident),
                     }
                 }
-                Launch::Home => Mode::Home(Box::new(home::Home::new(ctx, &shared))),
+                Launch::Home => {
+                    let mut home = home::Home::new(ctx, &shared);
+                    if let Some(p) = args.page {
+                        home.open(p);
+                    }
+                    Mode::Home(Box::new(home))
+                }
             };
             Ok(Box::new(App {
                 mode,
@@ -655,4 +707,65 @@ fn demo_annotations() -> Vec<model::Ann> {
             filled: true,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ui::tokens::{ThemeId, UiMode};
+
+    fn shared(theme: ThemeId, mode: UiMode) -> Shared {
+        Shared {
+            settings: settings::Settings {
+                ui_theme: theme,
+                ui_mode: mode,
+                ..Default::default()
+            },
+            settings_dirty: false,
+            fonts: Arc::new(fonts::FontLib::load()),
+            logo: widgets::LogoCache::new(),
+            toast: None,
+            overrides: RunOverrides::default(),
+        }
+    }
+
+    #[test]
+    fn overrides_win_for_this_run_only() {
+        let mut s = shared(ThemeId::TakeUi, UiMode::Dark);
+        s.overrides.theme = Some(ThemeId::Coral);
+        let t = s.tokens(None);
+        assert_eq!(t.theme, ThemeId::Coral);
+        assert!(t.dark);
+        s.overrides.mode = Some(UiMode::Light);
+        assert!(!s.tokens(None).dark);
+        assert_eq!(s.settings.ui_theme, ThemeId::TakeUi, "settings untouched");
+        assert_eq!(s.settings.ui_mode, UiMode::Dark, "settings untouched");
+    }
+
+    #[test]
+    fn system_mode_follows_the_os() {
+        let s = shared(ThemeId::TakeUi, UiMode::System);
+        assert!(!s.tokens(Some(egui::Theme::Light)).dark);
+        assert!(s.tokens(Some(egui::Theme::Dark)).dark);
+        assert!(s.tokens(None).dark, "unknown: dark");
+    }
+
+    #[test]
+    fn pages_parse() {
+        use system::instance::Page;
+        assert!(matches!(
+            parse_page("inicio"),
+            Some(PageArg::Main(Page::Start))
+        ));
+        assert!(matches!(
+            parse_page("estilo"),
+            Some(PageArg::Main(Page::Style))
+        ));
+        assert!(matches!(
+            parse_page("ajustes"),
+            Some(PageArg::Main(Page::Settings))
+        ));
+        assert!(matches!(parse_page("componentes"), Some(PageArg::Gallery)));
+        assert!(parse_page("x").is_none());
+    }
 }

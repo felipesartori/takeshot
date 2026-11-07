@@ -962,6 +962,7 @@ mod tests {
             fonts: std::sync::Arc::new(crate::system::fonts::FontLib::load()),
             logo: widgets::LogoCache::new(),
             toast: None,
+            overrides: Default::default(),
         }
     }
 

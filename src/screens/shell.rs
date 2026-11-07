@@ -17,7 +17,7 @@ use crate::system::resident::{
 use crate::system::tray::{TrayAction, TrayEntry, TrayEvent, tray_entries};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, BtnKind};
-use crate::ui::tokens::{Tokens, effective_dark, tokens};
+use crate::ui::tokens::{Tokens, effective_dark};
 use crate::{Shared, Switch};
 use egui::{ViewportCommand as Cmd, ViewportId};
 use std::path::PathBuf;
@@ -103,10 +103,7 @@ impl Shell {
     }
 
     fn theme(ctx: &egui::Context, shared: &Shared) -> Tokens {
-        tokens(
-            shared.settings.ui_theme,
-            effective_dark(shared.settings.ui_mode, ctx.system_theme()),
-        )
+        shared.tokens(ctx.system_theme())
     }
 
     /// The tray menu entries for now; capture items lose their shortcut text when shortcuts are off.
