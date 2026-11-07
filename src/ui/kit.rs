@@ -761,6 +761,7 @@ mod tests {
         for content in ["", "abc"] {
             let mut text = content.to_owned();
             let mut found = Vec::new();
+            let (mut used, mut edit) = (egui::Rect::NOTHING, egui::Rect::NOTHING);
             for _ in 0..2 {
                 let input = egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -770,14 +771,17 @@ mod tests {
                     ..Default::default()
                 };
                 let mut full = ctx.run_ui(input, |ui| {
-                    text_field(
+                    let top = ui.cursor().min;
+                    edit = text_field(
                         ui,
                         &t,
                         &mut text,
                         "Search captures",
                         Some(Ico::Search),
                         220.0,
-                    );
+                    )
+                    .rect;
+                    used = egui::Rect::from_min_max(top, ui.min_rect().max);
                 });
                 full.textures_delta.clear();
                 found = texts(&full.shapes);
@@ -795,6 +799,12 @@ mod tests {
             } else {
                 content
             });
+            // The field keeps its size and the typing area stays inside it.
+            assert_eq!(used.size(), egui::vec2(220.0, 32.0), "{content:?}");
+            assert!(
+                used.contains_rect(edit),
+                "{content:?}: {edit:?} outside {used:?}"
+            );
             let off = label.center().y - icon.center().y;
             assert!(
                 off.abs() <= 1.0,

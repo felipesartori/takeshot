@@ -20,6 +20,7 @@ pub enum Area {
 #[derive(Clone, Copy, Debug)]
 pub struct CursorCtx {
     pub tool: Tool,
+    /// Over the picture being annotated: the editor canvas, or the capture's chosen area.
     pub over_image: bool,
     pub over_chrome: bool,
     /// Handle of a selected object under the pointer, or being dragged.
@@ -67,7 +68,10 @@ pub fn pick(c: &CursorCtx) -> CursorIcon {
     if c.over_object && c.tool == Tool::Select {
         return CursorIcon::Move;
     }
-    if c.over_image && c.tool != Tool::Select {
+    // A drawing tool draws inside the capture area, or over the picture outside the capture;
+    // outside a chosen area it shows the arrow (spec 5.8).
+    let drawable = c.area == Area::Inside || (c.over_image && c.area != Area::Outside);
+    if drawable && c.tool != Tool::Select {
         return CursorIcon::Crosshair;
     }
     match c.area {
@@ -321,6 +325,64 @@ mod tests {
                     ..base
                 },
                 C::Default,
+            ),
+            // Spec 5.8: inside the area a drawing tool draws; outside it, once chosen, the arrow.
+            (
+                CursorCtx {
+                    area: Area::Inside,
+                    tool: Tool::Pen,
+                    over_image: false,
+                    ..base
+                },
+                C::Crosshair,
+            ),
+            (
+                CursorCtx {
+                    area: Area::Outside,
+                    tool: Tool::Pen,
+                    ..base
+                },
+                C::Default,
+            ),
+            // Priority edges.
+            (
+                CursorCtx {
+                    space_pan: true,
+                    over_chrome: true,
+                    ..base
+                },
+                C::Grab,
+            ),
+            (
+                CursorCtx {
+                    typing: true,
+                    space_pan: true,
+                    ..base
+                },
+                C::Text,
+            ),
+            (
+                CursorCtx {
+                    handle: Some(Handle::S),
+                    area: Area::NotStarted,
+                    ..base
+                },
+                C::ResizeVertical,
+            ),
+            (
+                CursorCtx {
+                    area: Area::NotStarted,
+                    over_object: true,
+                    ..base
+                },
+                C::Crosshair,
+            ),
+            (
+                CursorCtx {
+                    tool: Tool::Text,
+                    ..base
+                },
+                C::Crosshair,
             ),
         ];
         for (i, (ctx, want)) in cases.iter().enumerate() {
