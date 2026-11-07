@@ -683,24 +683,31 @@ mod tests {
     use super::*;
     use crate::ui::tokens::{ThemeId, tokens};
 
-    /// Runs a few frames with the pointer outside or over the widget and returns
-    /// (allocated rect, union of everything painted). The clock stays at 0 so no tooltip shows.
-    fn rect_of(
-        hover: bool,
-        f: &dyn Fn(&mut egui::Ui) -> egui::Response,
-    ) -> (egui::Rect, egui::Rect) {
+    /// What a few frames with the pointer outside or over a widget produced.
+    struct Run {
+        alloc: egui::Rect,
+        painted: egui::Rect,
+        hovered: bool,
+    }
+
+    /// Runs five frames 50 ms apart (below the tooltip delay, enough for the 80 ms colour ease)
+    /// and returns the allocated rect, the union of everything painted and the hover state.
+    fn rect_of(hover: bool, f: &dyn Fn(&mut egui::Ui) -> egui::Response) -> Run {
         let ctx = egui::Context::default();
         crate::system::fonts::FontLib::load().install(&ctx);
         crate::ui::style::apply(&ctx, &tokens(ThemeId::TakeUi, true));
-        let mut out = egui::Rect::NOTHING;
-        let mut painted = egui::Rect::NOTHING;
-        for _ in 0..3 {
+        let mut run = Run {
+            alloc: egui::Rect::NOTHING,
+            painted: egui::Rect::NOTHING,
+            hovered: false,
+        };
+        for frame in 0..5 {
             let mut input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(400.0, 200.0),
                 )),
-                time: Some(0.0),
+                time: Some(frame as f64 * 0.05),
                 ..Default::default()
             };
             if hover {
@@ -708,15 +715,19 @@ mod tests {
                     .events
                     .push(egui::Event::PointerMoved(egui::pos2(20.0, 20.0)));
             }
-            let mut full = ctx.run_ui(input, |ui| out = f(ui).rect);
+            let mut full = ctx.run_ui(input, |ui| {
+                let r = f(ui);
+                run.alloc = r.rect;
+                run.hovered = r.hovered();
+            });
             full.textures_delta.clear();
-            painted = full
+            run.painted = full
                 .shapes
                 .iter()
                 .map(|c| c.shape.visual_bounding_rect())
                 .fold(egui::Rect::NOTHING, |a, b| a.union(b));
         }
-        (out, painted)
+        run
     }
 
     type Widget<'a> = Box<dyn Fn(&mut egui::Ui) -> egui::Response + 'a>;
@@ -766,9 +777,20 @@ mod tests {
         for (name, f) in &cases {
             let still = rect_of(false, f.as_ref());
             let hovered = rect_of(true, f.as_ref());
-            assert!(still.0.width() > 0.0, "{name} sem tamanho");
-            assert_eq!(still.0, hovered.0, "{name} muda a área no hover");
-            assert_eq!(still.1, hovered.1, "{name} pinta maior ou menor no hover");
+            assert!(still.alloc.width() > 0.0, "{name} sem tamanho");
+            assert!(
+                !still.hovered && hovered.hovered,
+                "{name}: o ponteiro não chegou ao widget"
+            );
+            assert_eq!(still.alloc, hovered.alloc, "{name} muda a área no hover");
+            for (when, run) in [("parado", &still), ("hover", &hovered)] {
+                assert!(
+                    run.alloc.contains_rect(run.painted),
+                    "{name} pinta fora da área ({when}): {:?} fora de {:?}",
+                    run.painted,
+                    run.alloc
+                );
+            }
         }
     }
 }
