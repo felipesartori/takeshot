@@ -129,19 +129,9 @@ impl Overlay {
 
     fn open_editor(&mut self, ctx: &egui::Context, shared: &mut Shared) -> Switch {
         self.an.commit_draft(&shared.settings.draw);
-        let Some(sel) = self.sel else {
+        let Some((base, doc)) = self.editor_handoff() else {
             return Switch::None;
         };
-        let x = sel.min.x.round().max(0.0) as u32;
-        let y = sel.min.y.round().max(0.0) as u32;
-        let w = (sel.width().round() as u32)
-            .min(self.shot.image.width().saturating_sub(x))
-            .max(1);
-        let h = (sel.height().round() as u32)
-            .min(self.shot.image.height().saturating_sub(y))
-            .max(1);
-        let base = image::imageops::crop_imm(&self.shot.image, x, y, w, h).to_image();
-        let doc = std::mem::take(&mut self.an.doc).translated(-vec2(x as f32, y as f32));
         self.remember_selection(shared);
         Switch::ToEditor(Box::new(Editor::new(ctx, base, doc, shared)))
     }
@@ -178,55 +168,7 @@ impl Overlay {
         let typing = self.an.handle_typing(ui, &shared.settings.draw);
 
         let drawing_tool = self.sel.is_some() && self.an.tool != Tool::Select;
-        let sel_screen = self
-            .sel
-            .map(|s| Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max)));
-        {
-            let measure = text_measure(&shared.fonts);
-            // Objects answer first; with Select a miss on empty space falls through to the area.
-            // A drawing tool only starts inside the area, where the pointer shows the crosshair.
-            let press_inside = ui
-                .input(|i| i.pointer.press_origin())
-                .zip(sel_screen)
-                .is_none_or(|(o, r)| r.contains(o));
-            let objects_answer = self.sel.is_some()
-                && matches!(self.drag, Drag::None)
-                && (self.an.tool == Tool::Select || press_inside);
-            let outcome = if objects_answer {
-                self.an
-                    .handle_canvas(ui, &canvas, &view, &measure, &mut shared.settings.draw)
-            } else {
-                SelectOutcome::Missed
-            };
-            if !drawing_tool && outcome == SelectOutcome::Missed {
-                self.selection_input(ui, &canvas, &view, pointer);
-            }
-            if let Some(p) = pointer
-                && (canvas.hovered()
-                    || self.an.dragging.is_some()
-                    || !matches!(self.drag, Drag::None))
-            {
-                let (handle, over_object) = if self.an.live.is_some()
-                    || self.sel.is_none()
-                    || !matches!(self.drag, Drag::None)
-                {
-                    (None, false)
-                } else {
-                    self.an.hover(view.to_img(p), &view, &measure)
-                };
-                ctx.set_cursor_icon(cursor::pick(&CursorCtx {
-                    tool: self.an.tool,
-                    over_image: sel_screen.is_some_and(|r| r.contains(p)),
-                    over_chrome: false,
-                    handle,
-                    over_object,
-                    typing: self.an.draft.is_some(),
-                    dragging: self.an.dragging.is_some(),
-                    space_pan: false,
-                    area: pointer_area(self.sel, &self.drag, p, &view, !drawing_tool),
-                }));
-            }
-        }
+        self.canvas_input(ui, &canvas, &view, pointer, shared);
         if drawing_tool {
             // mouse wheel changes the stroke width (or text size)
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
@@ -346,6 +288,121 @@ impl Overlay {
         }
         ctx.request_repaint();
         switch
+    }
+
+    /// Pointer on the capture: objects answer first (with Select a miss on empty space falls through
+    /// to moving or resizing the area), drawing tools draw, and the pointer shows what a click will do.
+    fn canvas_input(
+        &mut self,
+        ui: &Ui,
+        canvas: &egui::Response,
+        view: &View,
+        pointer: Option<Pos2>,
+        shared: &mut Shared,
+    ) {
+        let drawing_tool = self.sel.is_some() && self.an.tool != Tool::Select;
+        let sel_screen = self
+            .sel
+            .map(|s| Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max)));
+        let measure = text_measure(&shared.fonts);
+        // Objects answer first; with Select a miss on empty space falls through to the area.
+        // A drawing tool only starts inside the area, where the pointer shows the crosshair.
+        // egui clears the press origin on the release frame, where clicks fire, so a click is judged
+        // by where it happened.
+        let pressed_at = ui.input(|i| i.pointer.press_origin()).or_else(|| {
+            (canvas.clicked() || canvas.double_clicked())
+                .then(|| canvas.interact_pointer_pos())
+                .flatten()
+        });
+        let press_inside = pressed_at
+            .zip(sel_screen)
+            .is_none_or(|(o, r)| r.contains(o));
+        let objects_answer = self.sel.is_some()
+            && matches!(self.drag, Drag::None)
+            && (self.an.tool == Tool::Select || press_inside);
+        let outcome = if objects_answer {
+            self.an
+                .handle_canvas(ui, canvas, view, &measure, &mut shared.settings.draw)
+        } else {
+            SelectOutcome::Missed
+        };
+        if !drawing_tool && outcome == SelectOutcome::Missed {
+            self.selection_input(ui, canvas, view, pointer);
+        }
+        if let Some(p) = pointer
+            && (canvas.hovered() || self.an.dragging.is_some() || !matches!(self.drag, Drag::None))
+        {
+            // A drawing tool reaches objects only inside the area, like its clicks.
+            let reachable = !drawing_tool || sel_screen.is_some_and(|r| r.contains(p));
+            let (handle, over_object) = if self.an.live.is_some()
+                || self.sel.is_none()
+                || !matches!(self.drag, Drag::None)
+                || !reachable
+            {
+                (None, false)
+            } else {
+                self.an.hover(view.to_img(p), view, &measure)
+            };
+            ui.ctx().set_cursor_icon(cursor::pick(&CursorCtx {
+                tool: self.an.tool,
+                over_image: sel_screen.is_some_and(|r| r.contains(p)),
+                over_chrome: false,
+                handle,
+                over_object,
+                typing: self.an.draft.is_some(),
+                dragging: self.an.dragging.is_some(),
+                space_pan: false,
+                area: pointer_area(self.sel, &self.drag, p, view, !drawing_tool),
+            }));
+        }
+    }
+
+    /// With Select and no object selected, arrows move the area and Shift+arrows resize it.
+    /// Object shortcuts run first and consume the arrows when an object is selected.
+    fn nudge_area(&mut self, ui: &Ui) {
+        if self.an.tool != Tool::Select {
+            return;
+        }
+        let mut d = vec2(0.0, 0.0);
+        let shift = ui.input(|i| i.modifiers.shift);
+        for (k, v) in [
+            (Key::ArrowLeft, vec2(-1.0, 0.0)),
+            (Key::ArrowRight, vec2(1.0, 0.0)),
+            (Key::ArrowUp, vec2(0.0, -1.0)),
+            (Key::ArrowDown, vec2(0.0, 1.0)),
+        ] {
+            if ui.input(|i| i.key_pressed(k)) {
+                d += v;
+            }
+        }
+        if d != vec2(0.0, 0.0) {
+            let bounds = Rect::from_min_size(Pos2::ZERO, self.img_size());
+            if let Some(s) = &mut self.sel {
+                if shift {
+                    s.max += d;
+                } else {
+                    *s = s.translate(d);
+                }
+                *s = Rect::from_two_pos(s.min, s.max).intersect(bounds);
+            }
+        }
+    }
+
+    /// The cropped picture and the whole document (objects, ids, hidden ones and history) moved
+    /// into the crop's coordinates, for the editor.
+    fn editor_handoff(&mut self) -> Option<(RgbaImage, Doc)> {
+        let sel = self.sel?;
+        let x = sel.min.x.round().max(0.0) as u32;
+        let y = sel.min.y.round().max(0.0) as u32;
+        let w = (sel.width().round() as u32)
+            .min(self.shot.image.width().saturating_sub(x))
+            .max(1);
+        let h = (sel.height().round() as u32)
+            .min(self.shot.image.height().saturating_sub(y))
+            .max(1);
+        let base = image::imageops::crop_imm(&self.shot.image, x, y, w, h).to_image();
+        let doc = std::mem::take(&mut self.an.doc).translated(-vec2(x as f32, y as f32));
+        Some((base, doc))
     }
 
     fn selection_input(
@@ -671,32 +728,7 @@ impl Overlay {
         }
         if self.sel.is_some() {
             widgets::tool_shortcuts(ui, &mut self.an, &mut shared.settings.draw, true);
-            // with no object selected, arrows move the area and Shift+arrows resize it
-            if self.an.tool == Tool::Select {
-                let mut d = vec2(0.0, 0.0);
-                let shift = ui.input(|i| i.modifiers.shift);
-                for (k, v) in [
-                    (Key::ArrowLeft, vec2(-1.0, 0.0)),
-                    (Key::ArrowRight, vec2(1.0, 0.0)),
-                    (Key::ArrowUp, vec2(0.0, -1.0)),
-                    (Key::ArrowDown, vec2(0.0, 1.0)),
-                ] {
-                    if ui.input(|i| i.key_pressed(k)) {
-                        d += v;
-                    }
-                }
-                if d != vec2(0.0, 0.0) {
-                    let bounds = Rect::from_min_size(Pos2::ZERO, self.img_size());
-                    if let Some(s) = &mut self.sel {
-                        if shift {
-                            s.max += d;
-                        } else {
-                            *s = s.translate(d);
-                        }
-                        *s = Rect::from_two_pos(s.min, s.max).intersect(bounds);
-                    }
-                }
-            }
+            self.nudge_area(ui);
         }
         None
     }
@@ -911,6 +943,214 @@ mod tests {
 
     fn sel() -> Option<Rect> {
         Some(Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0)))
+    }
+
+    fn shared() -> Shared {
+        Shared {
+            settings: Default::default(),
+            settings_dirty: false,
+            fonts: std::sync::Arc::new(crate::system::fonts::FontLib::load()),
+            logo: widgets::LogoCache::new(),
+            toast: None,
+        }
+    }
+
+    const AREA: Rect = Rect {
+        min: pos2(100.0, 100.0),
+        max: pos2(900.0, 700.0),
+    };
+
+    /// The 1600x900 sample with the area (100,100)-(900,700) and a filled rectangle at (300,300)-(400,400).
+    fn capture(ctx: &egui::Context, sh: &Shared, tool: Tool) -> Overlay {
+        let mut o = Overlay::new(ctx, crate::system::capture::sample_shot(), sh);
+        o.sel = Some(AREA);
+        o.an = Annotator::with_doc(
+            tool,
+            Doc::from_anns(vec![Ann {
+                shape: Shape::Rect(pos2(300.0, 300.0), pos2(400.0, 400.0)),
+                color: [255, 0, 0, 255],
+                width: 4.0,
+                filled: true,
+            }]),
+        );
+        o
+    }
+
+    fn rect_min(o: &Overlay) -> Pos2 {
+        match o.an.doc.objs()[0].ann.shape {
+            Shape::Rect(a, _) => a,
+            _ => unreachable!(),
+        }
+    }
+
+    /// One egui frame per event list over a full-screen canvas, after a warm-up frame.
+    fn frames(
+        ctx: &egui::Context,
+        events: Vec<Vec<egui::Event>>,
+        mut f: impl FnMut(&mut Ui, &egui::Response),
+    ) {
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 900.0));
+        let canvas = |ui: &mut Ui| {
+            ui.interact(
+                screen,
+                ui.scope_id().with("canvas"),
+                Sense::click_and_drag(),
+            )
+        };
+        let warm = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        ctx.run_ui(warm, |ui| {
+            canvas(ui);
+        })
+        .textures_delta
+        .clear();
+        for (i, ev) in events.into_iter().enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(0.016 * (i + 1) as f64),
+                events: ev,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                let r = canvas(ui);
+                f(ui, &r);
+            })
+            .textures_delta
+            .clear();
+        }
+    }
+
+    fn button(p: Pos2, down: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: down,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn click(p: Pos2) -> Vec<Vec<egui::Event>> {
+        vec![
+            vec![egui::Event::PointerMoved(p), button(p, true)],
+            vec![button(p, false)],
+            vec![],
+        ]
+    }
+
+    fn drag(from: Pos2, path: &[Pos2]) -> Vec<Vec<egui::Event>> {
+        let mut f = vec![vec![egui::Event::PointerMoved(from), button(from, true)]];
+        f.extend(path.iter().map(|p| vec![egui::Event::PointerMoved(*p)]));
+        f.push(vec![button(*path.last().unwrap(), false)]);
+        f.push(vec![]);
+        f
+    }
+
+    fn canvas_frames(
+        o: &mut Overlay,
+        sh: &mut Shared,
+        ctx: &egui::Context,
+        ev: Vec<Vec<egui::Event>>,
+    ) {
+        frames(ctx, ev, |ui, r| {
+            let p = ui.input(|i| i.pointer.hover_pos());
+            o.canvas_input(ui, r, &VIEW, p, sh);
+        });
+    }
+
+    #[test]
+    fn select_drags_an_object_and_leaves_the_area() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Select);
+        let path = [pos2(360.0, 350.0), pos2(450.0, 350.0)];
+        canvas_frames(&mut o, &mut sh, &ctx, drag(pos2(350.0, 350.0), &path));
+        assert_eq!(o.sel, Some(AREA));
+        assert!(rect_min(&o).distance(pos2(400.0, 300.0)) < 0.01);
+    }
+
+    #[test]
+    fn select_on_empty_space_moves_the_area_and_leaves_the_objects() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Select);
+        let path = [pos2(610.0, 600.0), pos2(650.0, 600.0)];
+        canvas_frames(&mut o, &mut sh, &ctx, drag(pos2(600.0, 600.0), &path));
+        assert_eq!(o.sel, Some(AREA.translate(vec2(50.0, 0.0))));
+        assert!(rect_min(&o).distance(pos2(300.0, 300.0)) < 0.01);
+    }
+
+    #[test]
+    fn click_tools_only_work_inside_the_area() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Text);
+        canvas_frames(&mut o, &mut sh, &ctx, click(pos2(50.0, 50.0)));
+        assert!(o.an.draft.is_none(), "text started outside the area");
+        canvas_frames(&mut o, &mut sh, &ctx, click(pos2(500.0, 500.0)));
+        assert!(o.an.draft.is_some());
+
+        let mut o = capture(&ctx, &sh, Tool::Counter);
+        canvas_frames(&mut o, &mut sh, &ctx, click(pos2(50.0, 50.0)));
+        assert_eq!(o.an.doc.objs().len(), 1, "step placed outside the area");
+        canvas_frames(&mut o, &mut sh, &ctx, click(pos2(500.0, 500.0)));
+        assert_eq!(o.an.doc.objs().len(), 2);
+    }
+
+    #[test]
+    fn arrows_move_the_selected_object_or_else_the_area() {
+        let ctx = egui::Context::default();
+        let sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Select);
+        let id = o.an.doc.objs()[0].id;
+        o.an.doc.select(Some(id), false);
+        let right = || {
+            vec![vec![egui::Event::Key {
+                key: Key::ArrowRight,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }]]
+        };
+        let keys = |o: &mut Overlay, ui: &mut Ui| {
+            o.an.handle_object_keys(ui);
+            o.nudge_area(ui);
+        };
+        frames(&ctx, right(), |ui, _| keys(&mut o, ui));
+        assert_eq!(o.sel, Some(AREA), "the area stayed while the object moved");
+        assert!(rect_min(&o).distance(pos2(301.0, 300.0)) < 0.01);
+        o.an.doc.select(None, false);
+        frames(&ctx, right(), |ui, _| keys(&mut o, ui));
+        assert_eq!(o.sel, Some(AREA.translate(vec2(1.0, 0.0))));
+        assert!(rect_min(&o).distance(pos2(301.0, 300.0)) < 0.01);
+    }
+
+    #[test]
+    fn edit_hands_the_whole_document_to_the_editor() {
+        let ctx = egui::Context::default();
+        let sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Select);
+        let hidden =
+            o.an.doc
+                .add(Ann {
+                    shape: Shape::Ellipse(pos2(500.0, 500.0), pos2(600.0, 600.0)),
+                    color: [0, 0, 255, 255],
+                    width: 3.0,
+                    filled: false,
+                })
+                .unwrap();
+        o.an.doc.set_hidden(hidden, true);
+        let (base, mut doc) = o.editor_handoff().unwrap();
+        assert_eq!((base.width(), base.height()), (800, 600));
+        assert_eq!(doc.objs().len(), 2);
+        assert!(doc.objs().iter().any(|x| x.id == hidden && x.hidden));
+        match doc.objs()[0].ann.shape {
+            Shape::Rect(a, _) => assert!(a.distance(pos2(200.0, 200.0)) < 0.01),
+            _ => unreachable!(),
+        }
+        assert!(doc.undo(), "the history came along");
     }
 
     #[test]

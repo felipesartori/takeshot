@@ -1242,10 +1242,22 @@ mod tests {
         let mut d = d.translated(vec2(-100.0, -100.0));
         assert!(near(bounds_of(&d, a).min, pos2(18.0, -2.0)));
         assert!(d.objs().iter().any(|o| o.id == hidden && o.hidden));
-        assert!(d.revision() >= rev);
+        assert!(d.revision() > rev);
         // Undo still lands where the object was, in the new coordinates.
         assert!(d.undo() && d.undo() && d.undo());
         assert!(near(bounds_of(&d, a).min, pos2(-2.0, -2.0)));
+        assert!(d.redo());
+        assert!(near(bounds_of(&d, a).min, pos2(18.0, -2.0)));
+    }
+
+    #[test]
+    fn translated_also_moves_the_redo_branch() {
+        let mut d = Doc::new();
+        let a = d.add(rect((100.0, 100.0), (150.0, 150.0))).unwrap();
+        d.begin_change();
+        d.translate_selected(vec2(20.0, 0.0));
+        assert!(d.undo());
+        let mut d = d.translated(vec2(-100.0, -100.0));
         assert!(d.redo());
         assert!(near(bounds_of(&d, a).min, pos2(18.0, -2.0)));
     }
