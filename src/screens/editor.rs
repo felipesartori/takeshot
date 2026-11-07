@@ -454,6 +454,7 @@ impl Editor {
                 "editor-discard",
                 t(Msg::DiscardTitle),
                 t(Msg::DiscardBody),
+                &mut |_| {},
                 &[
                     (t(Msg::Discard), BtnKind::Danger, CloseChoice::Discard),
                     (t(Msg::Cancel), BtnKind::Secondary, CloseChoice::Cancel),

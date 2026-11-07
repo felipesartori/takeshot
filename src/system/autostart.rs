@@ -24,14 +24,12 @@ pub fn autostart() -> Result<AutoLaunch, String> {
 }
 
 /// Adds or removes the login entry.
-#[allow(dead_code)] // Settings > General calls it from plan 4, Task 6.
 pub fn set_autostart(on: bool) -> Result<(), String> {
     let a = autostart()?;
     if on { a.enable() } else { a.disable() }.map_err(|e| e.to_string())
 }
 
 /// Whether the login entry exists, read from the system each time (the switch shows the truth).
-#[allow(dead_code)] // Settings > General calls it from plan 4, Task 6.
 pub fn autostart_enabled() -> bool {
     autostart().is_ok_and(|a| a.is_enabled().unwrap_or(false))
 }

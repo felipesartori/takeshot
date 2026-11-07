@@ -221,6 +221,24 @@ impl Default for DrawOpts {
     }
 }
 
+/// What the X of the main window does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum OnClose {
+    /// Ask, with "Remember my choice".
+    #[default]
+    Ask,
+    Minimize,
+    Quit,
+}
+
+/// What a left click on the tray icon does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum TrayClick {
+    #[default]
+    OpenHome,
+    CaptureArea,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -240,6 +258,8 @@ pub struct Settings {
     pub prtsc_priority: bool,
     /// The PrtSc priority offer was shown once already.
     pub prtsc_offer_shown: bool,
+    pub on_close: OnClose,
+    pub tray_click: TrayClick,
     pub style: Style,
     pub watermark: Watermark,
     pub draw: DrawOpts,
@@ -267,6 +287,8 @@ impl Default for Settings {
             hotkey_full: default_keys(Shot::Full).to_string(),
             prtsc_priority: false,
             prtsc_offer_shown: false,
+            on_close: OnClose::default(),
+            tray_click: TrayClick::default(),
             style: Style::default(),
             watermark: Watermark::default(),
             draw: DrawOpts::default(),
@@ -317,6 +339,13 @@ mod tests {
         assert_eq!(s.ui_theme, ThemeId::TakeUi);
         assert_eq!(s.ui_mode, UiMode::System);
         assert_eq!(s.lang, LangPref::Auto);
+    }
+
+    #[test]
+    fn old_settings_without_close_and_tray_fields_get_the_defaults() {
+        let s: Settings = serde_json::from_str(r#"{"save_dir":"D:/caps"}"#).unwrap();
+        assert_eq!(s.on_close, OnClose::Ask);
+        assert_eq!(s.tray_click, TrayClick::OpenHome);
     }
 
     #[test]

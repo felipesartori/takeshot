@@ -5,8 +5,10 @@ use crate::engine::render;
 use crate::screens::icons::{self, Icon};
 use crate::screens::overlay::color_image;
 use crate::screens::widgets::{self, ACCENT, BORDER, HOVER, MUTED, PANEL, RAISED, TEXT};
-use crate::system::hotkeys::{Hotkeys, Shot, Status, label};
+use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label};
 use crate::system::settings::QuickStyle;
+use crate::system::settings::{OnClose, TrayClick};
+use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::{Shared, Switch};
 use egui::{Color32, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
@@ -33,22 +35,25 @@ pub struct Home {
     sample: RgbaImage,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
-    hotkeys: Option<Hotkeys>,
+    /// The capture shortcuts' state, given by the resident each frame.
+    pub hotkey_status: Option<Status>,
+    /// What the user asked of the resident this frame (About, Quit, a new shortcut…).
+    pub requests: HomeRequests,
+    /// Waiting for the keys of a new shortcut.
+    capturing: Option<Shot>,
+}
+
+/// Requests from Home that the resident carries out.
+#[derive(Default)]
+pub struct HomeRequests {
+    pub about: bool,
+    pub quit: bool,
+    pub rebind: Option<(Shot, String)>,
+    pub open_windows_settings: bool,
 }
 
 impl Home {
-    pub fn new(ctx: &egui::Context, shared: &Shared, register_keys: bool) -> Self {
-        let hotkeys = register_keys.then(|| {
-            let ctx = ctx.clone();
-            Hotkeys::start(&shared.settings, move |shot| {
-                let args: &[&str] = match shot {
-                    Shot::Area => &["--capture", "--wait"],
-                    Shot::Full => &["--capture", "--full", "--wait"],
-                };
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                let _ = crate::system::actions::spawn_self(args);
-            })
-        });
+    pub fn new(_ctx: &egui::Context, shared: &Shared) -> Self {
         let mut h = Self {
             page: Page::Start,
             recents: Vec::new(),
@@ -57,10 +62,31 @@ impl Home {
             sample: crate::system::capture::sample_window(1000, 620),
             preview: None,
             preview_dirty: true,
-            hotkeys,
+            hotkey_status: None,
+            requests: HomeRequests::default(),
+            capturing: None,
         };
         h.scan(&shared.settings.save_dir, 0.0);
         h
+    }
+
+    /// Shows a page of the main window (About is a dialog the resident opens).
+    pub fn open(&mut self, page: crate::system::instance::Page) {
+        use crate::system::instance::Page as P;
+        match page {
+            P::Start => self.page = Page::Start,
+            P::Style => self.page = Page::Style,
+            P::Settings => self.page = Page::Settings,
+            P::About => self.requests.about = true,
+        }
+    }
+
+    /// The gallery thumbnail of a capture, when Home has one (the tray menu shows it).
+    pub fn thumbnail(&self, path: &std::path::Path) -> Option<egui::TextureId> {
+        self.recents
+            .iter()
+            .find(|r| r.path == path)
+            .map(|r| r.tex.id())
     }
 
     fn scan(&mut self, dir: &str, now: f64) {
@@ -162,7 +188,18 @@ impl Home {
                     }
                 }
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    match hotkey_text(self.hotkeys.as_ref(), &shared.settings) {
+                    if ui
+                        .add(egui::Button::new(crate::ui::icon::text(
+                            crate::ui::icon::Ico::Info,
+                            15.0,
+                            MUTED,
+                        )))
+                        .on_hover_text(tr(Msg::About))
+                        .clicked()
+                    {
+                        self.requests.about = true;
+                    }
+                    match hotkey_text(self.hotkey_status.as_ref(), &shared.settings) {
                         Ok(s) => ui.label(RichText::new(s).size(11.5).color(MUTED)),
                         Err(e) => ui.label(
                             RichText::new(e)
@@ -416,8 +453,6 @@ impl Home {
     }
 
     fn settings_page(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        let s = &mut shared.settings;
-        let before = serde_json::to_string(s).ok();
         ui.label(
             RichText::new("Ajustes")
                 .size(24.0)
@@ -425,6 +460,9 @@ impl Home {
                 .color(Color32::WHITE),
         );
         ui.add_space(10.0);
+        self.general_section(ui, shared);
+        let s = &mut shared.settings;
+        let before = serde_json::to_string(s).ok();
         widgets::section(ui, "Pasta das capturas");
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut s.save_dir).desired_width(420.0));
@@ -471,11 +509,9 @@ impl Home {
 
         widgets::section(ui, "Atalhos");
         ui.checkbox(&mut s.hotkeys, "Atalhos globais (vale ao reabrir o app)");
-        let (area_keys, full_keys) = (label(&s.hotkey_area), label(&s.hotkey_full));
+        self.shortcut_rows(ui, s);
         egui::Grid::new("keys").num_columns(2).spacing(vec2(24.0, 6.0)).show(ui, |ui| {
             for (k, d) in [
-                (area_keys.as_str(), "Capturar área"),
-                (full_keys.as_str(), "Tela inteira"),
                 ("Shift (arrastando)", "Linha reta a 45°, quadrado, círculo perfeito"),
                 ("Alt (arrastando)", "Desenhar a partir do centro"),
                 ("P L A R O M T B N", "Caneta, linha, seta, retângulo, círculo, marcador, texto, borrar, numeração"),
@@ -493,6 +529,117 @@ impl Home {
         });
         if serde_json::to_string(s).ok() != before {
             shared.settings_dirty = true;
+        }
+    }
+
+    /// Start with the system, the X, the tray icon click, and Quit on Linux (no tray there for sure).
+    fn general_section(&mut self, ui: &mut Ui, shared: &mut Shared) {
+        widgets::section(ui, "Geral");
+        let mut on = crate::system::autostart::autostart_enabled();
+        if ui.checkbox(&mut on, tr(Msg::StartWithSystem)).changed()
+            && let Err(e) = crate::system::autostart::set_autostart(on)
+        {
+            shared.toast(e);
+        }
+        let s = &mut shared.settings;
+        let (close, click) = (s.on_close, s.tray_click);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tr(Msg::OnCloseLabel)).color(TEXT));
+            for (v, m) in [
+                (OnClose::Ask, Msg::AskOnClose),
+                (OnClose::Minimize, Msg::MinimizeToTray),
+                (OnClose::Quit, Msg::Quit),
+            ] {
+                if widgets::chip(ui, s.on_close == v, tr(m)).clicked() {
+                    s.on_close = v;
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tr(Msg::TrayClickLabel)).color(TEXT));
+            for (v, m) in [
+                (TrayClick::OpenHome, Msg::OpenHome),
+                (TrayClick::CaptureArea, Msg::CaptureArea),
+            ] {
+                if widgets::chip(ui, s.tray_click == v, tr(m)).clicked() {
+                    s.tray_click = v;
+                }
+            }
+        });
+        if (close, click) != (s.on_close, s.tray_click) {
+            shared.settings_dirty = true;
+        }
+        if cfg!(target_os = "linux") && ui.button(tr(Msg::QuitTakeshot)).clicked() {
+            self.requests.quit = true;
+        }
+    }
+
+    /// The two capture shortcuts with Change and Restore default, the PrtSc conflict help, the
+    /// priority switch (Windows) and the Wayland note.
+    fn shortcut_rows(&mut self, ui: &mut Ui, s: &mut crate::system::settings::Settings) {
+        if let Some(shot) = self.capturing {
+            ui.label(RichText::new(tr(Msg::PressKeys)).color(ACCENT));
+            let pressed = ui.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+            });
+            if let Some((key, mods)) = pressed {
+                self.capturing = None;
+                if let Some(keys) = keys_from_egui(key, mods) {
+                    self.requests.rebind = Some((shot, keys));
+                }
+            }
+        }
+        for (shot, keys, m) in [
+            (Shot::Area, s.hotkey_area.clone(), Msg::CaptureArea),
+            (Shot::Full, s.hotkey_full.clone(), Msg::FullScreen),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(label(&keys)).monospace().color(TEXT));
+                ui.label(RichText::new(tr(m)).color(MUTED));
+                if ui.button(tr(Msg::ChangeKeys)).clicked() {
+                    self.capturing = Some(shot);
+                }
+                if keys != default_keys(shot) && ui.button(tr(Msg::RestoreDefault)).clicked() {
+                    self.requests.rebind = Some((shot, default_keys(shot).to_string()));
+                }
+            });
+        }
+        let prtsc_busy = matches!(&self.hotkey_status, Some(Status::Busy { keys }) if keys.iter().any(|k| k.contains("PrtSc")));
+        if cfg!(windows) {
+            if prtsc_busy {
+                ui.label(
+                    RichText::new(tr(Msg::PrtScConflictHelp))
+                        .color(Color32::from_rgb(230, 150, 90)),
+                );
+                if ui.button(tr(Msg::OpenWindowsSettings)).clicked() {
+                    self.requests.open_windows_settings = true;
+                }
+            }
+            ui.checkbox(&mut s.prtsc_priority, tr(Msg::PrtScPriority));
+            ui.label(
+                RichText::new(tr(Msg::PrtScPriorityHint))
+                    .color(MUTED)
+                    .size(12.0),
+            );
+        }
+        if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            let exe = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "takeshot".into());
+            for args in ["--capture", "--capture --full"] {
+                ui.label(
+                    RichText::new(tf(Msg::WaylandHotkeyHelp, &[&format!("{exe} {args}")]))
+                        .color(MUTED),
+                );
+            }
         }
     }
 }
@@ -591,7 +738,7 @@ fn open_clipboard(shared: &mut Shared) {
 
 /// The status line under the navigation: which keys capture, or why they do not.
 fn hotkey_text(
-    hotkeys: Option<&Hotkeys>,
+    status: Option<&Status>,
     settings: &crate::system::settings::Settings,
 ) -> Result<String, String> {
     let ready = || {
@@ -601,7 +748,7 @@ fn hotkey_text(
             label(&settings.hotkey_full)
         ))
     };
-    match hotkeys.map(|h| h.status()) {
+    match status {
         None if settings.hotkeys => ready(),
         None | Some(Status::Off) => Err("Atalhos globais desligados".into()),
         Some(Status::Ready) => ready(),

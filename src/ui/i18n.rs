@@ -108,6 +108,28 @@ pub enum Msg {
     Today,
     Yesterday,
     RecentHint,
+    CloseAppTitle,
+    CloseAppBody,
+    RememberChoice,
+    MinimizeToTray,
+    OnCloseLabel,
+    TrayClickLabel,
+    OpenHome,
+    QuitTakeshot,
+    PrtScPriority,
+    PrtScPriorityHint,
+    OpenWindowsSettings,
+    PrtScConflictHelp,
+    ChangeKeys,
+    RestoreDefault,
+    PressKeys,
+    WaylandHotkeyHelp,
+    AboutPhrase,
+    MadeBy,
+    LicenseAgpl,
+    ViewOnGitHub,
+    VersionN,
+    CloseWord,
 }
 
 pub fn t(m: Msg) -> &'static str {
@@ -187,6 +209,34 @@ fn en(m: Msg) -> &'static str {
         Msg::Today => "Today",
         Msg::Yesterday => "Yesterday",
         Msg::RecentHint => "Click copies · Shift+click opens",
+        Msg::CloseAppTitle => "Close Takeshot?",
+        Msg::CloseAppBody => {
+            "Minimized, it keeps running in the tray and PrtSc keeps working. To quit for good, use Quit in the tray menu."
+        }
+        Msg::RememberChoice => "Remember my choice",
+        Msg::MinimizeToTray => "Minimize to tray",
+        Msg::OnCloseLabel => "When clicking X",
+        Msg::TrayClickLabel => "Clicking the tray icon",
+        Msg::OpenHome => "Open Home",
+        Msg::QuitTakeshot => "Quit Takeshot",
+        Msg::PrtScPriority => "Use Takeshot priority",
+        Msg::PrtScPriorityHint => "Some antivirus software may flag this.",
+        Msg::OpenWindowsSettings => "Open Windows settings",
+        Msg::PrtScConflictHelp => {
+            "Turn off \"Use the Print Screen key to open screen capture\" in Settings > Accessibility > Keyboard."
+        }
+        Msg::ChangeKeys => "Change",
+        Msg::RestoreDefault => "Restore default",
+        Msg::PressKeys => "Press the new keys. Esc cancels.",
+        Msg::WaylandHotkeyHelp => "On Wayland, create a desktop shortcut that runs: {0}",
+        Msg::AboutPhrase => {
+            "Screen capture, annotation and finishing. All local, no cloud, lossless PNG at the original resolution."
+        }
+        Msg::MadeBy => "Made by TakeFlow",
+        Msg::LicenseAgpl => "License AGPL-3.0",
+        Msg::ViewOnGitHub => "View on GitHub",
+        Msg::VersionN => "Version {0}",
+        Msg::CloseWord => "Close",
     }
 }
 
@@ -251,6 +301,34 @@ fn pt(m: Msg) -> &'static str {
         Msg::Today => "Hoje",
         Msg::Yesterday => "Ontem",
         Msg::RecentHint => "Clique copia · Shift+clique abre",
+        Msg::CloseAppTitle => "Fechar o Takeshot?",
+        Msg::CloseAppBody => {
+            "Minimizado, ele continua na bandeja e o PrtSc segue funcionando. Para sair de vez, use Sair no menu da bandeja."
+        }
+        Msg::RememberChoice => "Lembrar minha escolha",
+        Msg::MinimizeToTray => "Minimizar para a bandeja",
+        Msg::OnCloseLabel => "Ao clicar no X",
+        Msg::TrayClickLabel => "Clique no ícone da bandeja",
+        Msg::OpenHome => "Abrir o Início",
+        Msg::QuitTakeshot => "Sair do Takeshot",
+        Msg::PrtScPriority => "Usar prioridade do Takeshot",
+        Msg::PrtScPriorityHint => "Alguns antivírus podem estranhar.",
+        Msg::OpenWindowsSettings => "Abrir configuração do Windows",
+        Msg::PrtScConflictHelp => {
+            "Desligue \"Usar a tecla Print Screen para abrir a captura de tela\" em Configurações > Acessibilidade > Teclado."
+        }
+        Msg::ChangeKeys => "Alterar",
+        Msg::RestoreDefault => "Restaurar padrão",
+        Msg::PressKeys => "Pressione as novas teclas. Esc cancela.",
+        Msg::WaylandHotkeyHelp => "No Wayland, crie um atalho no desktop que rode: {0}",
+        Msg::AboutPhrase => {
+            "Captura, anotação e acabamento de telas. Tudo local, sem nuvem, PNG sem perdas na resolução original."
+        }
+        Msg::MadeBy => "Feito por TakeFlow",
+        Msg::LicenseAgpl => "Licença AGPL-3.0",
+        Msg::ViewOnGitHub => "Ver no GitHub",
+        Msg::VersionN => "Versão {0}",
+        Msg::CloseWord => "Fechar",
     }
 }
 

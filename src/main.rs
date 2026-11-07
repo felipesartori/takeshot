@@ -46,6 +46,12 @@ pub enum Switch {
 
 enum Mode {
     Home(Box<home::Home>),
+    /// The resident: main window, tray, hotkeys and the PrtSc hook.
+    Resident {
+        home: Box<home::Home>,
+        shell: Box<screens::shell::Shell>,
+        resident: Box<system::resident::Resident>,
+    },
     Overlay(Box<overlay::Overlay>),
     Editor(Box<editor::Editor>),
     Pin(Box<pin::Pin>),
@@ -63,6 +69,8 @@ enum Launch {
 
 struct Args {
     launch: Launch,
+    /// Start in the tray without a window (start with the system).
+    minimized: bool,
     screenshot: Option<PathBuf>,
     delay: f32,
     sample: bool,
@@ -74,6 +82,7 @@ struct Args {
 fn parse_args() -> Args {
     let mut a = Args {
         launch: Launch::Home,
+        minimized: false,
         screenshot: None,
         delay: 0.0,
         sample: false,
@@ -92,6 +101,7 @@ fn parse_args() -> Args {
                 i += 1;
             }
             "--capture" => capture = true,
+            "--minimized" => a.minimized = true,
             "--full" => full = true,
             "--sample" => a.sample = true,
             "--wait" => a.delay = a.delay.max(0.3),
@@ -213,10 +223,45 @@ fn notice_pos(pos: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
 }
 
 impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Mode::Resident {
+            home,
+            shell,
+            resident,
+        } = &mut self.mode
+        {
+            for ev in resident.poll() {
+                shell.handle(ctx, ev, home, &mut self.shared);
+            }
+            shell.tick(ctx, resident, &self.shared);
+            if self.shared.settings_dirty {
+                self.shared.settings_dirty = false;
+                self.shared.settings.save();
+            }
+        }
+    }
+
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        // The resident's root is a transparent host on Windows and macOS.
+        if matches!(self.mode, Mode::Resident { .. }) && screens::shell::HOSTED {
+            [0.0; 4]
+        } else {
+            visuals.panel_fill.to_normalized_gamma_f32()
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let sw = match &mut self.mode {
             Mode::Home(h) => h.ui(ui, frame, &mut self.shared),
+            Mode::Resident {
+                home,
+                shell,
+                resident,
+            } => {
+                shell.ui(ui, frame, resident, home, &mut self.shared);
+                Switch::None
+            }
             Mode::Overlay(o) => o.ui(ui, frame, &mut self.shared),
             Mode::Editor(e) => e.ui(ui, frame, &mut self.shared),
             Mode::Pin(p) => p.ui(ui, frame, &mut self.shared),
@@ -246,7 +291,10 @@ impl eframe::App for App {
             Switch::None => {}
         }
 
-        if let Some((msg, at)) = &self.shared.toast {
+        // The resident draws its notices in the main window (the root may be an invisible host).
+        if let Some((msg, at)) = &self.shared.toast
+            && !matches!(self.mode, Mode::Resident { .. })
+        {
             if at.elapsed().as_secs_f32() < 2.6 {
                 widgets::toast(&ctx, msg);
                 ctx.request_repaint();
@@ -297,6 +345,23 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let args = parse_args();
     let settings = settings::Settings::load();
+
+    // The resident is one per user: a second launch shows the running one and leaves.
+    let resident_mode = matches!(args.launch, Launch::Home) && args.screenshot.is_none();
+    let mut listener = None;
+    if resident_mode {
+        let name = system::instance::endpoint();
+        match system::instance::claim(&name) {
+            system::instance::Claim::Secondary => {
+                if !args.minimized {
+                    let _ = system::instance::send_show(&name, system::instance::Page::Start);
+                }
+                return Ok(());
+            }
+            system::instance::Claim::Primary(l) => listener = Some(l),
+            system::instance::Claim::Alone => {}
+        }
+    }
 
     // Grab the screen before any window of ours exists.
     let mut shot = None;
@@ -412,12 +477,24 @@ fn main() -> eframe::Result {
                 .with_title("Takeshot · componentes")
                 .with_inner_size([1280.0, 900.0]);
         }
+        _ if resident_mode && screens::shell::HOSTED => {
+            // An invisible host: tiny, transparent, click-through, off screen and off the taskbar.
+            vp = vp
+                .with_title("Takeshot")
+                .with_inner_size([1.0, 1.0])
+                .with_position([-10000.0, -10000.0])
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_mouse_passthrough(true)
+                .with_taskbar(false);
+        }
         _ => {
             vp = vp
                 .with_title("Takeshot")
                 .with_inner_size([1160.0, 740.0])
                 .with_min_inner_size([900.0, 600.0])
-                .with_drag_and_drop(true);
+                .with_drag_and_drop(true)
+                .with_visible(!(resident_mode && args.minimized));
         }
     }
 
@@ -473,7 +550,7 @@ fn main() -> eframe::Result {
                             "Não consegui capturar a tela: {}",
                             capture_error.unwrap_or_default()
                         ));
-                        Mode::Home(Box::new(home::Home::new(ctx, &shared, false)))
+                        Mode::Home(Box::new(home::Home::new(ctx, &shared)))
                     }
                 },
                 Launch::Edit(file) => {
@@ -500,16 +577,22 @@ fn main() -> eframe::Result {
                 }
                 Launch::Pin(_) => match pin_img {
                     Some((img, size)) => Mode::Pin(Box::new(pin::Pin::new(img, size))),
-                    None => Mode::Home(Box::new(home::Home::new(ctx, &shared, false))),
+                    None => Mode::Home(Box::new(home::Home::new(ctx, &shared))),
                 },
                 Launch::Gallery => Mode::Gallery(Box::new(ui::gallery::Gallery::new(
                     ctx, theme, ui_mode, lang_pref,
                 ))),
-                Launch::Home => Mode::Home(Box::new(home::Home::new(
-                    ctx,
-                    &shared,
-                    screenshot.is_none(),
-                ))),
+                Launch::Home if resident_mode => {
+                    let resident =
+                        system::resident::Resident::start(ctx, &shared.settings, listener.take());
+                    let shell = screens::shell::Shell::new(screens::shell::HOSTED, !args.minimized);
+                    Mode::Resident {
+                        home: Box::new(home::Home::new(ctx, &shared)),
+                        shell: Box::new(shell),
+                        resident: Box::new(resident),
+                    }
+                }
+                Launch::Home => Mode::Home(Box::new(home::Home::new(ctx, &shared))),
             };
             Ok(Box::new(App {
                 mode,

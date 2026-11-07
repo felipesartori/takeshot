@@ -1,7 +1,7 @@
 //! PrtSc priority on Windows: a low-level keyboard hook that takes PrtSc before other apps.
 
-// The resident installs it from plan 4, Task 6; until then only the tests use it.
-#![allow(dead_code)]
+// The hook exists only on Windows; elsewhere only the tests use its rules.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use crate::system::hotkeys::Shot;
 
@@ -30,7 +30,6 @@ pub fn swallows(vk: u32, other_mods: bool) -> bool {
 }
 
 #[cfg(windows)]
-#[allow(unused_imports)] // Used by the resident from plan 4, Task 6.
 pub use imp::PrtScHook;
 
 #[cfg(windows)]

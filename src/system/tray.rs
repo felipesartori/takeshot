@@ -1,8 +1,5 @@
 //! The tray: its menu entries in spec order (shared by the app-drawn and the native menu), the icon and its events.
 
-// The tray menus use it from plan 4, Task 5; until then only the tests do.
-#![allow(dead_code)]
-
 use crate::system::hotkeys::{Shot, label};
 use crate::system::instance::Page;
 use crate::ui::i18n::{Msg, t};
@@ -80,16 +77,19 @@ pub fn tray_entries(
 /// What the tray icon reports to the resident.
 #[derive(Clone, PartialEq, Debug)]
 pub enum TrayEvent {
+    // AppIndicator (Linux) reports no clicks: its menu is the desktop's own.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     LeftClick,
     /// Right click: open the app-drawn menu next to the icon (`icon` in physical pixels).
-    MenuAt {
-        icon: egui::Rect,
-    },
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    MenuAt { icon: egui::Rect },
     /// A native menu entry (Linux).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Action(TrayAction),
 }
 
 /// The id of a native menu entry for an action; recents are numbered by position.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn id_for(a: &TrayAction, recents: &[PathBuf]) -> String {
     match a {
         TrayAction::Capture(Shot::Area) => "capture-area".into(),
@@ -109,6 +109,7 @@ pub fn id_for(a: &TrayAction, recents: &[PathBuf]) -> String {
 }
 
 /// The action of a native menu id; a recent opens in the editor when Shift is held.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn action_for_id(id: &str, recents: &[PathBuf], shift: bool) -> Option<TrayAction> {
     Some(match id {
         "capture-area" => TrayAction::Capture(Shot::Area),
@@ -149,6 +150,42 @@ pub fn taskbar_is_dark() -> bool {
 #[cfg(not(windows))]
 pub fn taskbar_is_dark() -> bool {
     !cfg!(target_os = "macos")
+}
+
+/// The area without the taskbar of the monitor nearest to `p`, in physical pixels: the tray menus
+/// stay inside it. `None` where the system does not say (the menus then use the whole monitor).
+#[cfg(windows)]
+pub fn work_area(p: egui::Pos2) -> Option<egui::Rect> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+    };
+    let pt = POINT {
+        x: p.x as i32,
+        y: p.y as i32,
+    };
+    // SAFETY: plain Win32 queries; MONITORINFO is zeroed and its size set as the API requires.
+    unsafe {
+        let monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        if monitor.is_null() {
+            return None;
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return None;
+        }
+        let r = info.rcWork;
+        Some(egui::Rect::from_min_max(
+            egui::pos2(r.left as f32, r.top as f32),
+            egui::pos2(r.right as f32, r.bottom as f32),
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn work_area(_p: egui::Pos2) -> Option<egui::Rect> {
+    None
 }
 
 fn tray_icon_image(theme: ThemeId) -> Result<tray_icon::Icon, String> {
@@ -203,6 +240,7 @@ impl Tray {
         Ok(Self { icon })
     }
 
+    #[allow(dead_code)] // The theme switch of plan 5 calls it.
     pub fn set_theme(&self, theme: ThemeId) {
         if let Ok(img) = tray_icon_image(theme) {
             #[cfg(target_os = "macos")]
@@ -376,6 +414,7 @@ impl Tray {
         Ok(Self)
     }
 
+    #[allow(dead_code)] // The theme switch of plan 5 calls it.
     pub fn set_theme(&self, theme: ThemeId) {
         gtk_thread::with_tray(move |tray| {
             if let Ok(img) = tray_icon_image(theme) {
@@ -396,6 +435,16 @@ impl Tray {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn the_work_area_is_part_of_the_nearest_monitor() {
+        // Any point, even far off screen, gets the nearest monitor and its area without the taskbar.
+        for p in [egui::pos2(0.0, 0.0), egui::pos2(-10000.0, -10000.0)] {
+            let r = work_area(p).expect("a monitor");
+            assert!(r.width() > 0.0 && r.height() > 0.0, "{r:?}");
+        }
+    }
 
     fn actions(entries: &[TrayEntry]) -> Vec<String> {
         entries

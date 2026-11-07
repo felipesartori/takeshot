@@ -459,14 +459,17 @@ pub fn text_field(
     resp
 }
 
-/// A modal question: title, a short explanation and a row of buttons. Returns the value of the
-/// button pressed this frame; Esc or a click outside the dialog answers with `cancel`.
+/// A modal question: title, a short explanation, optional extra content (a "Remember my choice"
+/// box) and a row of buttons. Returns the value of the button pressed this frame; Esc or a click
+/// outside the dialog answers with `cancel`.
+#[allow(clippy::too_many_arguments)]
 pub fn confirm_dialog<T: Copy>(
     ctx: &egui::Context,
     t: &Tokens,
     id: &str,
     title: &str,
     body: &str,
+    extra: &mut dyn FnMut(&mut Ui),
     buttons: &[(&str, BtnKind, T)],
     cancel: T,
 ) -> Option<T> {
@@ -492,7 +495,9 @@ pub fn confirm_dialog<T: Copy>(
                     .font(font(13.0, Weight::Regular))
                     .color(t.muted),
             );
-            ui.add_space(18.0);
+            ui.add_space(12.0);
+            extra(ui);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 for (label, kind, value) in buttons {
@@ -829,6 +834,7 @@ mod tests {
                         "test-dialog",
                         "Discard changes?",
                         "This picture has edits.",
+                        &mut |_| {},
                         &buttons,
                         'c',
                     ));
@@ -869,6 +875,55 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         }]]);
         assert_eq!(answers.last(), Some(&Some('c')), "Esc answers with cancel");
+    }
+
+    #[test]
+    fn confirm_dialog_draws_extra_content() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        crate::ui::style::apply(&ctx, &t);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut remember = true;
+        let mut box_at = None;
+        let mut frame = |events: Vec<egui::Event>, i: usize, remember: &mut bool| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(i as f64 * 0.016),
+                events,
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                confirm_dialog(
+                    ui.ctx(),
+                    &t,
+                    "extra-dialog",
+                    "Close Takeshot?",
+                    "It keeps running in the tray.",
+                    &mut |ui: &mut egui::Ui| {
+                        box_at = Some(checkbox(ui, &t, remember, "Remember my choice").rect);
+                    },
+                    &[("Quit", BtnKind::Secondary, 0)],
+                    0,
+                );
+            });
+            full.textures_delta.clear();
+            box_at
+        };
+        frame(vec![], 0, &mut remember);
+        let at = frame(vec![], 1, &mut remember)
+            .expect("the extra content is drawn")
+            .center();
+        let b = |down| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: down,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(at)], 2, &mut remember);
+        frame(vec![b(true)], 3, &mut remember);
+        frame(vec![b(false)], 4, &mut remember);
+        assert!(!remember, "the checkbox inside the dialog toggles");
     }
 
     #[test]

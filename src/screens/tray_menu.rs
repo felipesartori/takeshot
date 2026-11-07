@@ -1,8 +1,5 @@
 //! The tray menu Takeshot draws itself on Windows and macOS: a borderless window by the tray icon, in the theme.
 
-// The resident opens it from plan 4, Task 6; until then only the tests use it.
-#![allow(dead_code)]
-
 use crate::system::tray::{TrayAction, TrayEntry};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, Ico};
@@ -75,6 +72,16 @@ impl FocusWatch {
             self.unfocused = self.unfocused.saturating_add(1);
         }
         self.unfocused >= 2
+    }
+
+    /// The menu or its flyout has had the focus since opening.
+    pub fn had_focus(&self) -> bool {
+        self.had
+    }
+
+    /// One frame without focus went by: the next one decides, so it must come.
+    pub fn deciding(&self) -> bool {
+        self.unfocused > 0
     }
 }
 
@@ -264,6 +271,9 @@ pub fn mode_body(ui: &mut Ui, t: &Tokens, current: UiMode) -> Option<TrayAction>
     chosen
 }
 
+/// The title of the menu windows, which only the frame fix below looks for.
+const MENU_TITLE: &str = "Takeshot menu";
+
 /// The open menu and its submenu, each a borderless always-on-top window.
 pub struct TrayMenu {
     at: Option<Pos2>,
@@ -334,7 +344,7 @@ impl TrayMenu {
             .inner_margin(PAD);
         let builder = |pos: Pos2, size: Vec2| {
             egui::ViewportBuilder::default()
-                .with_title("Takeshot")
+                .with_title(MENU_TITLE)
                 .with_decorations(false)
                 .with_always_on_top()
                 .with_taskbar(false)
@@ -351,7 +361,12 @@ impl TrayMenu {
         let (hovered_sub, plain) =
             ctx.show_viewport_immediate(main_id, builder(at, menu_size(entries)), |ui, _| {
                 main_focus = ui.input(|i| i.viewport().focused);
-                if main_focus != Some(true) && sub_focus.is_none() && self.sub.is_none() {
+                // Only until it first has the focus: afterwards a window that takes it keeps it.
+                if !self.focus.had_focus()
+                    && main_focus != Some(true)
+                    && sub_focus.is_none()
+                    && self.sub.is_none()
+                {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
                 esc |= ui.input(|i| i.key_pressed(egui::Key::Escape));
@@ -399,11 +414,18 @@ impl TrayMenu {
                 },
             );
         }
+        // Rounded corners stay clear: no 1 px top line or square shadow from Windows.
+        crate::system::borderless::flatten_borderless(MENU_TITLE);
         let close = self.focus.step(main_focus, sub_focus, esc);
         let outcome = match chosen {
             Some(a) => MenuOutcome::Chosen(a),
             None if close => MenuOutcome::Closed,
-            None => return MenuOutcome::Open,
+            None => {
+                if self.focus.deciding() {
+                    ctx.request_repaint();
+                }
+                return MenuOutcome::Open;
+            }
         };
         self.close();
         // The windows only go away on the next pass, when they are no longer shown: ask for it.
@@ -459,6 +481,61 @@ mod tests {
             "focus went elsewhere"
         );
         assert!(FocusWatch::default().step(None, None, true), "Esc");
+    }
+
+    #[test]
+    fn the_menu_lets_another_window_keep_the_focus_and_closes() {
+        // The capture overlay takes the focus: the menu must neither take it back nor wait for
+        // some other event to close.
+        let t = tokens(ThemeId::TakeUi, true);
+        let entries = tray_entries(&[], UiMode::Dark, "PrintScreen", "shift+PrintScreen");
+        let icon = Rect::from_min_size(pos2(560.0, 760.0), vec2(24.0, 24.0));
+        let monitor = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 800.0));
+        let mut menu = TrayMenu::default();
+        menu.open(icon, monitor, &entries);
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        let mut n = 0.0;
+        let mut frame = |focused: bool, menu: &mut TrayMenu| {
+            n += 1.0;
+            let mut input = egui::RawInput {
+                screen_rect: Some(monitor),
+                time: Some(n),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .focused = Some(focused);
+            let mut out = MenuOutcome::Open;
+            let mut full = ctx.run_ui(input, |ui| {
+                out = menu.show(ui.ctx(), &t, &entries, true, &|_| None);
+            });
+            full.textures_delta.clear();
+            let vp = &full.viewport_output[&egui::ViewportId::ROOT];
+            let asks_focus = vp
+                .commands
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::Focus));
+            (out, asks_focus, vp.repaint_delay)
+        };
+        let (_, asks_focus, _) = frame(false, &mut menu);
+        assert!(asks_focus, "just opened: it asks for the focus");
+        assert_eq!(frame(true, &mut menu).0, MenuOutcome::Open);
+        let (out, asks_focus, wake) = frame(false, &mut menu);
+        assert_eq!(
+            out,
+            MenuOutcome::Open,
+            "one frame may be the move into the flyout"
+        );
+        assert!(!asks_focus, "it leaves the focus where it went");
+        assert_eq!(
+            wake,
+            std::time::Duration::ZERO,
+            "it asks for the frame that decides"
+        );
+        assert_eq!(frame(false, &mut menu).0, MenuOutcome::Closed);
     }
 
     #[test]

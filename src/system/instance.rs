@@ -1,8 +1,5 @@
 //! Single instance: the first Takeshot process owns a local socket; a second launch asks it to show a page and exits.
 
-// The resident process wires it in plan 4, Task 6; until then only the tests use it.
-#![allow(dead_code)]
-
 #[cfg(target_os = "macos")]
 use interprocess::local_socket::GenericFilePath;
 #[cfg(not(target_os = "macos"))]

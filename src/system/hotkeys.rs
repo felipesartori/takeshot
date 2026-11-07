@@ -77,10 +77,72 @@ pub fn status(registered: &[(&str, bool)], snipping_tool_owns_prtsc: bool) -> St
     }
 }
 
+/// The status to show: with the PrtSc hook on, PrtSc and Shift+PrtSc reach Takeshot first, so their
+/// conflict no longer counts.
+pub fn effective_status(status: &Status, hook_on: bool) -> Status {
+    match status {
+        Status::Busy { keys } if hook_on => {
+            let rest: Vec<String> = keys
+                .iter()
+                .filter(|k| *k != "PrtSc" && *k != "Shift+PrtSc")
+                .cloned()
+                .collect();
+            if rest.is_empty() {
+                Status::Ready
+            } else {
+                Status::Busy { keys: rest }
+            }
+        }
+        other => other.clone(),
+    }
+}
+
+/// The shortcut text for a key pressed in egui with its modifiers, as `HotKey::from_str` reads
+/// it; Esc (which cancels) gives none. egui has no PrtSc key, so restoring the default brings it back.
+pub fn keys_from_egui(key: egui::Key, mods: egui::Modifiers) -> Option<String> {
+    use egui::Key;
+    if key == Key::Escape {
+        return None;
+    }
+    let name = key.name();
+    let code = match key {
+        Key::Num0
+        | Key::Num1
+        | Key::Num2
+        | Key::Num3
+        | Key::Num4
+        | Key::Num5
+        | Key::Num6
+        | Key::Num7
+        | Key::Num8
+        | Key::Num9 => format!("Digit{name}"),
+        _ if name.len() == 1 && name.chars().all(|c| c.is_ascii_alphabetic()) => {
+            format!("Key{}", name.to_ascii_uppercase())
+        }
+        _ => name.to_string(),
+    };
+    let mut parts = Vec::new();
+    if mods.ctrl || (mods.command && !cfg!(target_os = "macos")) {
+        parts.push("ctrl");
+    }
+    if mods.shift {
+        parts.push("shift");
+    }
+    if mods.alt {
+        parts.push("alt");
+    }
+    if mods.mac_cmd {
+        parts.push("meta");
+    }
+    parts.push(&code);
+    Some(parts.join("+"))
+}
+
 /// The PrtSc priority offer appears once, on a conflict, and never with the hook already on.
-#[allow(dead_code)] // Settings > Shortcuts calls it from plan 4, Task 6.
+/// Only a PrtSc conflict qualifies: the hook does not help a rebound shortcut such as F9.
 pub fn should_offer_priority(status: &Status, offered_before: bool, hook_on: bool) -> bool {
-    matches!(status, Status::Busy { .. }) && !offered_before && !hook_on
+    let prtsc = matches!(status, Status::Busy { keys } if keys.iter().any(|k| k == "PrtSc" || k == "Shift+PrtSc"));
+    prtsc && !offered_before && !hook_on
 }
 
 /// Windows' "Use the Print Screen key to open screen capture" setting.
@@ -160,14 +222,7 @@ impl Hotkeys {
         &self.status
     }
 
-    /// The shortcut text (as `HotKey::from_str` reads it) for a capture.
-    #[allow(dead_code)] // Settings > Shortcuts calls it from plan 4, Task 6.
-    pub fn keys(&self, s: Shot) -> &str {
-        &self.keys[slot(s)]
-    }
-
     /// Swaps the shortcut of a capture; on failure the old one stays registered.
-    #[allow(dead_code)] // Settings > Shortcuts calls it from plan 4, Task 6.
     pub fn rebind(&mut self, s: Shot, keys: &str) -> Result<(), String> {
         HotKey::from_str(keys).map_err(|e| e.to_string())?;
         let old = self.keys[slot(s)].clone();
@@ -250,6 +305,48 @@ mod tests {
     }
 
     #[test]
+    fn the_hook_clears_the_prtsc_conflict_only() {
+        let busy = |k: &[&str]| Status::Busy {
+            keys: k.iter().map(|s| s.to_string()).collect(),
+        };
+        assert_eq!(effective_status(&busy(&["PrtSc"]), true), Status::Ready);
+        assert_eq!(
+            effective_status(&busy(&["PrtSc", "Shift+PrtSc"]), true),
+            Status::Ready
+        );
+        assert_eq!(effective_status(&busy(&["F9"]), true), busy(&["F9"]));
+        assert_eq!(effective_status(&busy(&["PrtSc"]), false), busy(&["PrtSc"]));
+        assert_eq!(effective_status(&Status::Off, true), Status::Off);
+    }
+
+    #[test]
+    fn pressed_keys_become_hotkey_text() {
+        use egui::{Key, Modifiers};
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            keys_from_egui(Key::A, both).as_deref(),
+            Some("ctrl+shift+KeyA")
+        );
+        assert_eq!(
+            keys_from_egui(Key::Num2, Modifiers::ALT).as_deref(),
+            Some("alt+Digit2")
+        );
+        assert_eq!(
+            keys_from_egui(Key::F9, Modifiers::NONE).as_deref(),
+            Some("F9")
+        );
+        assert_eq!(
+            keys_from_egui(Key::Escape, Modifiers::NONE),
+            None,
+            "Esc cancels"
+        );
+        for k in [Key::A, Key::Num2, Key::F9, Key::Space, Key::Home] {
+            let text = keys_from_egui(k, Modifiers::SHIFT).unwrap();
+            assert!(HotKey::from_str(&text).is_ok(), "{text}");
+        }
+    }
+
+    #[test]
     fn priority_is_offered_once_and_never_with_the_hook_on() {
         let busy = Status::Busy {
             keys: vec!["PrtSc".into()],
@@ -262,5 +359,12 @@ mod tests {
         );
         assert!(!should_offer_priority(&Status::Ready, false, false));
         assert!(!should_offer_priority(&Status::Off, false, false));
+        let f9 = Status::Busy {
+            keys: vec!["F9".into()],
+        };
+        assert!(
+            !should_offer_priority(&f9, false, false),
+            "the hook cannot help F9"
+        );
     }
 }
