@@ -184,8 +184,8 @@ struct App {
     shot_saved: Arc<AtomicBool>,
     shot_requested: bool,
     editor_window: (egui::Pos2, egui::Vec2),
-    /// Monitor of the capture, in points (for placing the notice).
-    monitor: (egui::Pos2, egui::Vec2),
+    /// Work area of the capture's monitor, in points (for placing the notice).
+    notice_area: egui::Rect,
     /// Held while the capture's selection is on screen: PrtSc meanwhile starts nothing.
     capture_slot: Option<system::instance::CaptureSlot>,
 }
@@ -208,20 +208,15 @@ impl App {
 
     fn switch_to_notice(&mut self, ctx: &egui::Context, n: Box<notice::Notice>) {
         use egui::ViewportCommand as C;
-        let (pos, size) = self.monitor;
         if !cfg!(target_os = "macos") {
             ctx.send_viewport_cmd(C::Fullscreen(false));
         }
         ctx.send_viewport_cmd(C::Decorations(false));
         ctx.send_viewport_cmd(C::WindowLevel(egui::WindowLevel::AlwaysOnTop));
         ctx.send_viewport_cmd(C::InnerSize(notice::NOTICE_SIZE));
-        ctx.send_viewport_cmd(C::OuterPosition(notice_pos(pos, size)));
+        ctx.send_viewport_cmd(C::OuterPosition(notice::notice_pos(self.notice_area)));
         self.mode = Mode::Notice(n);
     }
-}
-
-fn notice_pos(pos: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
-    pos + size - notice::NOTICE_SIZE - egui::vec2(24.0, 64.0)
 }
 
 impl eframe::App for App {
@@ -401,7 +396,7 @@ fn main() -> eframe::Result {
         )))
         .with_app_id("takeshot");
     let mut editor_window = (egui::pos2(80.0, 60.0), egui::vec2(1280.0, 820.0));
-    let mut monitor = (egui::pos2(0.0, 0.0), egui::vec2(1600.0, 900.0));
+    let mut notice_area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0));
     let mut instant_notice = None;
     let mut pin_img = None;
     match (&args.launch, &shot) {
@@ -411,7 +406,19 @@ fn main() -> eframe::Result {
             let size = egui::vec2(s.image.width() as f32 / k, s.image.height() as f32 / k);
             let ew = egui::vec2(1280.0f32.min(size.x - 40.0), 820.0f32.min(size.y - 60.0));
             editor_window = (pos + (size - ew) / 2.0, ew);
-            monitor = (pos, size);
+            // The notice keeps off the taskbar: the work area of this monitor, in points.
+            let middle = egui::pos2(
+                s.x as f32 + s.image.width() as f32 / 2.0,
+                s.y as f32 + s.image.height() as f32 / 2.0,
+            );
+            notice_area = capture::work_area(middle)
+                .map(|r| {
+                    egui::Rect::from_min_max(
+                        (r.min.to_vec2() / k).to_pos2(),
+                        (r.max.to_vec2() / k).to_pos2(),
+                    )
+                })
+                .unwrap_or(egui::Rect::from_min_size(pos, size));
             if *full && !settings.open_editor_after_full && args.screenshot.is_none() {
                 // Shift+PrtSc saves the full screen at once.
                 let fonts = fonts::FontLib::load();
@@ -441,7 +448,7 @@ fn main() -> eframe::Result {
                     .with_always_on_top()
                     .with_resizable(false)
                     .with_inner_size(notice::NOTICE_SIZE)
-                    .with_position(notice_pos(pos, size));
+                    .with_position(notice::notice_pos(notice_area));
                 instant_notice = Some(notice::Notice::saved(path));
             } else if *full && settings.open_editor_after_full {
                 vp = vp
@@ -617,7 +624,7 @@ fn main() -> eframe::Result {
                 shot_saved: Arc::new(AtomicBool::new(false)),
                 shot_requested: false,
                 editor_window,
-                monitor,
+                notice_area,
                 capture_slot,
             }))
         }),

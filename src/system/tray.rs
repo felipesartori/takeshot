@@ -152,42 +152,6 @@ pub fn taskbar_is_dark() -> bool {
     !cfg!(target_os = "macos")
 }
 
-/// The area without the taskbar of the monitor nearest to `p`, in physical pixels: the tray menus
-/// stay inside it. `None` where the system does not say (the menus then use the whole monitor).
-#[cfg(windows)]
-pub fn work_area(p: egui::Pos2) -> Option<egui::Rect> {
-    use windows_sys::Win32::Foundation::POINT;
-    use windows_sys::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
-    };
-    let pt = POINT {
-        x: p.x as i32,
-        y: p.y as i32,
-    };
-    // SAFETY: plain Win32 queries; MONITORINFO is zeroed and its size set as the API requires.
-    unsafe {
-        let monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        if monitor.is_null() {
-            return None;
-        }
-        let mut info: MONITORINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) == 0 {
-            return None;
-        }
-        let r = info.rcWork;
-        Some(egui::Rect::from_min_max(
-            egui::pos2(r.left as f32, r.top as f32),
-            egui::pos2(r.right as f32, r.bottom as f32),
-        ))
-    }
-}
-
-#[cfg(not(windows))]
-pub fn work_area(_p: egui::Pos2) -> Option<egui::Rect> {
-    None
-}
-
 fn tray_icon_image(theme: ThemeId) -> Result<tray_icon::Icon, String> {
     let (rgba, w, h) = crate::ui::brand::tray_rgba(theme, taskbar_is_dark(), 32);
     tray_icon::Icon::from_rgba(rgba, w, h).map_err(|e| e.to_string())
@@ -435,16 +399,6 @@ impl Tray {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(windows)]
-    #[test]
-    fn the_work_area_is_part_of_the_nearest_monitor() {
-        // Any point, even far off screen, gets the nearest monitor and its area without the taskbar.
-        for p in [egui::pos2(0.0, 0.0), egui::pos2(-10000.0, -10000.0)] {
-            let r = work_area(p).expect("a monitor");
-            assert!(r.width() > 0.0 && r.height() > 0.0, "{r:?}");
-        }
-    }
 
     fn actions(entries: &[TrayEntry]) -> Vec<String> {
         entries

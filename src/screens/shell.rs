@@ -164,7 +164,7 @@ impl Shell {
                         )
                     };
                     // The menus stay off the taskbar: the work area of the icon's monitor.
-                    let bounds = crate::system::tray::work_area(icon.center())
+                    let bounds = crate::system::capture::work_area(icon.center())
                         .map(points)
                         .unwrap_or_else(|| {
                             let size = ctx

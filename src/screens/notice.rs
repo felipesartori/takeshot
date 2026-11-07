@@ -7,12 +7,19 @@ use egui::{Color32, RichText, Sense, Stroke, Ui, vec2};
 use std::path::PathBuf;
 
 pub const NOTICE_SIZE: egui::Vec2 = egui::vec2(380.0, 72.0);
+/// The gap to the right edge and to the taskbar (the edge of the work area).
+pub const NOTICE_MARGIN: f32 = 16.0;
 const NOTICE_SECONDS: f64 = 3.5;
 
 pub struct Notice {
     title: String,
     path: Option<PathBuf>,
     started: Option<f64>,
+}
+
+/// Where the notice opens: the bottom-right corner of the work area (`area`, in points).
+pub fn notice_pos(area: egui::Rect) -> egui::Pos2 {
+    area.max - NOTICE_SIZE - vec2(NOTICE_MARGIN, NOTICE_MARGIN)
 }
 
 impl Notice {
@@ -46,10 +53,11 @@ impl Notice {
         let resp = ui.interact(rect, ui.scope_id().with("notice"), Sense::click());
         let p = ui.painter();
         p.rect_filled(rect, 0.0, Color32::from_rgb(22, 22, 25));
+        // The accent bar on the left is the only highlight; hovering shows the hand cursor.
         p.rect_stroke(
             rect,
             0.0,
-            Stroke::new(1.0, if resp.hovered() { ACCENT } else { BORDER }),
+            Stroke::new(1.0, BORDER),
             egui::StrokeKind::Inside,
         );
         p.rect_filled(
@@ -84,5 +92,25 @@ impl Notice {
             return Switch::Close;
         }
         Switch::None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Rect, pos2};
+
+    #[test]
+    fn the_notice_sits_in_the_corner_of_the_work_area() {
+        // A 40 px taskbar at the bottom: the notice keeps off it by the same gap as off the right edge.
+        let area = Rect::from_min_max(pos2(0.0, 0.0), pos2(1920.0, 1040.0));
+        let r = Rect::from_min_size(notice_pos(area), NOTICE_SIZE);
+        assert!(area.contains_rect(r), "{r:?}");
+        assert_eq!(area.max.x - r.max.x, NOTICE_MARGIN);
+        assert_eq!(area.max.y - r.max.y, NOTICE_MARGIN);
+        // A second monitor to the left, taskbar on top: still its own corner.
+        let area = Rect::from_min_max(pos2(-1280.0, 48.0), pos2(0.0, 1024.0));
+        let r = Rect::from_min_size(notice_pos(area), NOTICE_SIZE);
+        assert!(area.contains_rect(r), "{r:?}");
     }
 }
