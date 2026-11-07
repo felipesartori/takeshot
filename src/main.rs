@@ -186,6 +186,8 @@ struct App {
     editor_window: (egui::Pos2, egui::Vec2),
     /// Monitor of the capture, in points (for placing the notice).
     monitor: (egui::Pos2, egui::Vec2),
+    /// Held while the capture's selection is on screen: PrtSc meanwhile starts nothing.
+    capture_slot: Option<system::instance::CaptureSlot>,
 }
 
 impl App {
@@ -290,6 +292,10 @@ impl eframe::App for App {
             }
             Switch::None => {}
         }
+        // The selection became the editor or a notice: the next PrtSc may capture again.
+        if self.capture_slot.is_some() && !matches!(self.mode, Mode::Overlay(_)) {
+            self.capture_slot = None;
+        }
 
         // The resident draws its notices in the main window (the root may be an invisible host).
         if let Some((msg, at)) = &self.shared.toast
@@ -360,6 +366,15 @@ fn main() -> eframe::Result {
             }
             system::instance::Claim::Primary(l) => listener = Some(l),
             system::instance::Claim::Alone => {}
+        }
+    }
+
+    // One capture at a time: while a selection is on screen, another PrtSc is ignored.
+    let mut capture_slot = None;
+    if matches!(args.launch, Launch::Capture { .. }) && args.screenshot.is_none() && !args.sample {
+        match system::instance::capture_slot(&system::instance::endpoint()) {
+            Some(slot) => capture_slot = Some(slot),
+            None => return Ok(()),
         }
     }
 
@@ -603,6 +618,7 @@ fn main() -> eframe::Result {
                 shot_requested: false,
                 editor_window,
                 monitor,
+                capture_slot,
             }))
         }),
     );

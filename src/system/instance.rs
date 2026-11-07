@@ -1,4 +1,5 @@
 //! Single instance: the first Takeshot process owns a local socket; a second launch asks it to show a page and exits.
+//! Captures are one at a time too: a capture whose selection is on screen holds a file lock.
 
 #[cfg(target_os = "macos")]
 use interprocess::local_socket::GenericFilePath;
@@ -123,6 +124,36 @@ pub fn claim(name: &str) -> Claim {
 fn alone(e: io::Error) -> Claim {
     eprintln!("takeshot: running without single instance: {e}");
     Claim::Alone
+}
+
+/// Held by the capture whose selection is on screen; dropping it lets the next capture start.
+pub struct CaptureSlot(#[allow(dead_code)] Option<std::fs::File>);
+
+/// Takes the capture slot, or `None` when another capture holds it (that PrtSc is ignored). The
+/// lock goes with the process, so a crashed capture never blocks the next. Where the lock file
+/// cannot be used, captures run unguarded.
+pub fn capture_slot(name: &str) -> Option<CaptureSlot> {
+    let path = std::env::temp_dir().join(format!("{name}.capture.lock"));
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("takeshot: captures not guarded ({}): {e}", path.display());
+            return Some(CaptureSlot(None));
+        }
+    };
+    match file.try_lock() {
+        Ok(()) => Some(CaptureSlot(Some(file))),
+        Err(std::fs::TryLockError::WouldBlock) => None,
+        Err(std::fs::TryLockError::Error(e)) => {
+            eprintln!("takeshot: captures not guarded ({}): {e}", path.display());
+            Some(CaptureSlot(None))
+        }
+    }
 }
 
 /// Asks the resident to show `page`. Retries briefly: the resident may be between connections.
@@ -265,6 +296,21 @@ mod tests {
         drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
         assert!(path.exists());
         assert!(matches!(claim(&name), Claim::Primary(_)));
+    }
+
+    #[test]
+    fn one_capture_at_a_time_until_it_lets_go() {
+        let name = unique("capture");
+        let first = capture_slot(&name).expect("no capture open yet");
+        assert!(
+            capture_slot(&name).is_none(),
+            "a second capture finds the slot taken"
+        );
+        drop(first);
+        assert!(
+            capture_slot(&name).is_some(),
+            "free again once the first lets go"
+        );
     }
 
     #[test]
