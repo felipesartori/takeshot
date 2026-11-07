@@ -39,6 +39,13 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 - Fixar uma captura por cima das outras janelas (arrastar move, roda do mouse dá zoom, duplo clique fecha).
 - Arrastar uma imagem para a janela principal ou colar com `Ctrl+V` abre no editor.
 
+**Bandeja**
+- O Takeshot fica na área de notificação: os atalhos funcionam com a janela fechada. Abrir o programa de novo só traz a janela que já está rodando.
+- Menu do ícone (clique direito): capturar área, tela inteira ou em 3 segundos; abrir o Takeshot; as 5 capturas recentes (clique copia, `Shift`+clique abre no editor) e a pasta delas; estilo e marca d'água; ajustes; tema claro, escuro ou do sistema; sobre; sair.
+- Clique esquerdo no ícone abre o Início ou captura uma área, como estiver em Ajustes.
+- O X da janela pergunta na primeira vez se é para sair ou minimizar para a bandeja, e pode lembrar a escolha (muda em Ajustes > "Ao clicar no X"). Sair de vez é pelo menu da bandeja.
+- Ajustes > "Iniciar com o sistema" abre o Takeshot no login, direto na bandeja (`takeshot --minimized`).
+
 ## Atalhos
 
 | Tecla | Ação |
@@ -57,15 +64,15 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 | `Esc` | Limpar a seleção de objetos, depois voltar para Selecionar, depois fechar a captura |
 | `Ctrl+W` | Fechar o editor (pergunta se há mudanças não exportadas) |
 
-Os atalhos globais funcionam enquanto a janela principal estiver aberta (pode deixar minimizada).
+Os atalhos globais funcionam enquanto o Takeshot estiver na bandeja e podem ser trocados em Ajustes > Atalhos. Com uma captura aberta, um novo `PrtSc` não faz nada.
 
 ## Download
 
 Baixe em [Releases](../../releases) ou nos artefatos da última execução do workflow `build`:
 
-- **Windows**: `takeshot-windows-x64.zip`. Se o `PrtSc` abrir a Ferramenta de Captura do Windows, desligue em Configurações > Acessibilidade > Teclado > "Usar a tecla Print Screen para abrir a captura de tela".
+- **Windows**: `takeshot-windows-x64.zip`. Se o `PrtSc` abrir a Ferramenta de Captura do Windows, desligue em Configurações > Acessibilidade > Teclado > "Usar a tecla Print Screen para abrir a captura de tela", ou ligue Ajustes > Atalhos > "Usar prioridade do Takeshot" (um gancho de teclado que pega o `PrtSc` antes dos outros programas; alguns antivírus estranham). No Windows 10 o ícone novo começa escondido na seta `^` da bandeja: arraste-o para a barra.
 - **macOS** (Apple Silicon e Intel): `takeshot-macos-universal.zip`. O app não é assinado pela Apple: na primeira vez, clique com o botão direito em Takeshot.app > Abrir, ou rode `xattr -cr Takeshot.app`. Libere em Ajustes do Sistema > Privacidade e Segurança > Gravação de Tela.
-- **Linux**: `takeshot-linux-x64.tar.gz`. Atalhos globais precisam de X11; no Wayland a captura passa pelo portal do sistema.
+- **Linux**: `takeshot-linux-x64.tar.gz`. O ícone da bandeja precisa de `libayatana-appindicator3-1` (ou `libappindicator3-1`) e de um painel com AppIndicator; sem ele o app funciona sem ícone, e "Sair do Takeshot" fica em Ajustes > Geral. Atalhos globais precisam de X11; no Wayland a captura passa pelo portal do sistema e os atalhos são do desktop: crie um que rode `takeshot --capture` (ou `takeshot --capture --full`).
 
 ## Compilar
 
@@ -75,7 +82,7 @@ cargo build --release
 
 No Windows o `rust-toolchain.toml` usa o toolchain MSVC. Em outros sistemas rode com `RUSTUP_TOOLCHAIN=stable cargo build --release`. No Linux instale antes: `libgtk-3-dev libxcb1-dev libxcb-randr0-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev`.
 
-`takeshot --screenshot saida.png` abre a janela, desenha 120 quadros e salva a imagem dela (usado na verificação automática). `takeshot --edit` abre o editor com uma imagem de exemplo.
+`takeshot --screenshot saida.png` abre a janela, desenha 120 quadros e salva a imagem dela (usado na verificação automática; não passa pela bandeja nem pela instância única). `takeshot --edit` abre o editor com uma imagem de exemplo. `takeshot --minimized` sobe só na bandeja.
 
 ## Licença
 

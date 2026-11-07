@@ -14,9 +14,9 @@ The redesign that introduces the two themes is in progress on `feat/redesign`. U
 |---|---|
 | `src/main.rs` | entry point: arguments, shared state, window modes |
 | `src/engine/` | drawing engine: annotations, objects, pointer policy, rendering, background presets |
-| `src/system/` | operating system and data: screen capture, clipboard and files, fonts, settings (tray, hotkeys and autostart join here) |
+| `src/system/` | operating system and data: screen capture and monitor work areas, clipboard and files, fonts, settings, and the resident's parts (`resident`, `tray`, `hotkeys`, `prtsc_hook`, `instance`, `autostart`, `recents`, `borderless`) |
 | `src/ui/` | design system: `assets` (embedded fonts and the icon font), `tokens` (colours per theme and mode), `i18n` (strings), `icon` (Lucide), `style` (egui visuals), `kit` (components), `brand` (icons and mark), `gallery` (all of it on one screen) |
-| `src/screens/` | current windows; the skins replace them screen by screen |
+| `src/screens/` | current windows, plus the resident's `shell` (main window, tray menu, About and close dialogs); the skins replace them screen by screen |
 | `src/skins/` | planned: `takeui/` and `coral/`, which only draw and call engine and system code |
 | `assets/` | embedded fonts with their licenses, and the brand SVG masters with the PNG, ICO and ICNS files generated from them |
 
@@ -39,12 +39,20 @@ Editor and capture share one behaviour, so both skins get it for free:
 - Screens route the pointer and keys through `Annotator::handle_canvas`, `handle_object_keys` and `handle_history_keys`, and set the pointer over the picture from `engine::cursor::pick` instead of picking icons by hand.
 - Each frame: `bake()` first (it returns annotations to render only when the picture is out of date), then the pointer, then `paint_selection`. During a drag only its start re-bakes, to take the dragged objects out, and `paint_selection` paints `painted_live()` until the drop re-bakes. A big capture never re-renders while a drag moves something; arrow nudges and Ctrl+D re-render once per press.
 
+## The resident
+
+`takeshot` with no arguments starts the resident: one process per user owns the tray icon, the global hotkeys and the main window, and a second launch only shows it. Captures, editors and pinned images run as their own processes (`--capture`, `--edit`, `--pin`).
+
+- Event sources (hotkeys, the PrtSc hook, the tray, a second launch) only send a `ResidentEvent` and request a repaint; `App::logic` drains them, so they act while no window is shown. On Windows and macOS the root viewport is an invisible host and the main window a child viewport; on Linux the root is the main window.
+- A capture whose selection is on screen holds `instance::CaptureSlot`; another `--capture` exits before grabbing the screen.
+- A borderless, rounded, transparent window on Windows needs `borderless::flatten_borderless`: egui-winit always asks winit for the undecorated shadow, which shows as a 1 px line across the top and a square shadow around the corners.
+
 ## Verify before calling work done
 
 1. `cargo fmt --check` prints nothing.
 2. `cargo clippy --all-targets -- -D warnings` finishes with zero warnings, pre-existing ones included.
 3. `mkdir -p shots` once (the folder is git-ignored), then `cargo test > shots/test.log 2>&1` and read the log. Send test output to a file and run one test command at a time: a pipe holds a hung run open.
-4. For visible changes, render the screens and compare them with the design file. `--screenshot out.png` saves the window after ~120 frames and works with every window: `takeshot --screenshot out.png` (main window), `takeshot --edit --screenshot out.png` (editor with a sample picture), `takeshot --capture --screenshot out.png` (capture overlay on a sample). `--lang en|pt|auto` applies everywhere; `--theme takeui|coral` and `--mode light|dark|system` reach only the component gallery (`--page componentes`, the only page) until the skins exist. None of them touches the saved settings. `scripts/screenshots.sh` renders the gallery in Portuguese in all four theme/mode combinations into `shots/` (build with `cargo build --release` first).
+4. For visible changes, render the screens and compare them with the design file. `--screenshot out.png` saves the window after ~120 frames and works with every window: `takeshot --screenshot out.png` (main window), `takeshot --edit --screenshot out.png` (editor with a sample picture), `takeshot --capture --screenshot out.png` (capture overlay on a sample). `takeshot` alone starts the resident (close a running one first); debug builds are console programs, so a script that launches one must redirect its output or the new console window takes the focus. `--lang en|pt|auto` applies everywhere; `--theme takeui|coral` and `--mode light|dark|system` reach only the component gallery (`--page componentes`, the only page) until the skins exist. None of them touches the saved settings. `scripts/screenshots.sh` renders the gallery in Portuguese in all four theme/mode combinations into `shots/` (build with `cargo build --release` first).
 
 ## Tools
 
