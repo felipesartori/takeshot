@@ -157,4 +157,101 @@ mod tests {
         assert!(effective_dark(UiMode::Dark, Some(egui::Theme::Light)));
         assert!(!effective_dark(UiMode::Light, Some(egui::Theme::Dark)));
     }
+
+    #[test]
+    fn system_mode_follows_a_dark_os() {
+        assert!(effective_dark(UiMode::System, Some(egui::Theme::Dark)));
+        assert!(effective_dark(UiMode::Dark, None));
+        assert!(!effective_dark(UiMode::Light, None));
+    }
+
+    /// Every cell of the spec table, copied as text from the plan (not from the code above).
+    /// Columns: TakeUI dark, TakeUI light, Coral dark, Coral light.
+    const SPEC: &[(&str, [&str; 4])] = &[
+        ("shell", ["#121212", "#F5F5F5", "#111111", "#F6F6F5"]),
+        ("surf", ["#1C1C1C", "#FFFFFF", "#1A1A1A", "#FFFFFF"]),
+        ("raised", ["#262626", "#F0F0F0", "#242424", "#F0F0EF"]),
+        ("hover", ["#2E2E2E", "#E8E8E8", "#2C2C2C", "#E8E8E7"]),
+        ("press", ["#363636", "#E0E0E0", "#343434", "#DFDFDE"]),
+        ("border", ["#333333", "#E5E5E5", "#2E2E2E", "#E4E4E2"]),
+        ("line", ["#2A2A2A", "#EDEDED", "#262626", "#EDEDEC"]),
+        ("text", ["#E5E5E5", "#171717", "#EDEDED", "#161616"]),
+        ("muted", ["#A3A3A3", "#5C5C5C", "#A1A1A1", "#5A5A5A"]),
+        ("faint", ["#737373", "#8F8F8F", "#707070", "#8C8C8C"]),
+        ("primary", ["#8D43B1", "#8D43B1", "#FF6B47", "#FF6B47"]),
+        (
+            "primary_hover",
+            ["#9A52BE", "#7E3BA0", "#FF805F", "#FF805F"],
+        ),
+        (
+            "primary_press",
+            ["#7B3A9C", "#6F348D", "#F0582F", "#F0582F"],
+        ),
+        ("on_primary", ["#FFFFFF", "#FFFFFF", "#1F0D07", "#1F0D07"]),
+        ("accent", ["#C79BE6", "#7A3A9E", "#FF8A66", "#C2410C"]),
+        ("tint", ["#2B2033", "#F4ECF9", "#33201A", "#FFEDE6"]),
+        ("green", ["#3FCC59", "#22A33F", "#3FCC59", "#22A33F"]),
+        ("warn", ["#F5A524", "#B45309", "#F5A524", "#B45309"]),
+        ("danger", ["#E5484D", "#DC2626", "#E5484D", "#DC2626"]),
+        ("track", ["#363636", "#E0E0E0", "#343434", "#DFDFDE"]),
+        ("input", ["#171717", "#FFFFFF", "#151515", "#FFFFFF"]),
+        ("seg_sel", ["#363636", "#FFFFFF", "#343434", "#FFFFFF"]),
+        ("tip_bg", ["#E5E5E5", "#171717", "#EDEDED", "#161616"]),
+        ("tip_text", ["#171717", "#FFFFFF", "#171717", "#FFFFFF"]),
+        ("canvas", ["#0E0E0E", "#EBEBEB", "#0C0C0C", "#E9E9E8"]),
+        ("title_bar", ["#121212", "#F5F5F5", "#202020", "#F3F3F3"]),
+    ];
+
+    fn field(t: &Tokens, name: &str) -> Color32 {
+        match name {
+            "shell" => t.shell,
+            "surf" => t.surf,
+            "raised" => t.raised,
+            "hover" => t.hover,
+            "press" => t.press,
+            "border" => t.border,
+            "line" => t.line,
+            "text" => t.text,
+            "muted" => t.muted,
+            "faint" => t.faint,
+            "primary" => t.primary,
+            "primary_hover" => t.primary_hover,
+            "primary_press" => t.primary_press,
+            "on_primary" => t.on_primary,
+            "accent" => t.accent,
+            "tint" => t.tint,
+            "green" => t.green,
+            "warn" => t.warn,
+            "danger" => t.danger,
+            "track" => t.track,
+            "input" => t.input,
+            "seg_sel" => t.seg_sel,
+            "tip_bg" => t.tip_bg,
+            "tip_text" => t.tip_text,
+            "canvas" => t.canvas,
+            "title_bar" => t.title_bar,
+            other => panic!("unknown token {other}"),
+        }
+    }
+
+    #[test]
+    fn every_cell_matches_the_spec_table() {
+        let combos = [
+            (ThemeId::TakeUi, true),
+            (ThemeId::TakeUi, false),
+            (ThemeId::Coral, true),
+            (ThemeId::Coral, false),
+        ];
+        for (col, (theme, dark)) in combos.into_iter().enumerate() {
+            let t = tokens(theme, dark);
+            assert_eq!((t.theme, t.dark, t.radius), (theme, dark, 8));
+            for (name, cells) in SPEC {
+                assert_eq!(
+                    field(&t, name),
+                    hex(cells[col]),
+                    "{name} em {theme:?} dark={dark}"
+                );
+            }
+        }
+    }
 }
