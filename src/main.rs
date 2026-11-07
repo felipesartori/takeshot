@@ -6,7 +6,9 @@
 //!   --capture [--full] [--delay S] [--wait] [--sample]   area capture overlay
 //!   --edit [file]          editor for a picture (a sample when no file)
 //!   --pin file             picture pinned on top of other windows
+//!   --page componentes     component gallery of the design system
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
+//!   --theme takeui|coral --mode light|dark --lang en|pt   override settings for this run only
 
 mod engine;
 mod screens;
@@ -48,6 +50,7 @@ enum Mode {
     Editor(Box<editor::Editor>),
     Pin(Box<pin::Pin>),
     Notice(Box<notice::Notice>),
+    Gallery(Box<ui::gallery::Gallery>),
 }
 
 enum Launch {
@@ -55,6 +58,7 @@ enum Launch {
     Capture { full: bool },
     Edit(Option<PathBuf>),
     Pin(PathBuf),
+    Gallery,
 }
 
 struct Args {
@@ -62,6 +66,9 @@ struct Args {
     screenshot: Option<PathBuf>,
     delay: f32,
     sample: bool,
+    theme: Option<ui::tokens::ThemeId>,
+    mode: Option<ui::tokens::UiMode>,
+    lang: Option<ui::i18n::LangPref>,
 }
 
 fn parse_args() -> Args {
@@ -70,6 +77,9 @@ fn parse_args() -> Args {
         screenshot: None,
         delay: 0.0,
         sample: false,
+        theme: None,
+        mode: None,
+        lang: None,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut full = false;
@@ -98,6 +108,37 @@ fn parse_args() -> Args {
                     i += 1;
                 }
                 a.launch = Launch::Edit(file);
+            }
+            "--theme" => {
+                a.theme = match v.get(i + 1).map(String::as_str) {
+                    Some("takeui") => Some(ui::tokens::ThemeId::TakeUi),
+                    Some("coral") => Some(ui::tokens::ThemeId::Coral),
+                    _ => None,
+                };
+                i += 1;
+            }
+            "--mode" => {
+                a.mode = match v.get(i + 1).map(String::as_str) {
+                    Some("light") => Some(ui::tokens::UiMode::Light),
+                    Some("dark") => Some(ui::tokens::UiMode::Dark),
+                    Some("system") => Some(ui::tokens::UiMode::System),
+                    _ => None,
+                };
+                i += 1;
+            }
+            "--lang" => {
+                a.lang = match v.get(i + 1).map(String::as_str) {
+                    Some("en") => Some(ui::i18n::LangPref::En),
+                    Some("pt") => Some(ui::i18n::LangPref::Pt),
+                    _ => None,
+                };
+                i += 1;
+            }
+            "--page" => {
+                if v.get(i + 1).map(String::as_str) == Some("componentes") {
+                    a.launch = Launch::Gallery;
+                }
+                i += 1;
             }
             "--pin" => {
                 if let Some(f) = v.get(i + 1) {
@@ -170,6 +211,17 @@ impl eframe::App for App {
             Mode::Editor(e) => e.ui(ui, frame, &mut self.shared),
             Mode::Pin(p) => p.ui(ui, frame, &mut self.shared),
             Mode::Notice(n) => n.ui(ui, frame, &mut self.shared),
+            Mode::Gallery(g) => {
+                let fill = g.tokens().shell;
+                egui::CentralPanel::no_frame()
+                    .frame(
+                        egui::Frame::new()
+                            .fill(fill)
+                            .inner_margin(egui::Margin::same(24)),
+                    )
+                    .show(ui, |ui| g.ui(ui));
+                Switch::None
+            }
         };
         match sw {
             Switch::ToEditor(e) => self.switch_to_editor(&ctx, e),
@@ -339,6 +391,11 @@ fn main() -> eframe::Result {
                 let _ = std::fs::remove_file(p);
             }
         }
+        (Launch::Gallery, _) => {
+            vp = vp
+                .with_title("Takeshot · componentes")
+                .with_inner_size([1280.0, 800.0]);
+        }
         _ => {
             vp = vp
                 .with_title("Takeshot")
@@ -362,6 +419,14 @@ fn main() -> eframe::Result {
             let fonts = Arc::new(fonts::FontLib::load());
             fonts.install(ctx);
             widgets::apply_theme(ctx);
+            // Theme, mode and language: command-line overrides win for this run only.
+            let theme = args.theme.unwrap_or(settings.ui_theme);
+            let ui_mode = args.mode.unwrap_or(settings.ui_mode);
+            let lang_pref = args.lang.unwrap_or(settings.lang);
+            ui::i18n::set_lang(ui::i18n::resolve(
+                lang_pref,
+                ui::i18n::system_locale().as_deref(),
+            ));
             let mut shared = Shared {
                 settings,
                 settings_dirty: false,
@@ -411,6 +476,9 @@ fn main() -> eframe::Result {
                     Some((img, size)) => Mode::Pin(Box::new(pin::Pin::new(img, size))),
                     None => Mode::Home(Box::new(home::Home::new(ctx, &shared, false))),
                 },
+                Launch::Gallery => Mode::Gallery(Box::new(ui::gallery::Gallery::new(
+                    ctx, theme, ui_mode, lang_pref,
+                ))),
                 Launch::Home => Mode::Home(Box::new(home::Home::new(
                     ctx,
                     &shared,
