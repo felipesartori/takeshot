@@ -28,8 +28,12 @@ build_and_run() {
   if cargo build --manifest-path "$root/Cargo.toml" >"$log" 2>&1; then
     exe="$CARGO_TARGET_DIR/debug/takeshot"
     [ -f "$exe.exe" ] && exe="$exe.exe"
+    # Windows locks a running executable, so the window runs a copy and the build stays free to replace the original.
+    run="$CARGO_TARGET_DIR/run/$(basename "$exe")"
     stop_app
-    "$exe" "$@" &
+    mkdir -p "$(dirname "$run")"
+    cp "$exe" "$run"
+    "$run" "$@" &
     pid=$!
     echo "[dev] $(date +%H:%M:%S) aberto: takeshot $*"
   else
