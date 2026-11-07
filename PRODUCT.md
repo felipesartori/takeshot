@@ -44,7 +44,7 @@ Instant capture with in-place annotation combined with a presentation editor (ba
 
 ## Evidence on Hand
 
-- Current UI screenshots: `docs/home.png`, `docs/editor.png`, `docs/capture.png` (anti-reference for the look; the flow is kept).
+- The interface before the redesign is the anti-reference for the look (the flow is kept); its screenshots are not kept in the repo. The redesigned screens are in `design/screens/` (exported from the `.fig`) and `docs/home.png`.
 - TakeFlow logo: `D:\Joseph\Desktop\DEV\takeflow\frontend\public\logo-takeflow.png`.
 - No Takeshot logo exists yet; no testimonials, user counts or benchmarks exist and none may be invented.
 

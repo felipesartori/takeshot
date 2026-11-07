@@ -2,7 +2,7 @@
 
 Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea com anotação e um editor para fundos, cantos arredondados, sombra e marca d'água.
 
-![Editor](docs/editor.png)
+![Início](docs/home.png)
 
 ## O que faz
 
@@ -38,6 +38,12 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 **Extras**
 - Fixar uma captura por cima das outras janelas (arrastar move, roda do mouse dá zoom, duplo clique fecha).
 - Arrastar uma imagem para a janela principal ou colar com `Ctrl+V` abre no editor.
+
+**Janela principal**
+- Início: as capturas da pasta em grade, com filtros (Todas, Hoje, Esta semana) e busca por nome. Passar o mouse num card mostra copiar, editar, mostrar na pasta e mandar para a lixeira; duplo clique abre no editor; o botão direito traz o mesmo menu.
+- Estilo: prévia ao vivo do fundo, da moldura e da marca d'água que vão em cada cópia, com o que acontece ao copiar ou salvar direto da captura.
+- Ajustes: inicialização, aparência, janela e bandeja, captura, pasta de salvar, atalhos (com "Alterar" para gravar teclas novas) e sobre.
+- Aparência: dois temas, TakeUI e Coral UI, em claro, escuro ou seguindo o sistema, trocados na hora em Ajustes > Geral > Aparência, assim como o idioma (Automático, English, Português). A lua e o sol na barra de título alternam entre claro e escuro.
 
 **Bandeja**
 - O Takeshot fica na área de notificação: os atalhos funcionam com a janela fechada. Abrir o programa de novo só traz a janela que já está rodando.
