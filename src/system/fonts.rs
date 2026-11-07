@@ -241,25 +241,73 @@ impl FontLib {
             );
             defs.families.insert(f.family.clone(), fam);
         }
+        // The system sans stays right behind Roboto as a fallback for characters Roboto lacks.
+        let mut fallback = defs
+            .families
+            .get(&egui::FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default();
         if let Some(i) = self.ui {
-            let key = format!("tk-{}", self.list[i].name);
-            if let Some(p) = defs.families.get_mut(&egui::FontFamily::Proportional) {
-                p.insert(0, key);
-            }
+            fallback.insert(0, format!("tk-{}", self.list[i].name));
         }
-        let bold_key = format!("tk-{}", self.list[self.bold].name);
-        let mut b = vec![bold_key];
-        b.extend(
-            defs.families
-                .get(&egui::FontFamily::Proportional)
-                .cloned()
-                .unwrap_or_default(),
-        );
-        defs.families
-            .insert(egui::FontFamily::Name("bold".into()), b);
+        use crate::ui::assets;
+        for (key, bytes) in [
+            (UI_REGULAR, assets::ROBOTO_REGULAR),
+            (UI_MEDIUM, assets::ROBOTO_MEDIUM),
+            (UI_BOLD, assets::ROBOTO_BOLD),
+            (UI_MONO, assets::ROBOTO_MONO_MEDIUM),
+            (UI_ICONS, assets::LUCIDE),
+            (UI_BRAND, assets::QUICKSAND_MEDIUM),
+        ] {
+            defs.font_data.insert(
+                key.to_string(),
+                Arc::new(egui::FontData::from_static(bytes)),
+            );
+        }
+        let with_fallback = |first: &[&str]| -> Vec<String> {
+            let mut v: Vec<String> = first.iter().map(|s| s.to_string()).collect();
+            v.extend(fallback.iter().cloned());
+            v
+        };
+        let system_bold = format!("tk-{}", self.list[self.bold].name);
+        let fams = [
+            (egui::FontFamily::Proportional, with_fallback(&[UI_REGULAR])),
+            (egui::FontFamily::Monospace, with_fallback(&[UI_MONO])),
+            (
+                egui::FontFamily::Name("medium".into()),
+                with_fallback(&[UI_MEDIUM]),
+            ),
+            (
+                egui::FontFamily::Name("bold".into()),
+                with_fallback(&[UI_BOLD, &system_bold]),
+            ),
+            (
+                egui::FontFamily::Name("mono".into()),
+                with_fallback(&[UI_MONO]),
+            ),
+            (
+                egui::FontFamily::Name("icons".into()),
+                vec![UI_ICONS.to_string()],
+            ),
+            (
+                egui::FontFamily::Name("brand".into()),
+                with_fallback(&[UI_BRAND]),
+            ),
+        ];
+        for (fam, list) in fams {
+            defs.families.insert(fam, list);
+        }
         ctx.set_fonts(defs);
     }
 }
+
+/// Font keys of the interface faces registered by `FontLib::install`.
+pub const UI_REGULAR: &str = "ui-regular";
+const UI_MEDIUM: &str = "ui-medium";
+const UI_BOLD: &str = "ui-bold";
+const UI_MONO: &str = "ui-mono";
+const UI_ICONS: &str = "ui-icons";
+const UI_BRAND: &str = "ui-brand";
 
 /// ab_glyph scale for a font size in pixels (the font's full height, as egui sizes fonts).
 pub fn px_scale(_font: &FontArc, size: f32) -> PxScale {
@@ -287,4 +335,31 @@ pub fn measure(font: &FontArc, size: f32, text: &str) -> (f32, f32) {
         w = w.max(x);
     }
     (w, sf.height() + line_h * (lines.max(1) - 1) as f32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installs_ui_families() {
+        let ctx = egui::Context::default();
+        FontLib::load().install(&ctx);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let defs = ctx.fonts(|f| f.definitions().clone());
+        assert_eq!(
+            defs.families[&egui::FontFamily::Proportional]
+                .first()
+                .map(String::as_str),
+            Some(UI_REGULAR)
+        );
+        for fam in ["medium", "bold", "mono", "icons", "brand"] {
+            assert!(
+                defs.families
+                    .contains_key(&egui::FontFamily::Name(fam.into())),
+                "família {fam} ausente"
+            );
+        }
+    }
 }

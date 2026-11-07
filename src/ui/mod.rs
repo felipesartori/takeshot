@@ -9,3 +9,5 @@ pub mod assets;
 pub mod tokens;
 
 pub mod i18n;
+pub mod icon;
+pub mod style;
