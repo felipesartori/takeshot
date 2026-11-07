@@ -2,24 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-/// The `n` newest PNG files in `dir` (by modification time, newest first); a missing or unreadable
-/// folder has none.
+/// The `n` newest images in `dir` (the library's listing); a missing or unreadable folder has none.
 pub fn recent_captures(dir: &Path, n: usize) -> Vec<PathBuf> {
-    let mut files: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|x| x.eq_ignore_ascii_case("png"))
-                })
-                .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
-                .collect()
-        })
-        .unwrap_or_default();
-    files.sort_by_key(|f| std::cmp::Reverse(f.1));
-    files.into_iter().take(n).map(|(p, _)| p).collect()
+    crate::system::library::scan(dir)
+        .into_iter()
+        .take(n)
+        .map(|e| e.path)
+        .collect()
 }
 
 /// How a recent capture is named in menus: "Today 14:32", "Yesterday 09:10", "05/11 18:00", or the
