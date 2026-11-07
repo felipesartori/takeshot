@@ -8,7 +8,7 @@
 //!   --pin file             picture pinned on top of other windows
 //!   --page componentes     component gallery of the design system
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
-//!   --theme takeui|coral --mode light|dark --lang en|pt   override settings for this run only
+//!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only
 
 mod engine;
 mod screens;

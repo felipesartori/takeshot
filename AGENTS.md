@@ -15,7 +15,7 @@ The redesign that introduces the two themes is in progress on `feat/redesign`. U
 | `src/main.rs` | entry point: arguments, shared state, window modes |
 | `src/engine/` | drawing engine: annotations, objects, pointer policy, rendering, background presets |
 | `src/system/` | operating system and data: screen capture, clipboard and files, fonts, settings (tray, hotkeys and autostart join here) |
-| `src/ui/` | design system: `tokens` (colours per theme and mode), `i18n` (strings), `icon` (Lucide), `style` (egui visuals), `kit` (components), `brand` (icons and mark), `gallery` (all of it on one screen) |
+| `src/ui/` | design system: `assets` (embedded fonts and the icon font), `tokens` (colours per theme and mode), `i18n` (strings), `icon` (Lucide), `style` (egui visuals), `kit` (components), `brand` (icons and mark), `gallery` (all of it on one screen) |
 | `src/screens/` | current windows; the skins replace them screen by screen |
 | `src/skins/` | planned: `takeui/` and `coral/`, which only draw and call engine and system code |
 | `assets/` | embedded fonts with their licenses, and the brand SVG masters with the PNG, ICO and ICNS files generated from them |
@@ -36,7 +36,7 @@ Every `.rs` file starts with a `//!` doc comment (after any crate attributes) st
 1. `cargo fmt --check` prints nothing.
 2. `cargo clippy --all-targets -- -D warnings` finishes with zero warnings, pre-existing ones included.
 3. `mkdir -p shots` once (the folder is git-ignored), then `cargo test > shots/test.log 2>&1` and read the log. Send test output to a file and run one test command at a time: a pipe holds a hung run open.
-4. For visible changes, render the screens and compare them with the design file. `takeshot --screenshot out.png` saves the window after ~120 frames; `--theme takeui|coral`, `--mode light|dark|system`, `--lang en|pt|auto` and `--page componentes` choose what it shows without touching the saved settings. `scripts/screenshots.sh` renders the component gallery in all four theme/mode combinations into `shots/` (build with `cargo build --release` first).
+4. For visible changes, render the screens and compare them with the design file. `--screenshot out.png` saves the window after ~120 frames and works with every window: `takeshot --screenshot out.png` (main window), `takeshot --edit --screenshot out.png` (editor with a sample picture), `takeshot --capture --screenshot out.png` (capture overlay on a sample). `--lang en|pt|auto` applies everywhere; `--theme takeui|coral` and `--mode light|dark|system` reach only the component gallery (`--page componentes`, the only page) until the skins exist. None of them touches the saved settings. `scripts/screenshots.sh` renders the gallery in Portuguese in all four theme/mode combinations into `shots/` (build with `cargo build --release` first).
 
 ## Tools
 
