@@ -210,6 +210,19 @@ fn parse_args() -> Args {
     a
 }
 
+/// The main window's state, on the page `--page` named (Início otherwise).
+fn main_home(
+    ctx: &egui::Context,
+    shared: &Shared,
+    page: Option<system::instance::Page>,
+) -> home::Home {
+    let mut h = home::Home::new(ctx, shared);
+    if let Some(p) = page {
+        h.open(p);
+    }
+    h
+}
+
 /// Reports a flag value the app does not know, so a typo never yields a silent fallback.
 fn unknown_value<T>(flag: &str, value: Option<&str>) -> Option<T> {
     eprintln!("takeshot: unknown value {value:?} for {flag}; using the saved setting");
@@ -650,23 +663,13 @@ fn main() -> eframe::Result {
                     let resident =
                         system::resident::Resident::start(ctx, &shared.settings, listener.take());
                     let shell = screens::shell::Shell::new(screens::shell::HOSTED, !args.minimized);
-                    let mut home = home::Home::new(ctx, &shared);
-                    if let Some(p) = args.page {
-                        home.open(p);
-                    }
                     Mode::Resident {
-                        home: Box::new(home),
+                        home: Box::new(main_home(ctx, &shared, args.page)),
                         shell: Box::new(shell),
                         resident: Box::new(resident),
                     }
                 }
-                Launch::Home => {
-                    let mut home = home::Home::new(ctx, &shared);
-                    if let Some(p) = args.page {
-                        home.open(p);
-                    }
-                    Mode::Home(Box::new(home))
-                }
+                Launch::Home => Mode::Home(Box::new(main_home(ctx, &shared, args.page))),
             };
             Ok(Box::new(App {
                 mode,
@@ -752,6 +755,23 @@ mod tests {
         assert!(!s.tokens(Some(egui::Theme::Light)).dark);
         assert!(s.tokens(Some(egui::Theme::Dark)).dark);
         assert!(s.tokens(None).dark, "unknown: dark");
+    }
+
+    #[test]
+    fn page_opens_the_main_window_on_it() {
+        use system::instance::Page;
+        let ctx = egui::Context::default();
+        let mut s = shared(ThemeId::TakeUi, UiMode::Dark);
+        s.settings.save_dir = std::env::temp_dir()
+            .join("takeshot-test-no-captures")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(main_home(&ctx, &s, Some(Page::Style)).page(), Page::Style);
+        assert_eq!(
+            main_home(&ctx, &s, Some(Page::Settings)).page(),
+            Page::Settings
+        );
+        assert_eq!(main_home(&ctx, &s, None).page(), Page::Start);
     }
 
     #[test]

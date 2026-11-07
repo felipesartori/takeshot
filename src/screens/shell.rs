@@ -17,7 +17,7 @@ use crate::system::resident::{
 use crate::system::tray::{TrayAction, TrayEntry, TrayEvent, tray_entries};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, BtnKind};
-use crate::ui::tokens::{Tokens, effective_dark};
+use crate::ui::tokens::Tokens;
 use crate::{Shared, Switch};
 use egui::{ViewportCommand as Cmd, ViewportId};
 use std::path::PathBuf;
@@ -292,7 +292,7 @@ impl Shell {
         }
         if self.hosted {
             if self.main_open {
-                let theme = shared.settings.ui_theme;
+                let theme = shared.tokens(ctx.system_theme()).theme;
                 if self.icon.as_ref().is_none_or(|(t, _)| *t != theme) {
                     self.icon = Some((theme, Arc::new(crate::ui::brand::window_icon(theme))));
                 }
@@ -410,10 +410,7 @@ impl Shell {
             }
         }
         if self.about {
-            let look = (
-                shared.settings.ui_theme,
-                effective_dark(shared.settings.ui_mode, ctx.system_theme()),
-            );
+            let look = (t.theme, t.dark);
             if self.mark.as_ref().is_none_or(|(l, _)| *l != look) {
                 self.mark = Some((look, crate::ui::brand::mark_texture(ctx, look.0, look.1)));
             }

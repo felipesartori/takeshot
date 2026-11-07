@@ -81,6 +81,17 @@ impl Home {
         }
     }
 
+    /// The page on screen (About is a dialog, never a page).
+    #[allow(dead_code)] // The TakeUI page pills read it from plan 5, Task 4.
+    pub fn page(&self) -> crate::system::instance::Page {
+        use crate::system::instance::Page as P;
+        match self.page {
+            Page::Start => P::Start,
+            Page::Style => P::Style,
+            Page::Settings => P::Settings,
+        }
+    }
+
     /// The gallery thumbnail of a capture, when Home has one (the tray menu shows it).
     pub fn thumbnail(&self, path: &std::path::Path) -> Option<egui::TextureId> {
         self.recents
