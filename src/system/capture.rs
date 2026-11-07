@@ -307,11 +307,10 @@ pub fn work_area(_p: egui::Pos2) -> Option<egui::Rect> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[cfg(windows)]
     #[test]
     fn the_work_area_is_part_of_the_nearest_monitor() {
+        use super::work_area;
         // Any point, even far off screen, gets the nearest monitor and its area without the taskbar.
         for p in [egui::pos2(0.0, 0.0), egui::pos2(-10000.0, -10000.0)] {
             let r = work_area(p).expect("a monitor");
