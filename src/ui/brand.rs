@@ -69,7 +69,6 @@ pub fn mark_texture(ctx: &egui::Context, theme: ThemeId, dark: bool) -> egui::Te
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::tokens::ThemeId;
 
     #[test]
     fn ico_has_all_sizes() {
@@ -80,12 +79,28 @@ mod tests {
         assert_eq!(sizes, vec![16, 20, 24, 32, 40, 48, 64, 256]);
     }
 
+    /// RGB of pixel (x, y) in a straight-alpha RGBA buffer `width` pixels wide.
+    fn rgb_at(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 3] {
+        let i = ((y * width + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    }
+
+    fn near(got: [u8; 3], want: [u8; 3]) -> bool {
+        got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= 3)
+    }
+
     #[test]
-    fn window_icon_is_256() {
-        for th in [ThemeId::TakeUi, ThemeId::Coral] {
+    fn window_icon_is_the_theme_icon() {
+        // (128, 20) is plain background above the glyph: TakeUI #733FA2, Coral #FF6B47.
+        for (th, bg) in [
+            (ThemeId::TakeUi, [0x73, 0x3F, 0xA2]),
+            (ThemeId::Coral, [0xFF, 0x6B, 0x47]),
+        ] {
             let i = window_icon(th);
             assert_eq!((i.width, i.height), (256, 256));
             assert_eq!(i.rgba.len(), 256 * 256 * 4);
+            let got = rgb_at(&i.rgba, 256, 128, 20);
+            assert!(near(got, bg), "{th:?}: background {got:?}, want {bg:?}");
         }
     }
 
@@ -94,20 +109,28 @@ mod tests {
         for th in [ThemeId::TakeUi, ThemeId::Coral] {
             for dark in [true, false] {
                 for size in [16, 20, 24, 32] {
+                    let cell = format!("{th:?} dark={dark} {size}px");
                     let (rgba, w, h) = tray_rgba(th, dark, size);
-                    assert_eq!((w, h), (size, size));
-                    assert_eq!(rgba.len() as u32, size * size * 4);
+                    assert_eq!((w, h), (size, size), "{cell}");
+                    assert_eq!(rgba.len() as u32, size * size * 4, "{cell}");
+                    // A dark taskbar gets a white glyph, a light one a near-black glyph.
+                    let red = rgba
+                        .chunks(4)
+                        .filter(|p| p[3] > 200)
+                        .map(|p| p[0])
+                        .max()
+                        .unwrap();
+                    if dark {
+                        assert!(red > 240, "{cell}: brightest red {red}");
+                    } else {
+                        assert!(red < 60, "{cell}: brightest red {red}");
+                    }
+                    // The centre is TakeUI's green dot or Coral's neutral square.
+                    let [r, g, b] = rgb_at(&rgba, w, size / 2, size / 2);
+                    let green = g > r.saturating_add(40) && g > b.saturating_add(40);
+                    assert_eq!(green, th == ThemeId::TakeUi, "{cell}: centre {r},{g},{b}");
                 }
             }
         }
-        // A dark taskbar gets a light glyph: its brightest opaque pixel is near white.
-        let (rgba, _, _) = tray_rgba(ThemeId::Coral, true, 32);
-        let max = rgba
-            .chunks(4)
-            .filter(|p| p[3] > 200)
-            .map(|p| p[0])
-            .max()
-            .unwrap();
-        assert!(max > 240);
     }
 }
