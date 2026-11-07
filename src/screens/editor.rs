@@ -1,6 +1,7 @@
 //! Editor: the captured picture on a styled background, with drawing tools and export.
 
 use crate::engine::annotator::{Annotator, View};
+use crate::engine::doc::Doc;
 use crate::engine::model::*;
 use crate::engine::render::{self, Layout};
 use crate::screens::icons::Icon;
@@ -27,8 +28,9 @@ pub struct Editor {
 impl Editor {
     pub fn new(_ctx: &egui::Context, base: RgbaImage, anns: Vec<Ann>, shared: &Shared) -> Self {
         let mut an = Annotator::new(shared.settings.draw.last_tool);
-        an.anns = anns;
-        let annotated = render::render_annotations(&base, &an.anns, &shared.fonts);
+        an.doc = Doc::from_anns(anns);
+        let first = an.bake().unwrap_or_default();
+        let annotated = render::render_annotations(&base, &first, &shared.fonts);
         Self {
             base,
             annotated,
@@ -113,9 +115,8 @@ impl Editor {
 
     pub fn ui(&mut self, ui: &mut Ui, frame: &eframe::Frame, shared: &mut Shared) -> Switch {
         let ctx = ui.ctx().clone();
-        if self.an.changed {
-            self.an.changed = false;
-            self.annotated = render::render_annotations(&self.base, &self.an.anns, &shared.fonts);
+        if let Some(anns) = self.an.bake() {
+            self.annotated = render::render_annotations(&self.base, &anns, &shared.fonts);
             self.preview_src = None;
             self.preview_dirty = true;
         }
@@ -390,9 +391,8 @@ impl Editor {
     }
 
     fn sync_now(&mut self, shared: &Shared) {
-        if self.an.changed {
-            self.an.changed = false;
-            self.annotated = render::render_annotations(&self.base, &self.an.anns, &shared.fonts);
+        if let Some(anns) = self.an.bake() {
+            self.annotated = render::render_annotations(&self.base, &anns, &shared.fonts);
             self.preview_src = None;
             self.preview_dirty = true;
         }

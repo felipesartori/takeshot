@@ -1,6 +1,7 @@
 //! Capture overlay: the frozen screen, area selection, drawing tools and quick actions.
 
 use crate::engine::annotator::{Annotator, View};
+use crate::engine::doc::Doc;
 use crate::engine::model::*;
 use crate::screens::editor::Editor;
 use crate::screens::icons::Icon;
@@ -81,13 +82,12 @@ impl Overlay {
     /// Sample state for screenshots: an area already chosen and a mark on it.
     pub fn demo(mut self) -> Self {
         self.sel = Some(Rect::from_min_size(pos2(304.0, 153.0), vec2(992.0, 540.0)));
-        self.an.anns.push(Ann {
+        self.an.doc = Doc::from_anns(vec![Ann {
             shape: Shape::Ellipse(pos2(700.0, 230.0), pos2(1000.0, 330.0)),
             color: DEFAULT_COLOR,
             width: DEFAULT_WIDTH,
             filled: false,
-        });
-        self.an.changed = true;
+        }]);
         self.an.tool = Tool::Arrow;
         self
     }
@@ -141,7 +141,7 @@ impl Overlay {
             .min(self.shot.image.height().saturating_sub(y))
             .max(1);
         let base = image::imageops::crop_imm(&self.shot.image, x, y, w, h).to_image();
-        let mut anns = std::mem::take(&mut self.an.anns);
+        let mut anns = self.an.doc.visible_anns(&[]);
         for a in &mut anns {
             a.translate(-vec2(x as f32, y as f32));
         }
@@ -164,13 +164,9 @@ impl Overlay {
         let opts_snapshot = shared.settings.draw.clone();
 
         // ---------------- baked picture
-        if self.an.changed {
-            self.an.changed = false;
-            self.baked = crate::engine::render::render_annotations(
-                &self.shot.image,
-                &self.an.anns,
-                &shared.fonts,
-            );
+        if let Some(anns) = self.an.bake() {
+            self.baked =
+                crate::engine::render::render_annotations(&self.shot.image, &anns, &shared.fonts);
             self.tex
                 .set(color_image(&self.baked), egui::TextureOptions::NEAREST);
         }
@@ -753,13 +749,9 @@ impl Overlay {
 
     /// Bake pending changes right away (actions can't wait for the next frame).
     fn flush(&mut self, shared: &Shared) {
-        if self.an.changed {
-            self.an.changed = false;
-            self.baked = crate::engine::render::render_annotations(
-                &self.shot.image,
-                &self.an.anns,
-                &shared.fonts,
-            );
+        if let Some(anns) = self.an.bake() {
+            self.baked =
+                crate::engine::render::render_annotations(&self.shot.image, &anns, &shared.fonts);
         }
     }
 }
