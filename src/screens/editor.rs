@@ -28,8 +28,7 @@ pub struct Editor {
 
 impl Editor {
     pub fn new(_ctx: &egui::Context, base: RgbaImage, anns: Vec<Ann>, shared: &Shared) -> Self {
-        let mut an = Annotator::new(shared.settings.draw.last_tool);
-        an.doc = Doc::from_anns(anns);
+        let mut an = Annotator::with_doc(shared.settings.draw.last_tool, Doc::from_anns(anns));
         let first = an.bake().unwrap_or_default();
         let annotated = render::render_annotations(&base, &first, &shared.fonts);
         Self {

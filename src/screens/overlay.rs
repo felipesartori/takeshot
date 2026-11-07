@@ -82,13 +82,13 @@ impl Overlay {
     /// Sample state for screenshots: an area already chosen and a mark on it.
     pub fn demo(mut self) -> Self {
         self.sel = Some(Rect::from_min_size(pos2(304.0, 153.0), vec2(992.0, 540.0)));
-        self.an.doc = Doc::from_anns(vec![Ann {
+        let doc = Doc::from_anns(vec![Ann {
             shape: Shape::Ellipse(pos2(700.0, 230.0), pos2(1000.0, 330.0)),
             color: DEFAULT_COLOR,
             width: DEFAULT_WIDTH,
             filled: false,
         }]);
-        self.an.tool = Tool::Arrow;
+        self.an = Annotator::with_doc(Tool::Arrow, doc);
         self
     }
 

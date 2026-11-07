@@ -63,9 +63,17 @@ pub struct Annotator {
 }
 
 impl Annotator {
+    /// An empty picture: the untouched screenshot is already the baked picture.
     pub fn new(tool: Tool) -> Self {
+        let mut an = Self::with_doc(tool, Doc::new());
+        an.baked = Some((an.doc.revision(), Vec::new()));
+        an
+    }
+
+    /// A picture that arrives with objects; the first `bake` renders them.
+    pub fn with_doc(tool: Tool, doc: Doc) -> Self {
         Self {
-            doc: Doc::new(),
+            doc,
             tool,
             live: None,
             start: None,
@@ -109,6 +117,7 @@ impl Annotator {
 
     /// The annotations to render when the baked picture is out of date, once per change.
     /// During a drag only its start re-bakes, to take the dragged objects out; moves are painted live.
+    /// `Some` marks the picture as up to date, so the caller must render what it returns.
     pub fn bake(&mut self) -> Option<Vec<Ann>> {
         let excluded = self.excluded_from_bake();
         let rev = self.doc.revision();
@@ -122,6 +131,14 @@ impl Annotator {
         let anns = self.doc.visible_anns(&excluded);
         self.baked = Some((rev, excluded));
         Some(anns)
+    }
+
+    /// The objects the last baked picture left out, which `paint_selection` paints live. It follows the
+    /// bake, not the drag, so an object is never shown twice or missing on the frames a drag starts or ends.
+    pub fn painted_live(&self) -> &[ObjId] {
+        self.baked
+            .as_ref()
+            .map_or(&[], |(_, left_out)| left_out.as_slice())
     }
 
     pub fn commit_draft(&mut self, opts: &DrawOpts) {
@@ -605,8 +622,8 @@ impl Annotator {
         fonts: &FontLib,
         m: TextMeasure,
     ) {
-        let excluded = self.excluded_from_bake();
-        for o in self.doc.objs().iter().filter(|o| excluded.contains(&o.id)) {
+        let live = self.painted_live();
+        for o in self.doc.objs().iter().filter(|o| live.contains(&o.id)) {
             paint_ann(painter, view, &o.ann, fonts);
         }
         let ring = Stroke::new(2.0, t.primary);
@@ -864,6 +881,7 @@ mod tests {
         outcome: SelectOutcome,
         excluded: Vec<ObjId>,
         baked: bool,
+        live: Vec<ObjId>,
     }
 
     fn drive(
@@ -907,12 +925,15 @@ mod tests {
                 ..Default::default()
             };
             let mut full = ctx.run_ui(input, |ui| {
+                // The screens bake first, then handle the pointer, then paint.
+                let baked = an.bake().is_some();
                 let resp = canvas(ui);
                 let outcome = an.handle_select_pointer(ui, &resp, &VIEW, &m, opts);
                 out.push(Frame {
                     outcome,
                     excluded: an.excluded_from_bake(),
-                    baked: an.bake().is_some(),
+                    baked,
+                    live: an.painted_live().to_vec(),
                 });
             });
             full.textures_delta.clear();
@@ -921,8 +942,7 @@ mod tests {
     }
 
     fn with(tool: Tool, anns: Vec<Ann>) -> (Annotator, Vec<ObjId>) {
-        let mut an = Annotator::new(tool);
-        an.doc = Doc::from_anns(anns);
+        let an = Annotator::with_doc(tool, Doc::from_anns(anns));
         let ids = an.doc.objs().iter().map(|o| o.id).collect();
         (an, ids)
     }
@@ -953,17 +973,53 @@ mod tests {
                 .iter()
                 .all(|f| f.outcome == SelectOutcome::Consumed)
         );
-        assert_eq!(
-            frames[3].excluded, ids,
-            "the dragged object is painted live"
-        );
+        assert_eq!(frames[3].excluded, ids);
         assert!(frames[6].excluded.is_empty());
         let baked: Vec<bool> = frames.iter().map(|f| f.baked).collect();
-        assert_eq!(baked, vec![true, true, false, false, false, true, false]);
+        assert_eq!(baked, vec![true, false, true, false, false, false, true]);
+        // Painted live exactly while the baked picture leaves it out: never twice, never missing.
+        let live: Vec<bool> = frames.iter().map(|f| f.live == ids).collect();
+        assert_eq!(live, vec![false, false, true, true, true, true, false]);
+        assert!(frames[6].live.is_empty());
         assert!((bounds(&an, ids[0]).min.x - (before.min.x + 300.0)).abs() < 0.01);
         assert!(an.dragging.is_none());
         an.undo();
         assert!((bounds(&an, ids[0]).min.x - before.min.x).abs() < 0.01);
+    }
+
+    #[test]
+    fn dragging_one_of_a_multi_selection_moves_all_and_a_click_picks_one() {
+        let (mut an, ids) = with(
+            Tool::Select,
+            vec![
+                rect_ann((0.0, 0.0), (100.0, 100.0), true),
+                rect_ann((200.0, 0.0), (300.0, 100.0), true),
+            ],
+        );
+        an.doc.select(Some(ids[0]), false);
+        an.doc.select(Some(ids[1]), true);
+        let (a, b) = (bounds(&an, ids[0]).min, bounds(&an, ids[1]).min);
+        let mut opts = DrawOpts::default();
+        drive(
+            &mut an,
+            &mut opts,
+            drag(pos2(250.0, 50.0), &[pos2(260.0, 50.0), pos2(250.0, 90.0)]),
+            false,
+        );
+        assert_eq!(an.doc.selected(), &[ids[0], ids[1]]);
+        assert!(bounds(&an, ids[0]).min.distance(a + vec2(0.0, 40.0)) < 0.01);
+        assert!(bounds(&an, ids[1]).min.distance(b + vec2(0.0, 40.0)) < 0.01);
+        drive(&mut an, &mut opts, click(pos2(250.0, 90.0)), false);
+        assert_eq!(an.doc.selected(), &[ids[1]]);
+    }
+
+    #[test]
+    fn a_new_empty_annotator_needs_no_bake_but_a_loaded_one_does() {
+        assert!(Annotator::new(Tool::Select).bake().is_none());
+        let doc = Doc::from_anns(vec![rect_ann((0.0, 0.0), (10.0, 10.0), true)]);
+        let mut an = Annotator::with_doc(Tool::Select, doc);
+        assert_eq!(an.bake().map(|a| a.len()), Some(1));
+        assert!(an.bake().is_none());
     }
 
     #[test]
@@ -1152,6 +1208,9 @@ mod tests {
         );
         an.doc.select(Some(ids[1]), false);
         an.dragging = Some(Drag::Move { last: Pos2::ZERO });
+        // Until the bake takes the dragged text out, the baked picture still shows it.
+        assert!(paint(&an).1.is_empty(), "painted twice before the bake");
+        assert!(an.bake().is_some());
         let (_, texts) = paint(&an);
         assert_eq!(texts, vec!["hi".to_owned()]);
     }
