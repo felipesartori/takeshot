@@ -15,6 +15,41 @@ use crate::{Shared, Switch};
 use egui::{Color32, Key, Modifiers, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
 
+/// The answers of the "Discard changes?" dialog.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CloseChoice {
+    Discard,
+    Cancel,
+    CopyAndClose,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CloseStep {
+    Close,
+    Stay,
+}
+
+/// Whether a close request from the window must be held back to ask first. Once the user chose to
+/// close (`closing`), the final request goes through.
+fn hold_close(requested: bool, closing: bool, unsaved: bool) -> bool {
+    requested && !closing && unsaved
+}
+
+/// Edits that were not copied or saved: object changes since the last export, or text being typed.
+fn unsaved_edits(an: &Annotator, saved_rev: Option<u64>) -> bool {
+    saved_rev != Some(an.doc.revision()) || an.draft.as_ref().is_some_and(|d| !d.text.is_empty())
+}
+
+/// What an answer does; `copy` runs only for Copy and close, which closes only when it worked.
+fn after_answer(answer: CloseChoice, copy: impl FnOnce() -> bool) -> CloseStep {
+    match answer {
+        CloseChoice::Discard => CloseStep::Close,
+        CloseChoice::Cancel => CloseStep::Stay,
+        CloseChoice::CopyAndClose if copy() => CloseStep::Close,
+        CloseChoice::CopyAndClose => CloseStep::Stay,
+    }
+}
+
 pub struct Editor {
     base: RgbaImage,
     annotated: RgbaImage,
@@ -57,10 +92,13 @@ impl Editor {
         }
     }
 
-    /// Edits that were not copied or saved: object changes since the last export, or text being typed.
     fn unsaved(&self) -> bool {
-        self.saved_rev != Some(self.an.doc.revision())
-            || self.an.draft.as_ref().is_some_and(|d| !d.text.is_empty())
+        unsaved_edits(&self.an, self.saved_rev)
+    }
+
+    /// Lets the next close through without asking (the screenshot self-check closes on its own).
+    pub fn force_close(&mut self) {
+        self.closing = true;
     }
 
     /// Closing asks first when there are unsaved edits; otherwise it closes.
@@ -145,7 +183,11 @@ impl Editor {
     pub fn ui(&mut self, ui: &mut Ui, frame: &eframe::Frame, shared: &mut Shared) -> Switch {
         let ctx = ui.ctx().clone();
         // The window X: keep the window open and ask when there are unsaved edits.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.closing && self.unsaved() {
+        if hold_close(
+            ctx.input(|i| i.viewport().close_requested()),
+            self.closing,
+            self.unsaved(),
+        ) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.asking_close = true;
         }
@@ -413,27 +455,22 @@ impl Editor {
                 t(Msg::DiscardTitle),
                 t(Msg::DiscardBody),
                 &[
-                    (t(Msg::Discard), BtnKind::Danger),
-                    (t(Msg::Cancel), BtnKind::Secondary),
-                    (t(Msg::CopyAndClose), BtnKind::Primary),
+                    (t(Msg::Discard), BtnKind::Danger, CloseChoice::Discard),
+                    (t(Msg::Cancel), BtnKind::Secondary, CloseChoice::Cancel),
+                    (
+                        t(Msg::CopyAndClose),
+                        BtnKind::Primary,
+                        CloseChoice::CopyAndClose,
+                    ),
                 ],
-                1,
+                CloseChoice::Cancel,
             );
-            match answer {
-                Some(0) => {
-                    self.asking_close = false;
+            if let Some(choice) = answer {
+                self.asking_close = false;
+                if after_answer(choice, || self.copy(shared)) == CloseStep::Close {
                     self.closing = true;
                     switch = Switch::Close;
                 }
-                Some(2) => {
-                    self.asking_close = false;
-                    if self.copy(shared) {
-                        self.closing = true;
-                        switch = Switch::Close;
-                    }
-                }
-                Some(_) => self.asking_close = false,
-                None => {}
             }
         }
         switch
@@ -513,5 +550,73 @@ fn checker(p: &egui::Painter, r: Rect) {
                 p.rect_filled(cell, 0.0, Color32::from_gray(66));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::annotator::TextDraft;
+
+    #[test]
+    fn the_window_x_is_held_only_for_unsaved_edits_and_not_when_closing() {
+        assert!(hold_close(true, false, true));
+        assert!(
+            !hold_close(true, true, true),
+            "the final close must go through"
+        );
+        assert!(!hold_close(true, false, false));
+        assert!(!hold_close(false, false, true));
+    }
+
+    #[test]
+    fn typed_text_and_object_changes_count_as_unsaved() {
+        let mut an = Annotator::with_doc(Tool::Select, Doc::new());
+        let saved = Some(an.doc.revision());
+        assert!(!unsaved_edits(&an, saved));
+        assert!(unsaved_edits(&an, None), "never exported");
+        an.draft = Some(TextDraft {
+            pos: pos2(0.0, 0.0),
+            text: "hi".into(),
+            started: 0.0,
+        });
+        assert!(unsaved_edits(&an, saved), "text being typed");
+        an.draft = None;
+        an.commit(Ann {
+            shape: Shape::Rect(pos2(0.0, 0.0), pos2(50.0, 50.0)),
+            color: [255, 0, 0, 255],
+            width: 3.0,
+            filled: false,
+        });
+        assert!(unsaved_edits(&an, saved), "an object was added");
+    }
+
+    #[test]
+    fn copy_and_close_closes_only_when_the_copy_worked() {
+        let copies = std::cell::Cell::new(0);
+        let copy = |ok: bool| {
+            let copies = &copies;
+            move || {
+                copies.set(copies.get() + 1);
+                ok
+            }
+        };
+        assert_eq!(
+            after_answer(CloseChoice::Discard, copy(true)),
+            CloseStep::Close
+        );
+        assert_eq!(
+            after_answer(CloseChoice::Cancel, copy(true)),
+            CloseStep::Stay
+        );
+        assert_eq!(
+            after_answer(CloseChoice::CopyAndClose, copy(true)),
+            CloseStep::Close
+        );
+        assert_eq!(
+            after_answer(CloseChoice::CopyAndClose, copy(false)),
+            CloseStep::Stay
+        );
+        assert_eq!(copies.get(), 2, "only Copy and close copies");
     }
 }

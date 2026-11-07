@@ -459,17 +459,17 @@ pub fn text_field(
     resp
 }
 
-/// A modal question: title, a short explanation and a row of buttons. Returns the index of the
+/// A modal question: title, a short explanation and a row of buttons. Returns the value of the
 /// button pressed this frame; Esc or a click outside the dialog answers with `cancel`.
-pub fn confirm_dialog(
+pub fn confirm_dialog<T: Copy>(
     ctx: &egui::Context,
     t: &Tokens,
     id: &str,
     title: &str,
     body: &str,
-    buttons: &[(&str, BtnKind)],
-    cancel: usize,
-) -> Option<usize> {
+    buttons: &[(&str, BtnKind, T)],
+    cancel: T,
+) -> Option<T> {
     let mut chosen = None;
     let modal = egui::Modal::new(egui::Id::unique(id))
         .frame(
@@ -495,9 +495,9 @@ pub fn confirm_dialog(
             ui.add_space(18.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                for (i, (label, kind)) in buttons.iter().enumerate() {
+                for (label, kind, value) in buttons {
                     if button(ui, t, *kind, None, label, None).clicked() {
-                        chosen = Some(i);
+                        chosen = Some(*value);
                     }
                 }
             });
@@ -804,9 +804,9 @@ mod tests {
     fn confirm_dialog_answers_with_the_clicked_button_or_cancel() {
         let t = tokens(ThemeId::TakeUi, true);
         let buttons = [
-            ("Discard", BtnKind::Danger),
-            ("Cancel", BtnKind::Secondary),
-            ("Copy and close", BtnKind::Primary),
+            ("Discard", BtnKind::Danger, 'd'),
+            ("Cancel", BtnKind::Secondary, 'c'),
+            ("Copy and close", BtnKind::Primary, 'k'),
         ];
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         let run = |events: Vec<Vec<egui::Event>>| {
@@ -830,7 +830,7 @@ mod tests {
                         "Discard changes?",
                         "This picture has edits.",
                         &buttons,
-                        1,
+                        'c',
                     ));
                 });
                 full.textures_delta.clear();
@@ -842,23 +842,25 @@ mod tests {
         let (answers, painted) = run(vec![vec![]]);
         assert_eq!(answers, vec![None, None]);
         assert!(painted.iter().any(|(s, _)| s == "Discard changes?"));
-        let at = painted
-            .iter()
-            .find(|(s, _)| s == "Copy and close")
-            .map(|(_, r)| r.center())
-            .expect("button label painted");
-        let press = |down: bool| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed: down,
-            modifiers: egui::Modifiers::NONE,
-        };
-        let (answers, _) = run(vec![
-            vec![egui::Event::PointerMoved(at)],
-            vec![press(true)],
-            vec![press(false)],
-        ]);
-        assert_eq!(answers.last(), Some(&Some(2)), "{answers:?}");
+        for (label, value) in [("Copy and close", 'k'), ("Discard", 'd')] {
+            let at = painted
+                .iter()
+                .find(|(s, _)| s == label)
+                .map(|(_, r)| r.center())
+                .expect("button label painted");
+            let press = |down: bool| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: down,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let (answers, _) = run(vec![
+                vec![egui::Event::PointerMoved(at)],
+                vec![press(true)],
+                vec![press(false)],
+            ]);
+            assert_eq!(answers.last(), Some(&Some(value)), "{label}: {answers:?}");
+        }
         let (answers, _) = run(vec![vec![egui::Event::Key {
             key: egui::Key::Escape,
             physical_key: None,
@@ -866,7 +868,7 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }]]);
-        assert_eq!(answers.last(), Some(&Some(1)), "Esc answers with cancel");
+        assert_eq!(answers.last(), Some(&Some('c')), "Esc answers with cancel");
     }
 
     #[test]

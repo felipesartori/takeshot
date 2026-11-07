@@ -284,6 +284,10 @@ impl eframe::App for App {
                 });
             }
             if self.shot_saved.load(Ordering::SeqCst) || self.frames > 600 {
+                // A sample editor opens with marks, so it would ask before closing.
+                if let Mode::Editor(e) = &mut self.mode {
+                    e.force_close();
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
