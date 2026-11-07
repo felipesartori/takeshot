@@ -35,7 +35,7 @@ jobs:
       - name: Rust
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
           if [ "${{ runner.os }}" = "macOS" ]; then rustup target add x86_64-apple-darwin aarch64-apple-darwin --toolchain stable; fi
 
       - name: Linux libraries
@@ -49,11 +49,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # bash stops at the first failing command; the Windows default (pwsh) only checks the last one.
       - name: Lint and test
-        if: runner.os == 'Linux'
+        shell: bash
         run: |
+          cargo fmt --check
           cargo clippy --all-targets -- -D warnings
-          cargo test --release
+          cargo test
 
       - name: Build (Windows / Linux)
         if: runner.os != 'macOS'
