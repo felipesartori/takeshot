@@ -5,9 +5,14 @@ use auto_launch::{AutoLaunch, AutoLaunchBuilder};
 /// The login entry for this executable; nothing changes on the system until `set_autostart`.
 pub fn autostart() -> Result<AutoLaunch, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // The Run value is "path args": quote the path, which may have spaces ("C:\\Program Files").
+    #[cfg(windows)]
+    let path = format!("\"{}\"", exe.display());
+    #[cfg(not(windows))]
+    let path = exe.to_string_lossy().into_owned();
     let mut b = AutoLaunchBuilder::new();
     b.set_app_name("Takeshot")
-        .set_app_path(&exe.to_string_lossy())
+        .set_app_path(&path)
         .set_args(&["--minimized"]);
     #[cfg(windows)]
     b.set_windows_enable_mode(auto_launch::WindowsEnableMode::CurrentUser);
@@ -40,5 +45,20 @@ mod tests {
         let a = autostart().expect("autostart entry");
         assert_eq!(a.get_app_name(), "Takeshot");
         assert_eq!(a.get_args(), ["--minimized".to_string()]);
+    }
+
+    /// The whole Run entry: the current user only (no admin), and a quoted path, since an install
+    /// folder such as "C:\\Program Files" has spaces.
+    #[cfg(windows)]
+    #[test]
+    fn autostart_is_the_current_users_quoted_run_entry() {
+        let exe = std::env::current_exe().unwrap();
+        let want = AutoLaunch::new(
+            "Takeshot",
+            &format!("\"{}\"", exe.display()),
+            auto_launch::WindowsEnableMode::CurrentUser,
+            &["--minimized"],
+        );
+        assert_eq!(autostart().unwrap(), want);
     }
 }
