@@ -156,6 +156,12 @@ pub fn capture_slot(name: &str) -> Option<CaptureSlot> {
     }
 }
 
+/// What a second launch asks the running resident for: Home, or nothing when it was started
+/// minimized (start with the system must not pop the window up).
+pub fn second_launch_page(minimized: bool) -> Option<Page> {
+    (!minimized).then_some(Page::Start)
+}
+
 /// Asks the resident to show `page`. Retries briefly: the resident may be between connections.
 pub fn send_show(name: &str, page: Page) -> io::Result<()> {
     let mut last = io::Error::other("no attempt");
@@ -296,6 +302,16 @@ mod tests {
         drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
         assert!(path.exists());
         assert!(matches!(claim(&name), Claim::Primary(_)));
+    }
+
+    #[test]
+    fn a_second_launch_shows_home_unless_it_starts_minimized() {
+        assert_eq!(second_launch_page(false), Some(Page::Start));
+        assert_eq!(
+            second_launch_page(true),
+            None,
+            "start with the system must not pop the window up"
+        );
     }
 
     #[test]

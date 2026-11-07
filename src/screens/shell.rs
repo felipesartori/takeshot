@@ -11,8 +11,7 @@ use crate::screens::widgets;
 use crate::system::actions;
 use crate::system::hotkeys::{Shot, Status, effective_status, label, should_offer_priority};
 use crate::system::instance::Page;
-use crate::system::resident::{Resident, ResidentEvent, XAction, left_click, on_x};
-use crate::system::settings::OnClose;
+use crate::system::resident::{Resident, ResidentEvent, XAction, left_click, on_x, remembered};
 use crate::system::tray::{TrayAction, TrayEntry, TrayEvent, tray_entries};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, BtnKind};
@@ -28,13 +27,6 @@ pub const HOSTED: bool = !cfg!(target_os = "linux");
 /// The main window's viewport when the root is the invisible host.
 fn main_id() -> ViewportId {
     ViewportId::from_hash_of("takeshot-main")
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CloseChoice {
-    Cancel,
-    Quit,
-    Hide,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -55,7 +47,10 @@ pub struct Shell {
     close_prompt: Option<bool>,
     about: bool,
     offer: bool,
-    mark: Option<egui::TextureHandle>,
+    /// The About mark, for the theme and mode it was drawn in.
+    mark: Option<((crate::ui::tokens::ThemeId, bool), egui::TextureHandle)>,
+    /// The main window's icon, decoded once per theme.
+    icon: Option<(crate::ui::tokens::ThemeId, Arc<egui::IconData>)>,
     quitting: bool,
     /// Bumped by the recents thread, so the Linux native menu is rebuilt when the list changes.
     recents_version: Arc<std::sync::atomic::AtomicU64>,
@@ -74,6 +69,7 @@ impl Shell {
             about: false,
             offer: false,
             mark: None,
+            icon: None,
             quitting: false,
             recents_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             menu_version: u64::MAX,
@@ -130,11 +126,9 @@ impl Shell {
         let version = self.recents_version.clone();
         std::thread::spawn(move || {
             let list = crate::system::recents::recent_captures(&dir, 5);
-            if let Ok(mut r) = out.lock() {
-                *r = list;
+            if store_recents(&out, &version, list) {
+                ctx.request_repaint();
             }
-            version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            ctx.request_repaint();
         });
     }
 
@@ -211,13 +205,18 @@ impl Shell {
         }
     }
 
-    fn show(&mut self, ctx: &egui::Context, home: &mut Home, page: Page) {
-        self.main_open = true;
-        let id = if self.hosted {
+    /// The main window's viewport: a child of the host, or the root itself on Linux.
+    fn main_viewport(&self) -> ViewportId {
+        if self.hosted {
             main_id()
         } else {
             ViewportId::ROOT
-        };
+        }
+    }
+
+    fn show(&mut self, ctx: &egui::Context, home: &mut Home, page: Page) {
+        self.main_open = true;
+        let id = self.main_viewport();
         if !self.hosted {
             ctx.send_viewport_cmd_to(id, Cmd::Visible(true));
         }
@@ -239,12 +238,7 @@ impl Shell {
 
     fn minimize_main(&self, ctx: &egui::Context) {
         if self.main_open {
-            let id = if self.hosted {
-                main_id()
-            } else {
-                ViewportId::ROOT
-            };
-            ctx.send_viewport_cmd_to(id, Cmd::Minimized(true));
+            ctx.send_viewport_cmd_to(self.main_viewport(), Cmd::Minimized(true));
         }
     }
 
@@ -290,15 +284,22 @@ impl Shell {
         }
         if self.hosted {
             if self.main_open {
-                let mut vp = egui::ViewportBuilder::default()
+                let theme = shared.settings.ui_theme;
+                if self.icon.as_ref().is_none_or(|(t, _)| *t != theme) {
+                    self.icon = Some((theme, Arc::new(crate::ui::brand::window_icon(theme))));
+                }
+                let icon = self
+                    .icon
+                    .as_ref()
+                    .map(|(_, i)| i.clone())
+                    .unwrap_or_default();
+                let vp = egui::ViewportBuilder::default()
                     .with_title("Takeshot")
                     .with_app_id("takeshot")
                     .with_inner_size([1160.0, 740.0])
                     .with_min_inner_size([900.0, 600.0])
-                    .with_drag_and_drop(true);
-                vp = vp.with_icon(Arc::new(crate::ui::brand::window_icon(
-                    shared.settings.ui_theme,
-                )));
+                    .with_drag_and_drop(true)
+                    .with_icon(icon);
                 ctx.show_viewport_immediate(main_id(), vp, |ui, _| {
                     self.main_contents(ui, frame, resident, home, shared);
                 });
@@ -381,39 +382,35 @@ impl Shell {
                     kit::checkbox(ui, t, &mut remember, tr(Msg::RememberChoice));
                 },
                 &[
-                    (tr(Msg::Quit), BtnKind::Secondary, CloseChoice::Quit),
-                    (tr(Msg::MinimizeToTray), BtnKind::Primary, CloseChoice::Hide),
+                    (tr(Msg::Quit), BtnKind::Secondary, XAction::Quit),
+                    (tr(Msg::MinimizeToTray), BtnKind::Primary, XAction::Hide),
                 ],
-                CloseChoice::Cancel,
+                XAction::Ask,
             );
             self.close_prompt = Some(remember);
             if let Some(choice) = answer {
                 self.close_prompt = None;
-                if remember && choice != CloseChoice::Cancel {
-                    shared.settings.on_close = match choice {
-                        CloseChoice::Quit => OnClose::Quit,
-                        _ => OnClose::Minimize,
-                    };
+                if let Some(on_close) = remembered(choice, remember) {
+                    shared.settings.on_close = on_close;
                     shared.settings_dirty = true;
                 }
                 match choice {
-                    CloseChoice::Quit => self.quit(ctx),
-                    CloseChoice::Hide => self.hide(ctx),
-                    CloseChoice::Cancel => {}
+                    XAction::Quit => self.quit(ctx),
+                    XAction::Hide => self.hide(ctx),
+                    XAction::Ask => {}
                 }
             }
         }
         if self.about {
-            let dark = effective_dark(shared.settings.ui_mode, ctx.system_theme());
-            if self.mark.is_none() {
-                self.mark = Some(crate::ui::brand::mark_texture(
-                    ctx,
-                    shared.settings.ui_theme,
-                    dark,
-                ));
+            let look = (
+                shared.settings.ui_theme,
+                effective_dark(shared.settings.ui_mode, ctx.system_theme()),
+            );
+            if self.mark.as_ref().is_none_or(|(l, _)| *l != look) {
+                self.mark = Some((look, crate::ui::brand::mark_texture(ctx, look.0, look.1)));
             }
             let info = AboutInfo::current();
-            match about::dialog(ctx, t, &info, self.mark.as_ref().map(|m| m.id())) {
+            match about::dialog(ctx, t, &info, self.mark.as_ref().map(|(_, m)| m.id())) {
                 Some(AboutAnswer::GitHub) => ctx.open_url(egui::OpenUrl::new_tab(info.github)),
                 Some(AboutAnswer::Close) => self.about = false,
                 None => {}
@@ -458,6 +455,24 @@ impl Shell {
     }
 }
 
+/// Stores a fresh list of recent captures; the version (which rebuilds the Linux native menu, closing
+/// it if open) moves only when the list changed. True when it changed.
+fn store_recents(
+    out: &Mutex<Vec<PathBuf>>,
+    version: &std::sync::atomic::AtomicU64,
+    list: Vec<PathBuf>,
+) -> bool {
+    let Ok(mut r) = out.lock() else {
+        return false;
+    };
+    if *r == list {
+        return false;
+    }
+    *r = list;
+    version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    true
+}
+
 /// Windows' keyboard settings, where the Snipping Tool's PrtSc option lives.
 fn open_windows_keyboard_settings() {
     #[cfg(windows)]
@@ -477,5 +492,28 @@ fn draw_toast(ctx: &egui::Context, shared: &mut Shared) {
         } else {
             shared.toast = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_native_menu_is_rebuilt_only_when_the_recents_change() {
+        // Rebuilding the Linux menu closes it under the pointer: same list, same version.
+        let (out, version) = (Mutex::new(Vec::new()), std::sync::atomic::AtomicU64::new(0));
+        let v = || version.load(std::sync::atomic::Ordering::Relaxed);
+        store_recents(&out, &version, vec![PathBuf::from("a.png")]);
+        assert_eq!(v(), 1);
+        store_recents(&out, &version, vec![PathBuf::from("a.png")]);
+        assert_eq!(v(), 1, "same list");
+        store_recents(
+            &out,
+            &version,
+            vec![PathBuf::from("b.png"), PathBuf::from("a.png")],
+        );
+        assert_eq!(v(), 2);
+        assert_eq!(out.lock().unwrap().len(), 2);
     }
 }

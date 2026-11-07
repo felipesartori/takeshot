@@ -48,6 +48,8 @@ pub struct Overlay {
     toolbar_size: egui::Vec2,
     options_size: egui::Vec2,
     window_ready: u32,
+    /// One capture at a time: held while this selection is on screen.
+    _slot: Option<crate::system::instance::CaptureSlot>,
 }
 
 impl Overlay {
@@ -76,10 +78,18 @@ impl Overlay {
             toolbar_size: vec2(560.0, 44.0),
             options_size: vec2(420.0, 44.0),
             window_ready: 0,
+            _slot: None,
         }
     }
 
     /// Sample state for screenshots: an area already chosen and a mark on it.
+    /// Keeps the capture slot while the selection is on screen; it goes when the overlay does
+    /// (copied, saved, closed, or turned into the editor).
+    pub fn hold(mut self, slot: Option<crate::system::instance::CaptureSlot>) -> Self {
+        self._slot = slot;
+        self
+    }
+
     pub fn demo(mut self) -> Self {
         self.sel = Some(Rect::from_min_size(pos2(304.0, 153.0), vec2(992.0, 540.0)));
         let doc = Doc::from_anns(vec![Ann {
@@ -974,6 +984,25 @@ mod tests {
             }]),
         );
         o
+    }
+
+    #[test]
+    fn the_capture_slot_lives_and_goes_with_the_overlay() {
+        // Becoming the editor or a notice drops the overlay: the next PrtSc may capture again.
+        let ctx = egui::Context::default();
+        let sh = shared();
+        let name = format!("takeshot-test-{}-overlay-slot", std::process::id());
+        let slot = crate::system::instance::capture_slot(&name);
+        let o = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh).hold(slot);
+        assert!(
+            crate::system::instance::capture_slot(&name).is_none(),
+            "held while open"
+        );
+        drop(o);
+        assert!(
+            crate::system::instance::capture_slot(&name).is_some(),
+            "free once it is gone"
+        );
     }
 
     fn rect_min(o: &Overlay) -> Pos2 {

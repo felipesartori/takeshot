@@ -5,7 +5,7 @@ use crate::engine::render;
 use crate::screens::icons::{self, Icon};
 use crate::screens::overlay::color_image;
 use crate::screens::widgets::{self, ACCENT, BORDER, HOVER, MUTED, PANEL, RAISED, TEXT};
-use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label};
+use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label, needs_modifier};
 use crate::system::settings::QuickStyle;
 use crate::system::settings::{OnClose, TrayClick};
 use crate::ui::i18n::{Msg, t as tr, tf};
@@ -534,7 +534,7 @@ impl Home {
 
     /// Start with the system, the X, the tray icon click, and Quit on Linux (no tray there for sure).
     fn general_section(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        widgets::section(ui, "Geral");
+        widgets::section(ui, tr(Msg::GeneralSection));
         let mut on = crate::system::autostart::autostart_enabled();
         if ui.checkbox(&mut on, tr(Msg::StartWithSystem)).changed()
             && let Err(e) = crate::system::autostart::set_autostart(on)
@@ -590,7 +590,10 @@ impl Home {
                     _ => None,
                 })
             });
-            if let Some((key, mods)) = pressed {
+            // Esc cancels; a key that needs Ctrl or Alt keeps the wait going.
+            if let Some((key, mods)) = pressed
+                && (key == egui::Key::Escape || !needs_modifier(key, mods))
+            {
                 self.capturing = None;
                 if let Some(keys) = keys_from_egui(key, mods) {
                     self.requests.rebind = Some((shot, keys));

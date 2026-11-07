@@ -186,8 +186,6 @@ struct App {
     editor_window: (egui::Pos2, egui::Vec2),
     /// Work area of the capture's monitor, in points (for placing the notice).
     notice_area: egui::Rect,
-    /// Held while the capture's selection is on screen: PrtSc meanwhile starts nothing.
-    capture_slot: Option<system::instance::CaptureSlot>,
 }
 
 impl App {
@@ -238,12 +236,13 @@ impl eframe::App for App {
         }
     }
 
-    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         // The resident's root is a transparent host on Windows and macOS.
         if matches!(self.mode, Mode::Resident { .. }) && screens::shell::HOSTED {
             [0.0; 4]
         } else {
-            visuals.panel_fill.to_normalized_gamma_f32()
+            // eframe's default, as before the resident.
+            egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32()
         }
     }
 
@@ -286,10 +285,6 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Switch::None => {}
-        }
-        // The selection became the editor or a notice: the next PrtSc may capture again.
-        if self.capture_slot.is_some() && !matches!(self.mode, Mode::Overlay(_)) {
-            self.capture_slot = None;
         }
 
         // The resident draws its notices in the main window (the root may be an invisible host).
@@ -354,8 +349,8 @@ fn main() -> eframe::Result {
         let name = system::instance::endpoint();
         match system::instance::claim(&name) {
             system::instance::Claim::Secondary => {
-                if !args.minimized {
-                    let _ = system::instance::send_show(&name, system::instance::Page::Start);
+                if let Some(page) = system::instance::second_launch_page(args.minimized) {
+                    let _ = system::instance::send_show(&name, page);
                 }
                 return Ok(());
             }
@@ -564,7 +559,8 @@ fn main() -> eframe::Result {
                         )))
                     }
                     Some(s) => {
-                        let o = overlay::Overlay::new(ctx, s, &shared);
+                        // The overlay holds the slot; the editor and the notice paths drop it here.
+                        let o = overlay::Overlay::new(ctx, s, &shared).hold(capture_slot.take());
                         Mode::Overlay(Box::new(if demo { o.demo() } else { o }))
                     }
                     None => {
@@ -625,7 +621,6 @@ fn main() -> eframe::Result {
                 shot_requested: false,
                 editor_window,
                 notice_area,
-                capture_slot,
             }))
         }),
     );

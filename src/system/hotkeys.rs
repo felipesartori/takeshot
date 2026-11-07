@@ -138,6 +138,16 @@ pub fn keys_from_egui(key: egui::Key, mods: egui::Modifiers) -> Option<String> {
     Some(parts.join("+"))
 }
 
+/// A global shortcut needs Ctrl, Alt or the Command key, or an F key: a plain or Shift+ key
+/// would be taken from every app while typing. Change keeps waiting on such a key.
+pub fn needs_modifier(key: egui::Key, mods: egui::Modifiers) -> bool {
+    let f_key = key
+        .name()
+        .strip_prefix('F')
+        .is_some_and(|n| n.parse::<u8>().is_ok());
+    !(f_key || mods.ctrl || mods.alt || mods.command || mods.mac_cmd)
+}
+
 /// The PrtSc priority offer appears once, on a conflict, and never with the hook already on.
 /// Only a PrtSc conflict qualifies: the hook does not help a rebound shortcut such as F9.
 pub fn should_offer_priority(status: &Status, offered_before: bool, hook_on: bool) -> bool {
@@ -262,6 +272,19 @@ impl Hotkeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_global_shortcut_needs_ctrl_alt_or_an_f_key() {
+        use egui::{Key, Modifiers};
+        // A plain letter or Shift+letter would take that key from every app while typing.
+        assert!(needs_modifier(Key::A, Modifiers::NONE));
+        assert!(needs_modifier(Key::A, Modifiers::SHIFT));
+        assert!(needs_modifier(Key::Space, Modifiers::NONE));
+        assert!(!needs_modifier(Key::A, Modifiers::CTRL));
+        assert!(!needs_modifier(Key::A, Modifiers::ALT));
+        assert!(!needs_modifier(Key::F9, Modifiers::NONE));
+        assert!(!needs_modifier(Key::F9, Modifiers::SHIFT));
+    }
     use global_hotkey::hotkey::HotKey;
     use std::str::FromStr;
 

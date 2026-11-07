@@ -22,6 +22,16 @@ pub enum XAction {
     Quit,
 }
 
+/// What the close prompt stores: the answer (Hide or Quit), only with "Remember my choice"
+/// checked. `Ask` is the prompt cancelled.
+pub fn remembered(answer: XAction, remember: bool) -> Option<OnClose> {
+    match answer {
+        XAction::Hide if remember => Some(OnClose::Minimize),
+        XAction::Quit if remember => Some(OnClose::Quit),
+        _ => None,
+    }
+}
+
 pub fn on_x(setting: OnClose) -> XAction {
     match setting {
         OnClose::Ask => XAction::Ask,
@@ -178,8 +188,19 @@ mod tests {
     #[test]
     fn events_reach_the_queue_and_wake_the_app() {
         let ctx = egui::Context::default();
+        let woken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let w = woken.clone();
+        ctx.set_request_repaint_callback(move |_| {
+            w.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
         let (q, sender) = Queue::new(&ctx);
         sender.send(ResidentEvent::Show(Page::Settings));
+        // egui folds wake-ups until the next pass, which drains the whole queue: one is enough.
+        assert_eq!(
+            woken.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an event wakes the app, window shown or not"
+        );
         sender.send(ResidentEvent::Shot(Shot::Full));
         assert_eq!(
             q.drain(),
@@ -189,5 +210,14 @@ mod tests {
             ]
         );
         assert!(q.drain().is_empty());
+    }
+
+    #[test]
+    fn the_close_prompt_stores_a_choice_only_when_asked() {
+        assert_eq!(remembered(XAction::Hide, true), Some(OnClose::Minimize));
+        assert_eq!(remembered(XAction::Quit, true), Some(OnClose::Quit));
+        assert_eq!(remembered(XAction::Hide, false), None, "box unchecked");
+        assert_eq!(remembered(XAction::Quit, false), None, "box unchecked");
+        assert_eq!(remembered(XAction::Ask, true), None, "cancelled");
     }
 }
