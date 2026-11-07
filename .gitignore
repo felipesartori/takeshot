@@ -1,0 +1,9 @@
+/target
+/dist
+/shots
+*.log
+*.pdb
+/.impeccable/
+/.superpowers/
+/.claude/settings.local.json
+/docs/superpowers/

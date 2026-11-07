@@ -1,0 +1,5 @@
+# Windows: build with the MSVC toolchain (the GNU one needs dlltool).
+# CI and other systems set RUSTUP_TOOLCHAIN=stable, which takes precedence.
+[toolchain]
+channel = "stable-x86_64-pc-windows-msvc"
+components = ["rustfmt", "clippy"]
