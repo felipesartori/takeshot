@@ -76,6 +76,10 @@ pub(crate) mod testing {
                 t.galley.rect.translate(t.pos.to_vec2()),
             )),
             egui::Shape::Rect(r) => blocks.push((r.rect, r.fill)),
+            // A line counts as a block of its stroke's colour.
+            egui::Shape::LineSegment { points, stroke } => {
+                blocks.push((Rect::from_two_pos(points[0], points[1]), stroke.color))
+            }
             egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, texts, blocks)),
             _ => {}
         }

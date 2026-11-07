@@ -21,6 +21,7 @@ pub fn main_window(
     egui::Panel::top("takeui-title-bar")
         .exact_size(BAR_HEIGHT)
         .resizable(false)
+        .show_separator_line(false)
         .frame(Frame::new().fill(t.shell))
         .show(ui, |ui| title_bar(ui, t, home, shared, &mut acts));
     egui::CentralPanel::no_frame()
@@ -112,6 +113,20 @@ mod tests {
     use crate::ui::i18n::{Msg, every};
     use crate::ui::icon::{Ico, glyph};
     use crate::ui::tokens::UiMode;
+
+    #[test]
+    fn no_line_runs_under_the_title_bar() {
+        // The bar flows into the window's background, as in the design; only the box has a border.
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        let (_, _, blocks) = run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let lines: Vec<_> = blocks
+            .iter()
+            .filter(|(r, _)| {
+                r.height() <= 2.0 && r.left() <= 1.0 && r.right() >= 1159.0 && r.top() > 20.0
+            })
+            .collect();
+        assert!(lines.is_empty(), "{lines:?}");
+    }
 
     #[test]
     fn the_content_box_has_the_same_gap_under_the_bar_as_around_it() {
