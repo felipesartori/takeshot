@@ -1,6 +1,8 @@
 //! User settings saved to settings.json: style, watermark, drawing options and app behavior.
 
 use crate::engine::model::{BlurMode, DEFAULT_COLOR, DEFAULT_WIDTH, Tool};
+use crate::ui::i18n::LangPref;
+use crate::ui::tokens::{ThemeId, UiMode};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -233,6 +235,9 @@ pub struct Settings {
     pub style: Style,
     pub watermark: Watermark,
     pub draw: DrawOpts,
+    pub ui_theme: ThemeId,
+    pub ui_mode: UiMode,
+    pub lang: LangPref,
 }
 
 impl Default for Settings {
@@ -253,6 +258,9 @@ impl Default for Settings {
             style: Style::default(),
             watermark: Watermark::default(),
             draw: DrawOpts::default(),
+            ui_theme: ThemeId::default(),
+            ui_mode: UiMode::default(),
+            lang: LangPref::default(),
         }
     }
 }
@@ -280,5 +288,22 @@ impl Settings {
                 let _ = std::fs::rename(tmp, p);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_file_loads_with_new_defaults() {
+        let old = r#"{"save_dir":"D:/caps","auto_save":true,"show_bubbles":false}"#;
+        let s: Settings = serde_json::from_str(old).unwrap();
+        assert_eq!(s.save_dir, "D:/caps");
+        assert!(s.auto_save);
+        assert!(!s.show_bubbles);
+        assert_eq!(s.ui_theme, ThemeId::TakeUi);
+        assert_eq!(s.ui_mode, UiMode::System);
+        assert_eq!(s.lang, LangPref::Auto);
     }
 }
