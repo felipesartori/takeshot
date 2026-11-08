@@ -320,25 +320,87 @@ fn path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("takeshot").join("settings.json"))
 }
 
+/// What this process last read from or wrote to the settings file.
+pub type Seen = Option<serde_json::Value>;
+
+/// This process's `Seen`.
+static SEEN: std::sync::Mutex<Seen> = std::sync::Mutex::new(None);
+
 impl Settings {
     pub fn load() -> Self {
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
         path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .map(|p| Self::load_at(&p, &mut seen))
             .unwrap_or_default()
     }
 
-    pub fn save(&self) {
-        let Some(p) = path() else { return };
+    /// The settings in the file at `p` (the defaults without one), remembered in `seen`.
+    pub fn load_at(p: &std::path::Path, seen: &mut Seen) -> Self {
+        let s: Self = std::fs::read_to_string(p)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        *seen = serde_json::to_value(&s).ok();
+        s
+    }
+
+    /// Writes to the file at `p` only what changed in this process since `seen`, over what is
+    /// there: the resident, the editors and the capture each keep a copy, and one saving its
+    /// whole copy would undo what the others saved meanwhile. A temporary file of this process's
+    /// own, then a rename, so two saving at once never mix.
+    pub fn save_at(&self, p: &std::path::Path, seen: &mut Seen) {
+        let Ok(mine) = serde_json::to_value(self) else {
+            return;
+        };
         if let Some(parent) = p.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(s) = serde_json::to_string_pretty(self) {
-            let tmp = p.with_extension("json.tmp");
-            if std::fs::write(&tmp, s).is_ok() {
-                let _ = std::fs::rename(tmp, p);
+        let disk = std::fs::read_to_string(p)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+        let out = match (disk, seen.as_ref()) {
+            (Some(mut d), Some(base)) => {
+                merge(&mut d, base, &mine);
+                d
+            }
+            _ => mine.clone(),
+        };
+        let Ok(text) = serde_json::to_string_pretty(&out) else {
+            return;
+        };
+        let tmp = p.with_extension(format!("json.{}.tmp", std::process::id()));
+        if std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, p).is_ok() {
+            *seen = Some(mine);
+        }
+    }
+
+    /// `save_at` the settings file, from what this process last read or wrote.
+    pub fn save(&self) {
+        let Some(p) = path() else { return };
+        let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        self.save_at(&p, &mut seen);
+    }
+}
+
+/// Writes into `disk` what `mine` changed from `base`, field by field.
+fn merge(disk: &mut serde_json::Value, base: &serde_json::Value, mine: &serde_json::Value) {
+    use serde_json::Value;
+    if base == mine {
+        return;
+    }
+    match (disk, base, mine) {
+        (Value::Object(d), Value::Object(b), Value::Object(m)) => {
+            for (k, mv) in m {
+                match (d.get_mut(k), b.get(k)) {
+                    (Some(dv), Some(bv)) => merge(dv, bv, mv),
+                    (_, Some(bv)) if bv == mv => {}
+                    _ => {
+                        d.insert(k.clone(), mv.clone());
+                    }
+                }
             }
         }
+        (d, _, m) => *d = m.clone(),
     }
 }
 
@@ -356,6 +418,37 @@ pub fn restore_default_style(s: &mut Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_process_saves_only_what_it_changed() {
+        let dir = std::env::temp_dir().join(format!("takeshot-merge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let p = dir.join("settings.json");
+        Settings::default().save_at(&p, &mut None);
+        // The resident and an editor, each with its own copy.
+        let (mut seen_a, mut seen_b) = (None, None);
+        let mut a = Settings::load_at(&p, &mut seen_a);
+        let mut b = Settings::load_at(&p, &mut seen_b);
+        a.ui_mode = UiMode::Light;
+        a.save_at(&p, &mut seen_a);
+        b.draw.width = 9.0;
+        b.save_at(&p, &mut seen_b);
+        let got = Settings::load_at(&p, &mut None);
+        assert_eq!(got.ui_mode, UiMode::Light, "the resident's change stays");
+        assert_eq!(got.draw.width, 9.0, "and the editor's");
+        // Two fields of one group, one each.
+        a.style.padding = 33.0;
+        a.save_at(&p, &mut seen_a);
+        b.style.radius = 21.0;
+        b.save_at(&p, &mut seen_b);
+        let got = Settings::load_at(&p, &mut None);
+        assert_eq!((got.style.padding, got.style.radius), (33.0, 21.0));
+        assert_eq!(
+            got.draw.width, 9.0,
+            "a later save keeps an earlier one's change"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn restore_default_keeps_the_logo() {
