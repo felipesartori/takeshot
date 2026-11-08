@@ -133,10 +133,14 @@ pub fn tool_shortcuts(ui: &mut Ui, an: &mut Annotator, opts: &mut DrawOpts, allo
 }
 
 pub fn tool_tip(t: Tool) -> String {
-    match t.shift_hint() {
-        Some(h) => format!("{} ({})\n{}", t.label(), t.key_name(), h),
-        None => format!("{} ({})", t.label(), t.key_name()),
-    }
+    use crate::screens::editor::{tool_hint, tool_name};
+    use crate::ui::i18n::t as tr;
+    format!(
+        "{} ({})\n{}",
+        tr(tool_name(t)),
+        t.key_name(),
+        tr(tool_hint(t))
+    )
 }
 
 /// The tool buttons. Returns true when something changed.

@@ -8,6 +8,7 @@
 //!   --pin file             picture pinned on top of other windows
 //!   --page inicio|estilo|ajustes   main window on that page
 //!   --page componentes     component gallery of the design system
+//!   --page editor|captura  the editor on the sample picture, the capture on the sample screen
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
 //!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only (every window)
 //!   --native-titlebar      the system's title bar instead of the theme's (also TAKESHOT_NATIVE_TITLEBAR=1)
@@ -134,6 +135,10 @@ struct Args {
 pub enum PageArg {
     Main(system::instance::Page),
     Gallery,
+    /// The editor with the sample picture.
+    Editor,
+    /// The capture overlay on the sample screen.
+    Capture,
 }
 
 pub fn parse_page(s: &str) -> Option<PageArg> {
@@ -143,6 +148,8 @@ pub fn parse_page(s: &str) -> Option<PageArg> {
         "estilo" => PageArg::Main(Page::Style),
         "ajustes" => PageArg::Main(Page::Settings),
         "componentes" => PageArg::Gallery,
+        "editor" => PageArg::Editor,
+        "captura" => PageArg::Capture,
         _ => return None,
     })
 }
@@ -224,6 +231,11 @@ fn parse_args() -> Args {
                 match v.get(i + 1).map(String::as_str).and_then(parse_page) {
                     Some(PageArg::Gallery) => a.launch = Launch::Gallery,
                     Some(PageArg::Main(p)) => a.page = Some(p),
+                    Some(PageArg::Editor) => a.launch = Launch::Edit(None),
+                    Some(PageArg::Capture) => {
+                        capture = true;
+                        a.sample = true;
+                    }
                     None => {
                         unknown_value::<()>("--page", v.get(i + 1).map(String::as_str));
                     }
@@ -834,6 +846,8 @@ mod tests {
             Some(PageArg::Main(Page::Settings))
         ));
         assert!(matches!(parse_page("componentes"), Some(PageArg::Gallery)));
+        assert!(matches!(parse_page("editor"), Some(PageArg::Editor)));
+        assert!(matches!(parse_page("captura"), Some(PageArg::Capture)));
         assert!(parse_page("x").is_none());
     }
 }

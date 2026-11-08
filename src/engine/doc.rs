@@ -303,6 +303,29 @@ impl Doc {
         &self.objs
     }
 
+    /// What an object is, as the tool that draws it, and the text it shows (a text's content,
+    /// a step's number), for the object list.
+    pub fn kind(&self, id: ObjId) -> Option<(Tool, Option<String>)> {
+        let o = self.get(id)?;
+        Some(match &o.ann.shape {
+            Shape::Pen(_) => (Tool::Pen, None),
+            Shape::Marker(_) => (Tool::Marker, None),
+            Shape::Line(..) => (Tool::Line, None),
+            Shape::Arrow(..) => (Tool::Arrow, None),
+            Shape::Rect(..) => (Tool::Rect, None),
+            Shape::Ellipse(..) => (Tool::Ellipse, None),
+            Shape::Blur(..) => (Tool::Blur, None),
+            Shape::Text { text, .. } => (Tool::Text, Some(text.clone())),
+            Shape::Counter { n, .. } => (Tool::Counter, Some(n.to_string())),
+        })
+    }
+
+    /// Where an object stands in the list, front-most first, and how many there are ("2 of 3").
+    pub fn position_of(&self, id: ObjId) -> Option<(usize, usize)> {
+        let i = self.objs.iter().position(|o| o.id == id)?;
+        Some((self.objs.len() - i, self.objs.len()))
+    }
+
     /// Annotations to render: visible objects, minus `except` (the ones painted live during a drag).
     pub fn visible_anns(&self, except: &[ObjId]) -> Vec<Ann> {
         self.objs
@@ -701,6 +724,44 @@ mod tests {
             center: pos2(50.0 * n as f32, 50.0),
             n,
         })
+    }
+
+    #[test]
+    fn kinds_name_the_tool_and_the_text() {
+        let mut d = Doc::new();
+        let arrow = d
+            .add(ann(Shape::Arrow(pos2(0.0, 0.0), pos2(40.0, 40.0))))
+            .unwrap();
+        let text = d
+            .add(ann(Shape::Text {
+                pos: pos2(10.0, 10.0),
+                text: "Pico em outubro".into(),
+                font: 0,
+                size: 20.0,
+                boxed: false,
+            }))
+            .unwrap();
+        let step = d.add(counter(1)).unwrap();
+        assert_eq!(d.kind(arrow), Some((Tool::Arrow, None)));
+        assert_eq!(
+            d.kind(text),
+            Some((Tool::Text, Some("Pico em outubro".into())))
+        );
+        assert_eq!(d.kind(step), Some((Tool::Counter, Some("1".into()))));
+        assert_eq!(d.kind(999), None);
+    }
+
+    #[test]
+    fn position_counts_from_the_top() {
+        // "2 de 3": the list shows the front-most object first.
+        let mut d = Doc::new();
+        let back = d.add(rect((0.0, 0.0), (10.0, 10.0))).unwrap();
+        let middle = d.add(rect((20.0, 0.0), (30.0, 10.0))).unwrap();
+        let front = d.add(rect((40.0, 0.0), (50.0, 10.0))).unwrap();
+        assert_eq!(d.position_of(front), Some((1, 3)));
+        assert_eq!(d.position_of(middle), Some((2, 3)));
+        assert_eq!(d.position_of(back), Some((3, 3)));
+        assert_eq!(d.position_of(999), None);
     }
 
     fn bounds_of(d: &Doc, id: ObjId) -> Rect {

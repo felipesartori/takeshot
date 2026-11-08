@@ -2,14 +2,16 @@
 
 use crate::engine::annotator::{Annotator, View, text_measure};
 use crate::engine::cursor::{self, Area, CursorCtx};
-use crate::engine::doc::Doc;
+use crate::engine::doc::{Doc, ObjId};
 use crate::engine::model::*;
 use crate::engine::render::{self, Layout};
 use crate::screens::icons::Icon;
 use crate::screens::overlay::color_image;
 use crate::screens::widgets::{self, ACCENT, BG, MUTED, TEXT};
 use crate::system::settings::Background;
+use crate::system::settings::DrawOpts;
 use crate::ui::i18n::{Msg, t};
+use crate::ui::kit::WindowControl;
 use crate::ui::kit::{self, BtnKind};
 use crate::{Shared, Switch};
 use egui::{Color32, Key, Modifiers, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
@@ -50,10 +52,120 @@ fn after_answer(answer: CloseChoice, copy: impl FnOnce() -> bool) -> CloseStep {
     }
 }
 
+/// A zoom request: fit the window, a percentage, or the next step in or out.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Zoom {
+    Fit,
+    Percent(u32),
+    In,
+    Out,
+}
+
+/// The zoom steps, as scales.
+const ZOOM_STEPS: [f32; 8] = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0];
+
+/// The scale a zoom request leads to from `current`; `fit` is the scale that shows it all.
+pub fn zoom_scale(z: Zoom, current: f32, fit: f32) -> f32 {
+    let (lo, hi) = (ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.len() - 1]);
+    match z {
+        Zoom::Fit => fit,
+        Zoom::Percent(p) => (p as f32 / 100.0).clamp(lo, hi),
+        Zoom::In => ZOOM_STEPS
+            .iter()
+            .copied()
+            .find(|s| *s > current + 1e-3)
+            .unwrap_or(hi),
+        Zoom::Out => ZOOM_STEPS
+            .iter()
+            .rev()
+            .copied()
+            .find(|s| *s < current - 1e-3)
+            .unwrap_or(lo),
+    }
+}
+
+/// The tabs of the editor's right panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PanelTab {
+    #[default]
+    Object,
+    Style,
+}
+
+/// What the user asked for in the editor; a skin returns these and `Editor::apply` carries them out.
+#[derive(Clone, PartialEq, Debug)]
+pub enum EditorAction {
+    Undo,
+    Redo,
+    Copy,
+    Save,
+    SaveAs,
+    Pin,
+    NewCapture,
+    SetTool(Tool),
+    SetColor([u8; 4]),
+    SetWidth(f32),
+    /// The alpha of the colour, 0 to 255.
+    SetOpacity(u8),
+    SetFill(bool),
+    SetFont(usize),
+    SetTextBox(bool),
+    SetBlurMode(BlurMode),
+    Zoom(Zoom),
+    /// Select an object; true adds it to the selection.
+    Select(ObjId, bool),
+    Hide(ObjId, bool),
+    Duplicate,
+    Delete,
+    ToFront,
+    ToBack,
+    Tab(PanelTab),
+    /// The style (background, frame, watermark) changed in the panel.
+    StyleChanged,
+    Window(WindowControl),
+}
+
+/// The tool's name, as the bar's tooltip and the object list show it.
+pub fn tool_name(t: Tool) -> Msg {
+    match t {
+        Tool::Select => Msg::ToolSelect,
+        Tool::Pen => Msg::ToolPen,
+        Tool::Line => Msg::ToolLine,
+        Tool::Arrow => Msg::ToolArrow,
+        Tool::Rect => Msg::ToolRect,
+        Tool::Ellipse => Msg::ToolEllipse,
+        Tool::Marker => Msg::ToolMarker,
+        Tool::Text => Msg::ToolText,
+        Tool::Blur => Msg::ToolBlur,
+        Tool::Counter => Msg::ToolStep,
+    }
+}
+
+/// The status bar's hint for a tool.
+pub fn tool_hint(t: Tool) -> Msg {
+    match t {
+        Tool::Select => Msg::HintSelect,
+        Tool::Pen | Tool::Marker => Msg::HintStraight,
+        Tool::Line | Tool::Arrow => Msg::HintAngles,
+        Tool::Rect => Msg::HintSquare,
+        Tool::Ellipse => Msg::HintCircle,
+        Tool::Text => Msg::HintText,
+        Tool::Blur => Msg::HintBlur,
+        Tool::Counter => Msg::HintStep,
+    }
+}
+
 pub struct Editor {
     base: RgbaImage,
     annotated: RgbaImage,
-    an: Annotator,
+    pub(crate) an: Annotator,
+    /// The zoom chosen; `None` fits the picture to the canvas.
+    zoom: Option<f32>,
+    /// The scale that fits the canvas, from the last layout.
+    fit: f32,
+    /// How far the picture is moved from the centre when it is larger than the canvas.
+    pan: egui::Vec2,
+    tab: PanelTab,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
     preview_scale: f32,
@@ -79,6 +191,10 @@ impl Editor {
             base,
             annotated,
             an,
+            zoom: None,
+            fit: 1.0,
+            pan: egui::Vec2::ZERO,
+            tab: PanelTab::Object,
             preview: None,
             preview_dirty: true,
             preview_scale: 1.0,
@@ -94,6 +210,91 @@ impl Editor {
 
     fn unsaved(&self) -> bool {
         unsaved_edits(&self.an, self.saved_rev)
+    }
+
+    /// The zoom chosen, or `None` when the picture fits the canvas.
+    pub fn zoom(&self) -> Option<f32> {
+        self.zoom
+    }
+
+    pub fn tab(&self) -> PanelTab {
+        self.tab
+    }
+
+    /// Carries out what the user asked for. `frame` parents the save dialog when there is one.
+    pub fn apply(
+        &mut self,
+        a: EditorAction,
+        ctx: &egui::Context,
+        frame: Option<&eframe::Frame>,
+        shared: &mut Shared,
+    ) -> Switch {
+        let restyle = |ed: &mut Self, shared: &mut Shared, f: &dyn Fn(&mut DrawOpts)| {
+            let before = shared.settings.draw.clone();
+            f(&mut shared.settings.draw);
+            ed.an.restyle_from_opts(&before, &shared.settings.draw);
+            shared.settings_dirty = true;
+        };
+        match a {
+            EditorAction::Undo => self.an.undo(),
+            EditorAction::Redo => self.an.redo(),
+            EditorAction::Copy => {
+                self.copy(shared);
+            }
+            EditorAction::Save => self.save(frame, shared, false),
+            EditorAction::SaveAs => self.save(frame, shared, true),
+            EditorAction::Pin => {
+                let img = self.final_image(shared);
+                match crate::system::actions::temp_png(&img) {
+                    Some(p) => {
+                        let _ =
+                            crate::system::actions::spawn_self(&["--pin", &p.to_string_lossy()]);
+                    }
+                    None => shared.toast(crate::ui::i18n::tf(Msg::CannotPin, &[""])),
+                }
+            }
+            EditorAction::NewCapture => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                let _ = crate::system::actions::spawn_self(&["--capture", "--wait"]);
+            }
+            EditorAction::SetTool(tool) => {
+                self.an.set_tool(tool, &mut shared.settings.draw);
+                shared.settings_dirty = true;
+            }
+            EditorAction::SetColor(c) => restyle(self, shared, &|o| {
+                o.color = [c[0], c[1], c[2], o.color[3]];
+            }),
+            EditorAction::SetWidth(w) => restyle(self, shared, &|o| o.width = w),
+            EditorAction::SetOpacity(alpha) => restyle(self, shared, &|o| o.color[3] = alpha),
+            EditorAction::SetFill(on) => restyle(self, shared, &|o| o.filled = on),
+            EditorAction::SetFont(f) => restyle(self, shared, &|o| o.font = f),
+            EditorAction::SetTextBox(on) => restyle(self, shared, &|o| o.text_box = on),
+            EditorAction::SetBlurMode(m) => restyle(self, shared, &|o| o.blur_mode = m),
+            EditorAction::Zoom(z) => {
+                self.zoom = match z {
+                    Zoom::Fit => None,
+                    _ => Some(zoom_scale(z, self.zoom.unwrap_or(self.fit), self.fit)),
+                };
+                self.pan = egui::Vec2::ZERO;
+                self.preview_dirty = true;
+            }
+            EditorAction::Select(id, add) => self.an.doc.select(Some(id), add),
+            EditorAction::Hide(id, hidden) => self.an.doc.set_hidden(id, hidden),
+            EditorAction::Duplicate => {
+                self.an.doc.duplicate_selected(egui::vec2(16.0, 16.0));
+            }
+            EditorAction::Delete => self.an.doc.delete_selected(),
+            EditorAction::ToFront => self.an.doc.bring_to_front(),
+            EditorAction::ToBack => self.an.doc.send_to_back(),
+            EditorAction::Tab(tab) => self.tab = tab,
+            EditorAction::StyleChanged => {
+                self.preview_dirty = true;
+                shared.settings_dirty = true;
+            }
+            EditorAction::Window(WindowControl::Close) => return self.request_close(),
+            EditorAction::Window(c) => crate::ui::chrome::act(ctx, c),
+        }
+        Switch::None
     }
 
     /// Lets the next close through without asking (the screenshot self-check closes on its own).
@@ -197,6 +398,7 @@ impl Editor {
             self.preview_dirty = true;
         }
         shared.logo.sync(&ctx, &shared.settings.watermark);
+        let mut acts: Vec<EditorAction> = Vec::new();
 
         // ------------------------------------------------ top bar
         egui::Panel::top("editor_top")
@@ -211,56 +413,39 @@ impl Editor {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     widgets::tool_buttons(ui, &mut self.an, &mut shared.settings.draw, true);
                     widgets::separator(ui);
-                    if widgets::icon_button(ui, Icon::Undo, false, "Desfazer (Ctrl+Z)").clicked() {
-                        self.an.undo();
+                    if widgets::icon_button(ui, Icon::Undo, false, t(Msg::Undo)).clicked() {
+                        acts.push(EditorAction::Undo);
                     }
-                    if widgets::icon_button(ui, Icon::Redo, false, "Refazer (Ctrl+Y)").clicked() {
-                        self.an.redo();
+                    if widgets::icon_button(ui, Icon::Redo, false, t(Msg::Redo)).clicked() {
+                        acts.push(EditorAction::Redo);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let copy = egui::Button::new(
-                            RichText::new("Copiar").color(Color32::WHITE).strong(),
+                            RichText::new(t(Msg::Copy)).color(Color32::WHITE).strong(),
                         )
                         .fill(ACCENT)
                         .corner_radius(8)
                         .min_size(vec2(84.0, 32.0));
-                        if ui
-                            .add(copy)
-                            .on_hover_text("Copiar a imagem final (Ctrl+C)")
-                            .clicked()
-                        {
-                            self.copy(shared);
+                        if ui.add(copy).clicked() {
+                            acts.push(EditorAction::Copy);
                         }
                         if ui
-                            .add(egui::Button::new("Salvar").min_size(vec2(72.0, 32.0)))
-                            .on_hover_text("Salvar PNG sem perdas (Ctrl+S)")
+                            .add(egui::Button::new(t(Msg::Save)).min_size(vec2(72.0, 32.0)))
                             .clicked()
                         {
-                            self.save(frame, shared, false);
+                            acts.push(EditorAction::Save);
                         }
-                        if widgets::icon_button(
-                            ui,
-                            Icon::Folder,
-                            false,
-                            "Salvar como… (Ctrl+Shift+S)",
-                        )
-                        .clicked()
+                        if widgets::icon_button(ui, Icon::Folder, false, t(Msg::SaveAs)).clicked() {
+                            acts.push(EditorAction::SaveAs);
+                        }
+                        if widgets::icon_button(ui, Icon::Pin, false, t(Msg::PinOnScreen)).clicked()
                         {
-                            self.save(frame, shared, true);
+                            acts.push(EditorAction::Pin);
                         }
-                        if widgets::icon_button(ui, Icon::Pin, false, "Fixar na tela").clicked() {
-                            let img = self.final_image(shared);
-                            if let Some(p) = crate::system::actions::temp_png(&img) {
-                                let _ = crate::system::actions::spawn_self(&[
-                                    "--pin",
-                                    &p.to_string_lossy(),
-                                ]);
-                            }
-                        }
-                        if widgets::icon_button(ui, Icon::Full, false, "Nova captura").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                            let _ = crate::system::actions::spawn_self(&["--capture", "--wait"]);
+                        if widgets::icon_button(ui, Icon::Full, false, t(Msg::NewCapture)).clicked()
+                        {
+                            acts.push(EditorAction::NewCapture);
                         }
                     });
                 });
@@ -426,12 +611,12 @@ impl Editor {
                     let cmd = Modifiers::COMMAND;
                     self.an.handle_history_keys(ui);
                     if ui.input_mut(|i| i.consume_key(cmd, Key::C)) {
-                        self.copy(shared);
+                        acts.push(EditorAction::Copy);
                     }
                     if ui.input_mut(|i| i.consume_key(cmd | Modifiers::SHIFT, Key::S)) {
-                        self.save(frame, shared, true);
+                        acts.push(EditorAction::SaveAs);
                     } else if ui.input_mut(|i| i.consume_key(cmd, Key::S)) {
-                        self.save(frame, shared, false);
+                        acts.push(EditorAction::Save);
                     }
                     if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
                         && self.an.tool != Tool::Select
@@ -443,6 +628,11 @@ impl Editor {
                     }
                 }
             });
+        for a in acts {
+            if let s @ Switch::Close = self.apply(a, &ctx, Some(frame), shared) {
+                switch = s;
+            }
+        }
         if self.asking_close {
             let theme = crate::ui::tokens::tokens(
                 shared.settings.ui_theme,
@@ -485,23 +675,23 @@ impl Editor {
         match crate::system::actions::copy_image(&img) {
             Ok(()) => {
                 self.saved_rev = Some(self.an.doc.revision());
-                shared.toast("Imagem copiada".into());
+                shared.toast(t(Msg::ImageCopied).to_string());
                 true
             }
             Err(e) => {
-                shared.toast(format!("Não consegui copiar: {e}"));
+                shared.toast(crate::ui::i18n::tf(Msg::CouldNotCopy, &[&e.to_string()]));
                 false
             }
         }
     }
 
-    fn save(&mut self, frame: &eframe::Frame, shared: &mut Shared, ask: bool) {
+    fn save(&mut self, frame: Option<&eframe::Frame>, shared: &mut Shared, ask: bool) {
         self.an.commit_draft(&shared.settings.draw);
         self.sync_now(shared);
         let path = if shared.settings.auto_save && !ask {
             Some(crate::system::actions::auto_path(&shared.settings.save_dir))
         } else {
-            crate::system::actions::ask_save_path(&shared.settings.save_dir, Some(frame))
+            crate::system::actions::ask_save_path(&shared.settings.save_dir, frame)
         };
         let Some(path) = path else { return };
         let img = self.final_image(shared);
@@ -512,14 +702,13 @@ impl Editor {
                     shared.settings.save_dir = dir.to_string_lossy().into_owned();
                     shared.settings_dirty = true;
                 }
-                shared.toast(format!(
-                    "Salvo: {}",
-                    path.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                ));
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                shared.toast(crate::ui::i18n::tf(Msg::SavedFile, &[&name]));
             }
-            Err(e) => shared.toast(format!("Não consegui salvar: {e}")),
+            Err(e) => shared.toast(crate::ui::i18n::tf(Msg::CouldNotSave, &[&e.to_string()])),
         }
     }
 
@@ -558,6 +747,72 @@ fn checker(p: &egui::Painter, r: Rect) {
 mod tests {
     use super::*;
     use crate::engine::annotator::TextDraft;
+
+    #[test]
+    fn zoom_steps_and_fit() {
+        let fit = 0.37;
+        assert_eq!(zoom_scale(Zoom::Percent(100), 0.5, fit), 1.0);
+        assert_eq!(zoom_scale(Zoom::Fit, 2.0, fit), fit);
+        assert_eq!(zoom_scale(Zoom::In, 1.0, fit), 1.5);
+        assert_eq!(zoom_scale(Zoom::In, 0.6, fit), 0.75, "to the next step");
+        assert_eq!(zoom_scale(Zoom::Out, 0.6, fit), 0.5, "to the step below");
+        assert_eq!(zoom_scale(Zoom::Out, 0.25, fit), 0.25, "the smallest step");
+        assert_eq!(zoom_scale(Zoom::In, 4.0, fit), 4.0, "the largest step");
+    }
+
+    fn editor() -> (Editor, crate::Shared) {
+        let shared = crate::Shared::for_tests();
+        let base = RgbaImage::from_pixel(200, 100, image::Rgba([240, 240, 240, 255]));
+        let doc = Doc::from_anns(vec![Ann {
+            shape: Shape::Rect(pos2(10.0, 10.0), pos2(60.0, 50.0)),
+            color: [255, 0, 0, 255],
+            width: 3.0,
+            filled: false,
+        }]);
+        let ed = Editor::new(&egui::Context::default(), base, doc, &shared);
+        (ed, shared)
+    }
+
+    #[test]
+    fn apply_routes_history_and_tools() {
+        let ctx = egui::Context::default();
+        let (mut ed, mut shared) = editor();
+        ed.apply(EditorAction::SetTool(Tool::Rect), &ctx, None, &mut shared);
+        assert_eq!(ed.an.tool, Tool::Rect);
+        assert_eq!(shared.settings.draw.last_tool, Tool::Rect);
+        ed.an.commit(Ann {
+            shape: Shape::Ellipse(pos2(80.0, 10.0), pos2(120.0, 50.0)),
+            color: [0, 0, 255, 255],
+            width: 3.0,
+            filled: false,
+        });
+        assert_eq!(ed.an.doc.objs().len(), 2);
+        ed.apply(EditorAction::Undo, &ctx, None, &mut shared);
+        assert_eq!(ed.an.doc.objs().len(), 1);
+        ed.apply(EditorAction::Redo, &ctx, None, &mut shared);
+        assert_eq!(ed.an.doc.objs().len(), 2);
+        ed.apply(
+            EditorAction::Zoom(Zoom::Percent(200)),
+            &ctx,
+            None,
+            &mut shared,
+        );
+        assert_eq!(ed.zoom(), Some(2.0));
+        ed.apply(EditorAction::Zoom(Zoom::Fit), &ctx, None, &mut shared);
+        assert_eq!(ed.zoom(), None, "fit follows the window");
+    }
+
+    #[test]
+    fn tool_names_follow_the_language() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let before = crate::ui::i18n::lang();
+        crate::ui::i18n::set_lang(crate::ui::i18n::Lang::En);
+        assert_eq!(t(tool_name(Tool::Ellipse)), "Ellipse");
+        crate::ui::i18n::set_lang(crate::ui::i18n::Lang::Pt);
+        assert_eq!(t(tool_name(Tool::Ellipse)), "Elipse");
+        assert_eq!(t(tool_name(Tool::Counter)), "Passo");
+        crate::ui::i18n::set_lang(before);
+    }
 
     #[test]
     fn the_window_x_is_held_only_for_unsaved_edits_and_not_when_closing() {

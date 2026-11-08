@@ -64,21 +64,6 @@ impl Tool {
         Tool::Counter,
     ];
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Tool::Select => "Mover / ajustar seleção",
-            Tool::Pen => "Caneta",
-            Tool::Line => "Linha",
-            Tool::Arrow => "Seta",
-            Tool::Rect => "Retângulo",
-            Tool::Ellipse => "Círculo",
-            Tool::Marker => "Marcador",
-            Tool::Text => "Texto",
-            Tool::Blur => "Borrar",
-            Tool::Counter => "Numeração",
-        }
-    }
-
     pub fn key(self) -> egui::Key {
         use egui::Key;
         match self {
@@ -107,17 +92,6 @@ impl Tool {
             Tool::Text => "T",
             Tool::Blur => "B",
             Tool::Counter => "N",
-        }
-    }
-
-    /// Hint shown in the tooltip about what Shift does with this tool.
-    pub fn shift_hint(self) -> Option<&'static str> {
-        match self {
-            Tool::Pen | Tool::Marker => Some("Shift: traço reto"),
-            Tool::Line | Tool::Arrow => Some("Shift: ângulos de 45°"),
-            Tool::Rect | Tool::Blur => Some("Shift: quadrado · Alt: a partir do centro"),
-            Tool::Ellipse => Some("Shift: círculo perfeito · Alt: a partir do centro"),
-            _ => None,
         }
     }
 }
