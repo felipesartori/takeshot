@@ -4,7 +4,7 @@ CI builds and lints the macOS app but cannot click through it. Before a release,
 
 ## Install
 
-1. Open the `.dmg` and drag Takeshot to Applications.
+1. Open the `.dmg`: the window shows Takeshot on the left, Applications on the right and an arrow between them, on a light lavender background (design page D2). Drag Takeshot to Applications.
 2. The app is not notarized by Apple yet, so macOS blocks it the first time. Open System Settings > Privacy & Security, click "Open Anyway" next to Takeshot and confirm. If macOS says the app is damaged, run `xattr -cr /Applications/Takeshot.app` and open it again.
 3. Expect the Takeshot icon in the menu bar and the main window (Home).
 

@@ -106,7 +106,7 @@ Get the latest version from [Releases](https://github.com/takeflow-oficial/takes
 
 | System | File |
 |---|---|
-| Windows 10 and 11 (x64) | `takeshot-<version>-windows-x64-setup.exe` (recommended: installs for your user, no administrator), `takeshot-<version>-windows-x64.msi`, or the portable `takeshot-<version>-windows-x64-portable.zip` |
+| Windows 10 and 11 (x64) | `takeshot-<version>-windows-x64-setup.exe` (recommended: asks who to install for, just you with no administrator or everyone on the computer), `takeshot-<version>-windows-x64.msi`, or the portable `takeshot-<version>-windows-x64-portable.zip` |
 | macOS 11+ (Apple Silicon and Intel) | `takeshot-<version>-macos-universal.dmg` |
 | Linux x86_64 (glibc 2.39+: Ubuntu 24.04+, Debian 13+, Fedora 40+) | `takeshot-<version>-linux-x86_64.deb`, `takeshot-<version>-linux-x86_64.AppImage`, or `takeshot-<version>-linux-x86_64.tar.gz` |
 
@@ -157,7 +157,7 @@ One resident process per user owns the tray, the shortcuts and the main window. 
 | Rendering | tiny-skia, ab_glyph, image |
 | Screen capture | xcap (Windows, macOS, X11) and the desktop portal (Wayland) |
 | System | tray-icon, global-hotkey, arboard, interprocess, auto-launch, rfd, trash |
-| Packaging | cargo-packager (NSIS, WiX, app, deb, AppImage) and hdiutil (dmg) |
+| Packaging | cargo-packager (NSIS, WiX, app, deb, AppImage) and create-dmg (dmg) |
 | CI | GitHub Actions: fmt, clippy and tests on Windows, macOS and Linux for every pull request; a one-button release builds the installers and publishes them |
 
 ## Project layout
@@ -172,7 +172,7 @@ src/
   screens/       window state and behaviour: home, editor, capture, pin, notice, shell
   views/         how the screens draw, in both themes
 assets/          embedded fonts and the brand masters (SVG, PNG, ICO, ICNS)
-packaging/       installer templates (Windows NSIS, macOS Info.plist keys)
+packaging/       installers: the Windows NSIS template and pictures, the macOS Info.plist keys and dmg background
 design/          takeshot-ui.fig (OpenPencil or Figma) and the exported references
 docs/            README pictures, and the macOS and Linux test scripts
 scripts/         check.sh (what CI runs), screenshots.sh, dev.sh, linux-packages.sh, linux-smoke.sh
@@ -293,7 +293,7 @@ Baixe a versão mais recente em [Releases](https://github.com/takeflow-oficial/t
 
 | Sistema | Arquivo |
 |---|---|
-| Windows 10 e 11 (x64) | `takeshot-<versão>-windows-x64-setup.exe` (recomendado: instala para o seu usuário, sem administrador), `takeshot-<versão>-windows-x64.msi`, ou o portátil `takeshot-<versão>-windows-x64-portable.zip` |
+| Windows 10 e 11 (x64) | `takeshot-<versão>-windows-x64-setup.exe` (recomendado: pergunta para quem instalar, só você sem administrador ou todos no computador), `takeshot-<versão>-windows-x64.msi`, ou o portátil `takeshot-<versão>-windows-x64-portable.zip` |
 | macOS 11+ (Apple Silicon e Intel) | `takeshot-<versão>-macos-universal.dmg` |
 | Linux x86_64 (glibc 2.39+: Ubuntu 24.04+, Debian 13+, Fedora 40+) | `takeshot-<versão>-linux-x86_64.deb`, `takeshot-<versão>-linux-x86_64.AppImage`, ou `takeshot-<versão>-linux-x86_64.tar.gz` |
 
@@ -317,7 +317,7 @@ Um processo residente por usuário cuida da bandeja, dos atalhos e da janela pri
 | Desenho | tiny-skia, ab_glyph, image |
 | Captura de tela | xcap (Windows, macOS, X11) e o portal do desktop (Wayland) |
 | Sistema | tray-icon, global-hotkey, arboard, interprocess, auto-launch, rfd, trash |
-| Instaladores | cargo-packager (NSIS, WiX, app, deb, AppImage) e hdiutil (dmg) |
+| Instaladores | cargo-packager (NSIS, WiX, app, deb, AppImage) e create-dmg (dmg) |
 | CI | GitHub Actions: fmt, clippy e testes em Windows, macOS e Linux em todo pull request; uma release de um botão gera os instaladores e publica |
 
 ## Estrutura do projeto

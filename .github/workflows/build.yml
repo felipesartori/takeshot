@@ -158,13 +158,23 @@ jobs:
               fi
               mkdir -p dmg
               cp -R "$APP" dmg/
-              ln -s /Applications dmg/Applications
-              # hdiutil now and then fails with "Resource busy" on the runners.
-              for try in 1 2 3; do
-                hdiutil create -volname Takeshot -srcfolder dmg -ov -format UDZO "dist/takeshot-$VERSION-macos-universal.dmg" && break
-                sleep 10
-              done
-              test -f "dist/takeshot-$VERSION-macos-universal.dmg"
+              DMG="dist/takeshot-$VERSION-macos-universal.dmg"
+              # The window of design page D: the background (1x and 2x in one TIFF), Takeshot and
+              # Applications at fixed places, the arrow between them.
+              tiffutil -cathidpicheck packaging/macos/dmg-background.png packaging/macos/dmg-background@2x.png -out dmg-background.tiff
+              brew install create-dmg > /dev/null
+              if ! create-dmg --volname Takeshot --background dmg-background.tiff --window-size 660 400                   --icon-size 128 --icon Takeshot.app 165 190 --hide-extension Takeshot.app                   --app-drop-link 495 190 "$DMG" dmg/; then
+                # A plain window rather than no release: create-dmg drives Finder, which can fail.
+                echo "::warning::create-dmg failed; the dmg falls back to a plain window"
+                rm -f "$DMG"
+                ln -s /Applications dmg/Applications
+                # hdiutil now and then fails with "Resource busy" on the runners.
+                for try in 1 2 3; do
+                  hdiutil create -volname Takeshot -srcfolder dmg -ov -format UDZO "$DMG" && break
+                  sleep 10
+                done
+              fi
+              test -f "$DMG"
               ;;
             Linux)
               cargo packager --release --formats deb,appimage
