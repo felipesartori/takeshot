@@ -1061,7 +1061,6 @@ mod tests {
 
     #[test]
     fn tool_names_follow_the_language() {
-        let _lang = crate::ui::i18n::lang_lock();
         let before = crate::ui::i18n::lang();
         crate::ui::i18n::set_lang(crate::ui::i18n::Lang::En);
         assert_eq!(t(tool_name(Tool::Ellipse)), "Ellipse");

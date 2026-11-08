@@ -477,7 +477,7 @@ mod tests {
     use crate::skins::takeui::testing::{MESH, click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::system::settings::QuickStyle;
-    use crate::ui::i18n::{Lang, Msg, every, lang, lang_lock, set_lang};
+    use crate::ui::i18n::{Lang, Msg, every, lang, set_lang};
     use egui::vec2;
 
     #[test]
@@ -510,7 +510,6 @@ mod tests {
     #[test]
     fn no_text_runs_into_another_at_any_width() {
         // Restore default used to sit over the wrapped subtitle between 900 and ~1100 px.
-        let _lang = lang_lock();
         let before = lang();
         for l in [Lang::Pt, Lang::En] {
             set_lang(l);
@@ -580,7 +579,6 @@ mod tests {
 
     #[test]
     fn the_page_fits_in_its_box_at_the_minimum_size() {
-        let _lang = lang_lock();
         let before = lang();
         for l in [Lang::Pt, Lang::En] {
             set_lang(l);

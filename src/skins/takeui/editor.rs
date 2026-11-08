@@ -1024,7 +1024,6 @@ mod tests {
 
     #[test]
     fn the_hint_has_the_text_size() {
-        let _lang = crate::ui::i18n::lang_lock();
         let (mut ed, mut shared) = editor();
         shared.settings.draw.font_size = 60.0;
         ed.an.tool = Tool::Text;
@@ -1433,7 +1432,6 @@ x"),
     #[test]
     fn a_slider_release_ends_its_step() {
         // After a drag on the opacity slider, a colour change is its own undo step.
-        let _lang = crate::ui::i18n::lang_lock();
         let (mut ed, mut shared) = editor();
         let ctx = egui::Context::default();
         let rect = ed.an.doc.objs()[0].id;
@@ -1497,7 +1495,6 @@ x"),
 
     #[test]
     fn duplicate_and_delete_share_a_row() {
-        let _lang = crate::ui::i18n::lang_lock();
         let before = crate::ui::i18n::lang();
         for l in [crate::ui::i18n::Lang::Pt, crate::ui::i18n::Lang::En] {
             crate::ui::i18n::set_lang(l);
@@ -1623,8 +1620,6 @@ x"),
 
     #[test]
     fn the_status_bar_counts_objects_and_shows_the_size() {
-        // Built and painted in the same language: hold it.
-        let _lang = crate::ui::i18n::lang_lock();
         let (mut ed, mut shared) = editor();
         let (_, painted, _) = run_editor(&mut ed, &mut shared, (1280.0, 820.0), true, vec![]);
         let three = [tf(Msg::ObjectsMany, &["3"])];
@@ -1669,7 +1664,6 @@ x"),
 
     #[test]
     fn a_row_click_selects_the_object() {
-        let _lang = crate::ui::i18n::lang_lock();
         let (mut ed, mut shared) = editor();
         let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
         let row = panel_text(&painted, tr(Msg::ToolRect));
@@ -1681,7 +1675,6 @@ x"),
 
     #[test]
     fn the_eye_hides_and_shows() {
-        let _lang = crate::ui::i18n::lang_lock();
         let (mut ed, mut shared) = editor();
         let eye = |painted: &[(String, Rect)], icon: Ico| {
             let row = panel_text(painted, tr(Msg::ToolRect));
@@ -1716,7 +1709,6 @@ x"),
 
     #[test]
     fn opacity_sets_the_alpha_of_the_selection() {
-        let _lang = crate::ui::i18n::lang_lock();
         let (mut ed, mut shared) = editor();
         // The tool's colour differs from the object's: the change must keep the object's red.
         shared.settings.draw.color = [0, 0, 255, 255];
@@ -1761,7 +1753,6 @@ x"),
 
     #[test]
     fn the_style_tab_changes_the_saved_style() {
-        let _lang = crate::ui::i18n::lang_lock();
         let (mut ed, mut shared) = editor();
         let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
         let tab = panel_text(&painted, tr(Msg::Style));
@@ -1781,7 +1772,6 @@ x"),
     fn the_object_page_fits_the_panel_in_both_languages() {
         // For each kind of object picked, nothing runs past the content's 20 px right padding
         // (it holds the scroll bar) and no text runs into another, in either language.
-        let _lang = crate::ui::i18n::lang_lock();
         let before = crate::ui::i18n::lang();
         let ann = |shape| Ann {
             shape,
@@ -1859,7 +1849,6 @@ x"),
 
     #[test]
     fn a_long_list_scrolls_and_keeps_the_selection_in_view() {
-        let _lang = crate::ui::i18n::lang_lock();
         let mut shared = Shared::for_tests();
         let base = image::RgbaImage::from_pixel(1200, 740, image::Rgba([240, 240, 240, 255]));
         let anns = (1..=100u32)

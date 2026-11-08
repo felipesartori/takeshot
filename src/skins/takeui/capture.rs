@@ -307,7 +307,7 @@ mod tests {
     use crate::screens::editor::tool_name;
     use crate::screens::overlay::{CaptureAction, Overlay};
     use crate::skins::takeui::testing::{click, run_capture};
-    use crate::ui::i18n::{Lang, Msg, lang, lang_lock, set_lang, t as tr};
+    use crate::ui::i18n::{Lang, Msg, lang, set_lang, t as tr};
     use egui::{Rect, pos2};
 
     /// The 1600 x 900 sample with the area (100,100)-(900,700) and a filled rectangle in it.
@@ -341,7 +341,6 @@ mod tests {
 
     #[test]
     fn the_options_bar_shows_only_with_a_drawing_tool_or_a_selection() {
-        let _lang = lang_lock();
         let (mut ov, mut shared) = capture(Tool::Select);
         let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
         let names = tool_names();
@@ -381,7 +380,6 @@ mod tests {
 
     #[test]
     fn edit_and_copy_buttons_act() {
-        let _lang = lang_lock();
         let (mut ov, mut shared) = capture(Tool::Select);
         let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
         let edit = p
@@ -405,7 +403,6 @@ mod tests {
 
     #[test]
     fn capture_texts_follow_the_language() {
-        let _lang = lang_lock();
         let before = lang();
         for (l, edit, drag) in [(Lang::Pt, "Editar", "Arraste"), (Lang::En, "Edit", "Drag")] {
             set_lang(l);

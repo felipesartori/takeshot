@@ -158,9 +158,8 @@ mod tests {
 
     #[test]
     fn the_notice_uses_the_theme_and_the_language() {
-        use crate::ui::i18n::{Lang, Msg, lang, lang_lock, set_lang, t as tr};
+        use crate::ui::i18n::{Lang, Msg, lang, set_lang, t as tr};
         use crate::ui::tokens::{ThemeId, tokens};
-        let _lang = lang_lock();
         let before = lang();
         for l in [Lang::Pt, Lang::En] {
             set_lang(l);

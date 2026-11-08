@@ -699,7 +699,6 @@ mod tests {
     #[test]
     fn the_status_chip_tells_off_and_unavailable_from_busy() {
         use crate::ui::kit::ChipState;
-        let _lang = crate::ui::i18n::lang_lock();
         let s = crate::system::settings::Settings::default();
         let area = label(&s.hotkey_area);
         assert_eq!(

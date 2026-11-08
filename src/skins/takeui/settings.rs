@@ -528,7 +528,7 @@ mod tests {
     use crate::screens::home::{Home, MainAction, SettingsSection};
     use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
-    use crate::ui::i18n::{Lang, LangPref, Msg, apply_language, every, lang, lang_lock, set_lang};
+    use crate::ui::i18n::{Lang, LangPref, Msg, apply_language, every, lang, set_lang};
     use crate::ui::tokens::{ThemeId, UiMode};
     use egui::vec2;
 
@@ -571,7 +571,6 @@ mod tests {
     fn every_section_fits_at_the_minimum_size() {
         // Nothing past the box's padding, and no text running into another (a hint under its
         // row's control, a label under a chip).
-        let _lang = lang_lock();
         let before = lang();
         for l in [Lang::Pt, Lang::En] {
             set_lang(l);
@@ -754,7 +753,6 @@ mod tests {
 
     #[test]
     fn mode_and_language_apply_at_once() {
-        let _lang = lang_lock();
         let before = lang();
         set_lang(Lang::Pt);
         let (mut home, mut shared) = Home::for_tests(vec![]);

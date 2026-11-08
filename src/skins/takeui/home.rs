@@ -410,11 +410,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_line_parts_the_header_from_the_filters() {
-        // "Início · escuro": the header is 87 px tall, then a line across the whole box.
+    /// The box and the line under the Início header, in Portuguese with these keys.
+    fn header_line(area: &str, full: &str) -> (egui::Rect, egui::Rect, Vec<(String, egui::Rect)>) {
         let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
-        let (_, _, blocks) = run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        shared.settings.hotkey_area = area.into();
+        shared.settings.hotkey_full = full.into();
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
         let t = shared.tokens(None);
         let b = content_box(&blocks, &t);
         let line = blocks
@@ -422,9 +424,40 @@ mod tests {
             .map(|(r, _)| *r)
             .find(|r| r.height() == 1.0 && r.width() >= b.width() - 2.0 && r.top() > b.top())
             .expect("a line across the box");
+        (b, line, painted)
+    }
+
+    #[test]
+    fn a_line_parts_the_header_from_the_filters() {
+        // "Início · escuro" (Portuguese, PrtSc): the header is 87 px tall, then a line across the
+        // whole box.
+        let before = crate::ui::i18n::lang();
+        crate::ui::i18n::set_lang(crate::ui::i18n::Lang::Pt);
+        let (b, line, _) = header_line("PrintScreen", "shift+PrintScreen");
+        crate::ui::i18n::set_lang(before);
         assert!(
             (line.top() - b.top() - 87.0).abs() <= 1.0,
             "{line:?} in {b:?}"
+        );
+    }
+
+    #[test]
+    fn a_wrapped_header_pushes_the_line_down() {
+        // macOS's keys (Ctrl+Shift+2) in Portuguese do not fit beside the title at 1160 px: the
+        // buttons go under it, and the line keeps 18 px below them.
+        let before = crate::ui::i18n::lang();
+        crate::ui::i18n::set_lang(crate::ui::i18n::Lang::Pt);
+        let (b, line, painted) = header_line("ctrl+shift+Digit2", "ctrl+shift+Digit1");
+        crate::ui::i18n::set_lang(before);
+        let header_bottom = painted
+            .iter()
+            .filter(|(_, r)| r.top() > b.top() && r.bottom() < line.top())
+            .map(|(_, r)| r.bottom())
+            .fold(0.0, f32::max);
+        assert!(line.top() > b.top() + 87.0, "the header wrapped: {line:?}");
+        assert!(
+            line.top() >= header_bottom + 17.0,
+            "{line:?} under {header_bottom}"
         );
     }
 

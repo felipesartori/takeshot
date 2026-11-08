@@ -1,6 +1,7 @@
 //! Interface language: automatic (follows the system), English or Portuguese, and the translated strings.
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(test))]
 use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -34,17 +35,28 @@ pub fn system_locale() -> Option<String> {
     sys_locale::get_locale()
 }
 
+#[cfg(not(test))]
 static CURRENT: AtomicU8 = AtomicU8::new(0);
 
-pub fn set_lang(lang: Lang) {
-    CURRENT.store(lang as u8, Ordering::Relaxed);
+// Tests run on parallel threads: each keeps its own language, so a test that switches it never
+// moves another test's layout mid-run.
+#[cfg(test)]
+thread_local! {
+    static CURRENT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
-/// Held by every test that changes the process-wide language, so parallel tests take turns.
-#[cfg(test)]
-pub fn lang_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+pub fn set_lang(lang: Lang) {
+    #[cfg(not(test))]
+    CURRENT.store(lang as u8, Ordering::Relaxed);
+    #[cfg(test)]
+    CURRENT.with(|c| c.set(lang as u8));
+}
+
+fn current() -> u8 {
+    #[cfg(not(test))]
+    return CURRENT.load(Ordering::Relaxed);
+    #[cfg(test)]
+    return CURRENT.with(|c| c.get());
 }
 
 /// Applies a language choice now: the system's language for Automático, else the one chosen.
@@ -53,7 +65,7 @@ pub fn apply_language(pref: LangPref) {
 }
 
 pub fn lang() -> Lang {
-    match CURRENT.load(Ordering::Relaxed) {
+    match current() {
         1 => Lang::Pt,
         _ => Lang::En,
     }
@@ -859,7 +871,6 @@ mod tests {
 
     #[test]
     fn translates_and_formats() {
-        let _lang = lang_lock();
         set_lang(Lang::Pt);
         assert_eq!(t(Msg::ModeSystem), "Sistema");
         set_lang(Lang::En);
