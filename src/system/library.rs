@@ -279,6 +279,82 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime};
 
+    /// A screen-like capture: bars and panels in flat colours, rows of "text", and a photo-like
+    /// block of noise, so it compresses and decodes like a real one.
+    fn screen_like(w: u32, h: u32, seed: u32) -> RgbaImage {
+        RgbaImage::from_fn(w, h, |x, y| {
+            let n = (x.wrapping_mul(73_856_093)
+                ^ y.wrapping_mul(19_349_663)
+                ^ seed.wrapping_mul(83_492_791))
+            .wrapping_mul(2_654_435_761);
+            let v = (n >> 24) as u8;
+            if y < h / 14 {
+                image::Rgba([32, 33, 38, 255])
+            } else if x < w / 6 {
+                image::Rgba([245, 245, 247, 255])
+            } else if x > w / 2 && y > h / 2 {
+                image::Rgba([v, v / 2 + 60, 255 - v, 255])
+            } else if (y / 9) % 3 == 0 && (x / 7 + seed) % 11 != 0 && v > 90 {
+                image::Rgba([40, 40, 46, 255])
+            } else {
+                image::Rgba([255, 255, 255, 255])
+            }
+        })
+    }
+
+    /// Makes the bench folder: 40 screen captures (PNG, 1920 x 1080 and 2560 x 1440) and 10
+    /// phone photos (JPEG, 4032 x 3024).
+    fn bench_folder(dir: &Path) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        for i in 0..40u32 {
+            let (w, h) = if i % 3 == 0 {
+                (2560, 1440)
+            } else {
+                (1920, 1080)
+            };
+            let p = dir.join(format!("shot-{i:03}.png"));
+            screen_like(w, h, i).save(&p).unwrap();
+            paths.push(p);
+        }
+        for i in 0..10u32 {
+            let p = dir.join(format!("photo-{i:03}.jpg"));
+            image::DynamicImage::ImageRgba8(screen_like(4032, 3024, 100 + i))
+                .to_rgb8()
+                .save(&p)
+                .unwrap();
+            paths.push(p);
+        }
+        paths
+    }
+
+    /// Milliseconds per file for `f` over `paths`, by kind (PNG captures, JPEG photos).
+    fn per_kind(paths: &[PathBuf], mut f: impl FnMut(&Path)) -> (f64, f64) {
+        let mut time = |ext: &str| {
+            let some: Vec<_> = paths
+                .iter()
+                .filter(|p| p.extension().is_some_and(|e| e == ext))
+                .collect();
+            let t = std::time::Instant::now();
+            for p in &some {
+                f(p);
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / some.len() as f64
+        };
+        (time("png"), time("jpg"))
+    }
+
+    #[test]
+    #[ignore = "benchmark: cargo test --release thumb_bench -- --ignored --nocapture"]
+    fn thumb_bench() {
+        let dir = temp_dir("thumb-bench");
+        let paths = bench_folder(&dir);
+        let (png, jpg) = per_kind(&paths, |p| {
+            make_thumb(p).unwrap();
+        });
+        println!("thumb_bench: one thread, no cache: {png:.1} ms a capture, {jpg:.1} ms a photo");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn temp_dir(test: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("takeshot-test-{}-{test}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
