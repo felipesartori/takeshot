@@ -6,23 +6,24 @@
 //!   --capture [--full] [--delay S] [--wait] [--sample]   area capture overlay
 //!   --edit [file]          editor for a picture (a sample when no file)
 //!   --pin file             picture pinned on top of other windows
+//!   --page inicio|estilo|ajustes   main window on that page
+//!   --page componentes     component gallery of the design system
+//!   --page editor|captura  the editor on the sample picture, the capture on the sample screen
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
+//!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only (every window)
+//!   --native-titlebar      the system's title bar instead of the theme's (also TAKESHOT_NATIVE_TITLEBAR=1)
+//!   --captures-dir path    the gallery reads this folder for this run only
+//!   --select name          Início starts with this capture chosen (for screenshots)
 
-mod actions;
-mod annotator;
-mod capture;
-mod editor;
-mod fonts;
-mod home;
-mod icons;
-mod model;
-mod notice;
-mod overlay;
-mod pin;
-mod presets;
-mod render;
-mod settings;
-mod widgets;
+mod engine;
+mod screens;
+mod system;
+mod ui;
+mod views;
+
+use engine::{model, render};
+use screens::{editor, home, notice, overlay, pin, widgets};
+use system::{actions, capture, fonts, settings};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,9 +35,55 @@ pub struct Shared {
     pub fonts: Arc<fonts::FontLib>,
     pub logo: widgets::LogoCache,
     toast: Option<(String, std::time::Instant)>,
+    /// `--theme` and `--mode` for this run only; the saved settings stay as they are.
+    pub overrides: RunOverrides,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct RunOverrides {
+    pub theme: Option<ui::tokens::ThemeId>,
+    pub mode: Option<ui::tokens::UiMode>,
+    /// `--captures-dir`: the gallery reads this folder instead of the saved one.
+    pub captures_dir: Option<String>,
+    /// `--select`: Início starts with this capture chosen.
+    pub select: Option<String>,
 }
 
 impl Shared {
+    /// A `Shared` for tests: default settings with a captures folder that does not exist.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        Self {
+            settings: settings::Settings {
+                save_dir: std::env::temp_dir()
+                    .join("takeshot-test-no-captures")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..Default::default()
+            },
+            settings_dirty: false,
+            fonts: Arc::new(fonts::FontLib::load()),
+            logo: widgets::LogoCache::new(),
+            toast: None,
+            overrides: RunOverrides::default(),
+        }
+    }
+
+    /// The folder the gallery reads: the run's override, else the setting.
+    pub fn captures_dir(&self) -> &str {
+        self.overrides
+            .captures_dir
+            .as_deref()
+            .unwrap_or(&self.settings.save_dir)
+    }
+
+    /// The look now: the run's override, else the setting; `system` decides the System mode.
+    pub fn tokens(&self, system: Option<egui::Theme>) -> ui::tokens::Tokens {
+        let theme = self.overrides.theme.unwrap_or(self.settings.ui_theme);
+        let mode = self.overrides.mode.unwrap_or(self.settings.ui_mode);
+        ui::tokens::tokens(theme, ui::tokens::effective_dark(mode, system))
+    }
+
     pub fn toast(&mut self, msg: String) {
         self.toast = Some((msg, std::time::Instant::now()));
     }
@@ -51,32 +98,86 @@ pub enum Switch {
 
 enum Mode {
     Home(Box<home::Home>),
+    /// The resident: main window, tray, hotkeys and the PrtSc hook.
+    Resident {
+        home: Box<home::Home>,
+        shell: Box<screens::shell::Shell>,
+        resident: Box<system::resident::Resident>,
+    },
     Overlay(Box<overlay::Overlay>),
     Editor(Box<editor::Editor>),
     Pin(Box<pin::Pin>),
     Notice(Box<notice::Notice>),
+    Gallery(Box<ui::gallery::Gallery>),
 }
 
 enum Launch {
     Home,
-    Capture { full: bool },
+    Capture {
+        full: bool,
+    },
     Edit(Option<PathBuf>),
     Pin(PathBuf),
+    Gallery,
+    /// The copy notice, for screenshots (`--page aviso`).
+    Notice,
 }
 
 struct Args {
     launch: Launch,
+    /// Start in the tray without a window (start with the system).
+    minimized: bool,
     screenshot: Option<PathBuf>,
     delay: f32,
     sample: bool,
+    theme: Option<ui::tokens::ThemeId>,
+    mode: Option<ui::tokens::UiMode>,
+    lang: Option<ui::i18n::LangPref>,
+    /// The main window's page to open on (`--page inicio|estilo|ajustes`).
+    page: Option<system::instance::Page>,
+    captures_dir: Option<String>,
+    select: Option<String>,
+}
+
+/// What `--page` names: a page of the main window, or the component gallery.
+pub enum PageArg {
+    Main(system::instance::Page),
+    Gallery,
+    /// The editor with the sample picture.
+    Editor,
+    /// The capture overlay on the sample screen.
+    Capture,
+    /// The notice shown after a copy.
+    Notice,
+}
+
+pub fn parse_page(s: &str) -> Option<PageArg> {
+    use system::instance::Page;
+    Some(match s {
+        "inicio" => PageArg::Main(Page::Start),
+        "estilo" => PageArg::Main(Page::Style),
+        "ajustes" => PageArg::Main(Page::Settings),
+        "componentes" => PageArg::Gallery,
+        "editor" => PageArg::Editor,
+        "captura" => PageArg::Capture,
+        "aviso" => PageArg::Notice,
+        _ => return None,
+    })
 }
 
 fn parse_args() -> Args {
     let mut a = Args {
         launch: Launch::Home,
+        minimized: false,
         screenshot: None,
         delay: 0.0,
         sample: false,
+        theme: None,
+        mode: None,
+        lang: None,
+        page: None,
+        captures_dir: None,
+        select: None,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut full = false;
@@ -89,6 +190,16 @@ fn parse_args() -> Args {
                 i += 1;
             }
             "--capture" => capture = true,
+            "--minimized" => a.minimized = true,
+            "--native-titlebar" => ui::chrome::init(true),
+            "--captures-dir" => {
+                a.captures_dir = v.get(i + 1).cloned();
+                i += 1;
+            }
+            "--select" => {
+                a.select = v.get(i + 1).cloned();
+                i += 1;
+            }
             "--full" => full = true,
             "--sample" => a.sample = true,
             "--wait" => a.delay = a.delay.max(0.3),
@@ -106,6 +217,48 @@ fn parse_args() -> Args {
                 }
                 a.launch = Launch::Edit(file);
             }
+            "--theme" => {
+                a.theme = match v.get(i + 1).map(String::as_str) {
+                    Some("takeui") => Some(ui::tokens::ThemeId::TakeUi),
+                    Some("coral") => Some(ui::tokens::ThemeId::Coral),
+                    other => unknown_value("--theme", other),
+                };
+                i += 1;
+            }
+            "--mode" => {
+                a.mode = match v.get(i + 1).map(String::as_str) {
+                    Some("light") => Some(ui::tokens::UiMode::Light),
+                    Some("dark") => Some(ui::tokens::UiMode::Dark),
+                    Some("system") => Some(ui::tokens::UiMode::System),
+                    other => unknown_value("--mode", other),
+                };
+                i += 1;
+            }
+            "--lang" => {
+                a.lang = match v.get(i + 1).map(String::as_str) {
+                    Some("en") => Some(ui::i18n::LangPref::En),
+                    Some("pt") => Some(ui::i18n::LangPref::Pt),
+                    Some("auto") => Some(ui::i18n::LangPref::Auto),
+                    other => unknown_value("--lang", other),
+                };
+                i += 1;
+            }
+            "--page" => {
+                match v.get(i + 1).map(String::as_str).and_then(parse_page) {
+                    Some(PageArg::Gallery) => a.launch = Launch::Gallery,
+                    Some(PageArg::Main(p)) => a.page = Some(p),
+                    Some(PageArg::Editor) => a.launch = Launch::Edit(None),
+                    Some(PageArg::Notice) => a.launch = Launch::Notice,
+                    Some(PageArg::Capture) => {
+                        capture = true;
+                        a.sample = true;
+                    }
+                    None => {
+                        unknown_value::<()>("--page", v.get(i + 1).map(String::as_str));
+                    }
+                }
+                i += 1;
+            }
             "--pin" => {
                 if let Some(f) = v.get(i + 1) {
                     a.launch = Launch::Pin(PathBuf::from(f));
@@ -122,6 +275,28 @@ fn parse_args() -> Args {
     a
 }
 
+/// The main window's state, on the page `--page` named (Início otherwise).
+fn main_home(
+    ctx: &egui::Context,
+    shared: &Shared,
+    page: Option<system::instance::Page>,
+) -> home::Home {
+    let mut h = home::Home::new(ctx, shared);
+    if let Some(p) = page {
+        h.open(p);
+    }
+    if let Some(name) = &shared.overrides.select {
+        h.select_by_name(name);
+    }
+    h
+}
+
+/// Reports a flag value the app does not know, so a typo never yields a silent fallback.
+fn unknown_value<T>(flag: &str, value: Option<&str>) -> Option<T> {
+    eprintln!("takeshot: unknown value {value:?} for {flag}; using the saved setting");
+    None
+}
+
 struct App {
     mode: Mode,
     shared: Shared,
@@ -130,8 +305,12 @@ struct App {
     shot_saved: Arc<AtomicBool>,
     shot_requested: bool,
     editor_window: (egui::Pos2, egui::Vec2),
-    /// Monitor of the capture, in points (for placing the notice).
-    monitor: (egui::Pos2, egui::Vec2),
+    /// Work area of the capture's monitor, in points (for placing the notice).
+    notice_area: egui::Rect,
+    /// The resident's Quit, waiting for this window's answer (editors, pinned pictures, capture).
+    quit_request: Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>,
+    /// Every window agreed to the Quit: this one closes.
+    quit_close: Arc<AtomicBool>,
 }
 
 impl App {
@@ -142,41 +321,141 @@ impl App {
             ctx.send_viewport_cmd(C::Fullscreen(false));
         }
         ctx.send_viewport_cmd(C::WindowLevel(egui::WindowLevel::Normal));
-        ctx.send_viewport_cmd(C::Decorations(true));
+        // The editor draws the theme's own bar; the system's only with the native fallback.
+        ctx.send_viewport_cmd(C::Decorations(ui::chrome::native()));
         ctx.send_viewport_cmd(C::Resizable(true));
         ctx.send_viewport_cmd(C::InnerSize(size));
         ctx.send_viewport_cmd(C::OuterPosition(pos));
-        ctx.send_viewport_cmd(C::Title("Takeshot · editor".into()));
+        ctx.send_viewport_cmd(C::Title(screens::editor::EDITOR_TITLE.into()));
         self.mode = Mode::Editor(e);
+    }
+
+    /// The resident's Quit, answered here so a minimized or hidden window answers too (only
+    /// `logic` runs for those): an editor with changes comes to the front to ask its user; the
+    /// rest agree at once. Every window closes only once all have agreed.
+    fn answer_quit(&mut self, ctx: &egui::Context) {
+        use egui::ViewportCommand as C;
+        let root = egui::ViewportId::ROOT;
+        if let Some(reply) = self.quit_request.lock().ok().and_then(|mut q| q.take()) {
+            let asks = match &mut self.mode {
+                Mode::Editor(e) => e.quit_requested(reply),
+                _ => {
+                    let _ = reply.send(true);
+                    false
+                }
+            };
+            if asks {
+                ctx.send_viewport_cmd_to(root, C::Minimized(false));
+                ctx.send_viewport_cmd_to(root, C::Focus);
+                ctx.send_viewport_cmd_to(
+                    root,
+                    C::RequestUserAttention(egui::UserAttentionType::Informational),
+                );
+                ctx.request_repaint();
+            }
+        }
+        if self.quit_close.swap(false, Ordering::SeqCst) {
+            if let Mode::Editor(e) = &mut self.mode {
+                e.close_for_quit();
+            }
+            self.shared.settings.save();
+            ctx.send_viewport_cmd_to(root, C::Close);
+        }
     }
 
     fn switch_to_notice(&mut self, ctx: &egui::Context, n: Box<notice::Notice>) {
         use egui::ViewportCommand as C;
-        let (pos, size) = self.monitor;
         if !cfg!(target_os = "macos") {
             ctx.send_viewport_cmd(C::Fullscreen(false));
         }
         ctx.send_viewport_cmd(C::Decorations(false));
         ctx.send_viewport_cmd(C::WindowLevel(egui::WindowLevel::AlwaysOnTop));
         ctx.send_viewport_cmd(C::InnerSize(notice::NOTICE_SIZE));
-        ctx.send_viewport_cmd(C::OuterPosition(notice_pos(pos, size)));
+        ctx.send_viewport_cmd(C::OuterPosition(notice::notice_pos(self.notice_area)));
         self.mode = Mode::Notice(n);
     }
 }
 
-fn notice_pos(pos: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
-    pos + size - notice::NOTICE_SIZE - egui::vec2(24.0, 64.0)
-}
-
 impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.answer_quit(ctx);
+        if let Mode::Resident {
+            home,
+            shell,
+            resident,
+        } = &mut self.mode
+        {
+            for ev in resident.poll() {
+                shell.handle(ctx, ev, home, &mut self.shared);
+            }
+            shell.tick(ctx, resident, &self.shared);
+            if self.shared.settings_dirty {
+                self.shared.settings_dirty = false;
+                self.shared.settings.save();
+            }
+        }
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // The resident's root is a transparent host on Windows and macOS.
+        if matches!(self.mode, Mode::Resident { .. }) && screens::shell::HOSTED {
+            [0.0; 4]
+        } else {
+            // eframe's default, as before the resident.
+            egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32()
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let sw = match &mut self.mode {
-            Mode::Home(h) => h.ui(ui, frame, &mut self.shared),
-            Mode::Overlay(o) => o.ui(ui, frame, &mut self.shared),
-            Mode::Editor(e) => e.ui(ui, frame, &mut self.shared),
-            Mode::Pin(p) => p.ui(ui, frame, &mut self.shared),
-            Mode::Notice(n) => n.ui(ui, frame, &mut self.shared),
+            Mode::Home(h) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                views::begin_frame(&ctx, &t);
+                for a in views::main_window(ui, &t, h, &mut self.shared) {
+                    h.apply(a, &ctx, &mut self.shared);
+                }
+                Switch::None
+            }
+            Mode::Resident {
+                home,
+                shell,
+                resident,
+            } => {
+                shell.ui(ui, frame, resident, home, &mut self.shared);
+                Switch::None
+            }
+            Mode::Overlay(o) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                views::begin_frame(&ctx, &t);
+                o.ui(ui, Some(frame), &t, &mut self.shared)
+            }
+            Mode::Editor(e) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                views::begin_frame(&ctx, &t);
+                e.ui(ui, frame, &t, &mut self.shared)
+            }
+            Mode::Pin(p) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                views::begin_frame(&ctx, &t);
+                p.ui(ui, frame, &t, &mut self.shared)
+            }
+            Mode::Notice(n) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                views::begin_frame(&ctx, &t);
+                n.ui(ui, &t)
+            }
+            Mode::Gallery(g) => {
+                let fill = g.tokens().shell;
+                egui::CentralPanel::no_frame()
+                    .frame(
+                        egui::Frame::new()
+                            .fill(fill)
+                            .inner_margin(egui::Margin::same(24)),
+                    )
+                    .show(ui, |ui| g.ui(ui));
+                Switch::None
+            }
         };
         match sw {
             Switch::ToEditor(e) => self.switch_to_editor(&ctx, e),
@@ -191,9 +470,12 @@ impl eframe::App for App {
             Switch::None => {}
         }
 
-        if let Some((msg, at)) = &self.shared.toast {
-            if at.elapsed().as_secs_f32() < 2.6 {
-                widgets::toast(&ctx, msg);
+        // The resident draws its notices in the main window (the root may be an invisible host).
+        if let Some((msg, at)) = &self.shared.toast
+            && !matches!(self.mode, Mode::Resident { .. })
+        {
+            if at.elapsed().as_secs_f32() < ui::kit::toast_seconds(msg) {
+                ui::kit::toast(&ctx, &self.shared.tokens(ctx.system_theme()), msg);
                 ctx.request_repaint();
             } else {
                 self.shared.toast = None;
@@ -229,6 +511,10 @@ impl eframe::App for App {
                 });
             }
             if self.shot_saved.load(Ordering::SeqCst) || self.frames > 600 {
+                // A sample editor opens with marks, so it would ask before closing.
+                if let Mode::Editor(e) = &mut self.mode {
+                    e.force_close();
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
@@ -236,8 +522,40 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
+    ui::chrome::init(false);
     let args = parse_args();
     let settings = settings::Settings::load();
+    // The language first: window titles are set before the first frame.
+    ui::i18n::set_lang(ui::i18n::resolve(
+        args.lang.unwrap_or(settings.lang),
+        ui::i18n::system_locale().as_deref(),
+    ));
+
+    // The resident is one per user: a second launch shows the running one and leaves.
+    let resident_mode = matches!(args.launch, Launch::Home) && args.screenshot.is_none();
+    let mut listener = None;
+    if resident_mode {
+        let name = system::instance::endpoint();
+        match system::instance::claim(&name) {
+            system::instance::Claim::Secondary => {
+                if let Some(page) = system::instance::second_launch_page(args.minimized) {
+                    let _ = system::instance::send_show(&name, page);
+                }
+                return Ok(());
+            }
+            system::instance::Claim::Primary(l) => listener = Some(l),
+            system::instance::Claim::Alone => {}
+        }
+    }
+
+    // One capture at a time: while a selection is on screen, another PrtSc is ignored.
+    let mut capture_slot = None;
+    if matches!(args.launch, Launch::Capture { .. }) && args.screenshot.is_none() && !args.sample {
+        match system::instance::capture_slot(&system::instance::endpoint()) {
+            Some(slot) => capture_slot = Some(slot),
+            None => return Ok(()),
+        }
+    }
 
     // Grab the screen before any window of ours exists.
     let mut shot = None;
@@ -257,10 +575,12 @@ fn main() -> eframe::Result {
     }
 
     let mut vp = egui::ViewportBuilder::default()
-        .with_icon(Arc::new(icons::app_icon()))
+        .with_icon(Arc::new(ui::brand::window_icon(
+            args.theme.unwrap_or(settings.ui_theme),
+        )))
         .with_app_id("takeshot");
     let mut editor_window = (egui::pos2(80.0, 60.0), egui::vec2(1280.0, 820.0));
-    let mut monitor = (egui::pos2(0.0, 0.0), egui::vec2(1600.0, 900.0));
+    let mut notice_area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0));
     let mut instant_notice = None;
     let mut pin_img = None;
     match (&args.launch, &shot) {
@@ -270,7 +590,19 @@ fn main() -> eframe::Result {
             let size = egui::vec2(s.image.width() as f32 / k, s.image.height() as f32 / k);
             let ew = egui::vec2(1280.0f32.min(size.x - 40.0), 820.0f32.min(size.y - 60.0));
             editor_window = (pos + (size - ew) / 2.0, ew);
-            monitor = (pos, size);
+            // The notice keeps off the taskbar: the work area of this monitor, in points.
+            let middle = egui::pos2(
+                s.x as f32 + s.image.width() as f32 / 2.0,
+                s.y as f32 + s.image.height() as f32 / 2.0,
+            );
+            notice_area = capture::work_area(middle)
+                .map(|r| {
+                    egui::Rect::from_min_max(
+                        (r.min.to_vec2() / k).to_pos2(),
+                        (r.max.to_vec2() / k).to_pos2(),
+                    )
+                })
+                .unwrap_or(egui::Rect::from_min_size(pos, size));
             if *full && !settings.open_editor_after_full && args.screenshot.is_none() {
                 // Shift+PrtSc saves the full screen at once.
                 let fonts = fonts::FontLib::load();
@@ -300,7 +632,7 @@ fn main() -> eframe::Result {
                     .with_always_on_top()
                     .with_resizable(false)
                     .with_inner_size(notice::NOTICE_SIZE)
-                    .with_position(notice_pos(pos, size));
+                    .with_position(notice::notice_pos(notice_area));
                 instant_notice = Some(notice::Notice::saved(path));
             } else if *full && settings.open_editor_after_full {
                 vp = vp
@@ -309,12 +641,12 @@ fn main() -> eframe::Result {
                     .with_position(editor_window.0);
             } else if args.screenshot.is_some() {
                 vp = vp
-                    .with_title("Takeshot · captura")
+                    .with_title(ui::i18n::t(ui::i18n::Msg::CaptureWindowTitle))
                     .with_inner_size([1280.0, 720.0])
                     .with_decorations(false);
             } else {
                 vp = vp
-                    .with_title("Takeshot · captura")
+                    .with_title(ui::i18n::t(ui::i18n::Msg::CaptureWindowTitle))
                     .with_decorations(false)
                     .with_position(pos)
                     .with_inner_size(size)
@@ -326,10 +658,10 @@ fn main() -> eframe::Result {
             }
         }
         (Launch::Edit(_), _) => {
-            vp = vp
-                .with_title("Takeshot · editor")
+            vp = ui::chrome::frameless(vp)
+                .with_title(screens::editor::EDITOR_TITLE)
                 .with_inner_size([1280.0, 820.0])
-                .with_min_inner_size([900.0, 560.0]);
+                .with_min_inner_size([900.0, 600.0]);
         }
         (Launch::Pin(p), _) => {
             if let Ok(img) = image::open(p) {
@@ -337,7 +669,7 @@ fn main() -> eframe::Result {
                 let sz = egui::vec2(img.width() as f32, img.height() as f32);
                 let k = (900.0 / sz.x).min(700.0 / sz.y).min(1.0);
                 vp = vp
-                    .with_title("Takeshot · fixado")
+                    .with_title("Takeshot")
                     .with_decorations(false)
                     .with_always_on_top()
                     .with_inner_size(sz * k)
@@ -346,12 +678,37 @@ fn main() -> eframe::Result {
                 let _ = std::fs::remove_file(p);
             }
         }
-        _ => {
+        (Launch::Gallery, _) => {
             vp = vp
+                .with_title(ui::i18n::t(ui::i18n::Msg::GalleryWindowTitle))
+                .with_inner_size([1280.0, 900.0]);
+        }
+        (Launch::Notice, _) => {
+            vp = vp
+                .with_title("Takeshot")
+                .with_decorations(false)
+                .with_resizable(false)
+                .with_inner_size(notice::NOTICE_SIZE);
+        }
+        _ if resident_mode && screens::shell::HOSTED => {
+            // An invisible host: tiny, transparent, click-through, off screen and off the taskbar.
+            // Its own title, so the window lookups by "Takeshot" find only the main window.
+            vp = vp
+                .with_title("Takeshot resident")
+                .with_inner_size([1.0, 1.0])
+                .with_position([-10000.0, -10000.0])
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_mouse_passthrough(true)
+                .with_taskbar(false);
+        }
+        _ => {
+            vp = ui::chrome::frameless(vp)
                 .with_title("Takeshot")
                 .with_inner_size([1160.0, 740.0])
                 .with_min_inner_size([900.0, 600.0])
-                .with_drag_and_drop(true);
+                .with_drag_and_drop(true)
+                .with_visible(!(resident_mode && args.minimized));
         }
     }
 
@@ -368,33 +725,55 @@ fn main() -> eframe::Result {
             let ctx = &cc.egui_ctx;
             let fonts = Arc::new(fonts::FontLib::load());
             fonts.install(ctx);
-            widgets::apply_theme(ctx);
+            // Ctrl+0, Ctrl+1 and Ctrl+plus or minus belong to the editor's zoom, not egui's UI zoom.
+            ctx.options_mut(|o| o.zoom_with_keyboard = false);
+            // Theme, mode and language: command-line overrides win for this run only.
+            let theme = args.theme.unwrap_or(settings.ui_theme);
+            let ui_mode = args.mode.unwrap_or(settings.ui_mode);
+            let lang_pref = args.lang.unwrap_or(settings.lang);
+            ui::i18n::set_lang(ui::i18n::resolve(
+                lang_pref,
+                ui::i18n::system_locale().as_deref(),
+            ));
             let mut shared = Shared {
                 settings,
                 settings_dirty: false,
                 fonts,
                 logo: widgets::LogoCache::new(),
                 toast: None,
+                overrides: RunOverrides {
+                    theme: args.theme,
+                    mode: args.mode,
+                    captures_dir: args.captures_dir.clone(),
+                    select: args.select.clone(),
+                },
             };
             shared.logo.sync(ctx, &shared.settings.watermark);
+            views::begin_frame(ctx, &shared.tokens(ctx.system_theme()));
             let mode = match args.launch {
                 Launch::Capture { .. } if instant_notice.is_some() => {
                     Mode::Notice(Box::new(instant_notice.take().unwrap()))
                 }
                 Launch::Capture { full } => match shot {
-                    Some(s) if full && shared.settings.open_editor_after_full => Mode::Editor(
-                        Box::new(editor::Editor::new(ctx, s.image, Vec::new(), &shared)),
-                    ),
+                    Some(s) if full && shared.settings.open_editor_after_full => {
+                        Mode::Editor(Box::new(editor::Editor::new(
+                            ctx,
+                            s.image,
+                            engine::doc::Doc::new(),
+                            &shared,
+                        )))
+                    }
                     Some(s) => {
-                        let o = overlay::Overlay::new(ctx, s, &shared);
+                        // The overlay holds the slot; the editor and the notice paths drop it here.
+                        let o = overlay::Overlay::new(ctx, s, &shared).hold(capture_slot.take());
                         Mode::Overlay(Box::new(if demo { o.demo() } else { o }))
                     }
                     None => {
-                        shared.toast(format!(
-                            "Não consegui capturar a tela: {}",
-                            capture_error.unwrap_or_default()
+                        shared.toast(ui::i18n::tf(
+                            ui::i18n::Msg::CaptureFailed,
+                            &[&capture_error.unwrap_or_default()],
                         ));
-                        Mode::Home(Box::new(home::Home::new(ctx, &shared, false)))
+                        Mode::Home(Box::new(home::Home::new(ctx, &shared)))
                     }
                 },
                 Launch::Edit(file) => {
@@ -406,24 +785,71 @@ fn main() -> eframe::Result {
                         Some(i) => (i, false),
                         None => (capture::sample_window(1200, 740), true),
                     };
-                    if let Some(p) = &file
-                        && p.starts_with(std::env::temp_dir())
-                    {
-                        let _ = std::fs::remove_file(p);
+                    // A real file keeps its name in the title bar; a temporary hand-off is removed
+                    // and shows the name a new capture would get.
+                    let mut name = None;
+                    if let Some(p) = &file {
+                        if p.starts_with(std::env::temp_dir()) {
+                            let _ = std::fs::remove_file(p);
+                        } else if !demo {
+                            name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                        }
                     }
                     let anns = if demo { demo_annotations() } else { Vec::new() };
-                    Mode::Editor(Box::new(editor::Editor::new(ctx, img, anns, &shared)))
+                    let ed =
+                        editor::Editor::new(ctx, img, engine::doc::Doc::from_anns(anns), &shared);
+                    Mode::Editor(Box::new(match name {
+                        Some(n) => ed.with_name(n),
+                        None => ed,
+                    }))
                 }
                 Launch::Pin(_) => match pin_img {
                     Some((img, size)) => Mode::Pin(Box::new(pin::Pin::new(img, size))),
-                    None => Mode::Home(Box::new(home::Home::new(ctx, &shared, false))),
+                    None => Mode::Home(Box::new(home::Home::new(ctx, &shared))),
                 },
-                Launch::Home => Mode::Home(Box::new(home::Home::new(
-                    ctx,
-                    &shared,
-                    screenshot.is_none(),
+                Launch::Gallery => Mode::Gallery(Box::new(ui::gallery::Gallery::new(
+                    ctx, theme, ui_mode, lang_pref,
                 ))),
+                Launch::Notice => Mode::Notice(Box::new(notice::Notice::copied())),
+                Launch::Home if resident_mode => {
+                    let resident =
+                        system::resident::Resident::start(ctx, &shared.settings, listener.take());
+                    let shell = screens::shell::Shell::new(screens::shell::HOSTED, !args.minimized);
+                    Mode::Resident {
+                        home: Box::new(main_home(ctx, &shared, args.page)),
+                        shell: Box::new(shell),
+                        resident: Box::new(resident),
+                    }
+                }
+                Launch::Home => Mode::Home(Box::new(main_home(ctx, &shared, args.page))),
             };
+            // A window of its own answers the resident's Quit.
+            let quit_request = Arc::new(std::sync::Mutex::new(None));
+            let quit_close = Arc::new(AtomicBool::new(false));
+            if screenshot.is_none()
+                && matches!(mode, Mode::Editor(_) | Mode::Pin(_) | Mode::Overlay(_))
+            {
+                let base = system::instance::endpoint();
+                let pid = std::process::id();
+                let (slot, ask_ctx) = (quit_request.clone(), ctx.clone());
+                let (close, close_ctx) = (quit_close.clone(), ctx.clone());
+                let listening = system::instance::listen_for_quit(
+                    &system::instance::child_endpoint(&base, pid),
+                    move |reply| {
+                        if let Ok(mut q) = slot.lock() {
+                            *q = Some(reply);
+                        }
+                        ask_ctx.request_repaint();
+                    },
+                    move || {
+                        close.store(true, Ordering::SeqCst);
+                        close_ctx.request_repaint();
+                    },
+                );
+                if listening.is_ok() {
+                    std::thread::spawn(move || system::instance::register_child(&base, pid));
+                }
+            }
             Ok(Box::new(App {
                 mode,
                 shared,
@@ -432,7 +858,9 @@ fn main() -> eframe::Result {
                 shot_saved: Arc::new(AtomicBool::new(false)),
                 shot_requested: false,
                 editor_window,
-                monitor,
+                notice_area,
+                quit_request,
+                quit_close,
             }))
         }),
     );
@@ -467,4 +895,85 @@ fn demo_annotations() -> Vec<model::Ann> {
             filled: true,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ui::tokens::{ThemeId, UiMode};
+
+    fn shared(theme: ThemeId, mode: UiMode) -> Shared {
+        Shared {
+            settings: settings::Settings {
+                ui_theme: theme,
+                ui_mode: mode,
+                ..Default::default()
+            },
+            settings_dirty: false,
+            fonts: Arc::new(fonts::FontLib::load()),
+            logo: widgets::LogoCache::new(),
+            toast: None,
+            overrides: RunOverrides::default(),
+        }
+    }
+
+    #[test]
+    fn overrides_win_for_this_run_only() {
+        let mut s = shared(ThemeId::TakeUi, UiMode::Dark);
+        s.overrides.theme = Some(ThemeId::Coral);
+        let t = s.tokens(None);
+        assert_eq!(t.theme, ThemeId::Coral);
+        assert!(t.dark);
+        s.overrides.mode = Some(UiMode::Light);
+        assert!(!s.tokens(None).dark);
+        assert_eq!(s.settings.ui_theme, ThemeId::TakeUi, "settings untouched");
+        assert_eq!(s.settings.ui_mode, UiMode::Dark, "settings untouched");
+    }
+
+    #[test]
+    fn system_mode_follows_the_os() {
+        let s = shared(ThemeId::TakeUi, UiMode::System);
+        assert!(!s.tokens(Some(egui::Theme::Light)).dark);
+        assert!(s.tokens(Some(egui::Theme::Dark)).dark);
+        assert!(s.tokens(None).dark, "unknown: dark");
+    }
+
+    #[test]
+    fn page_opens_the_main_window_on_it() {
+        use system::instance::Page;
+        let ctx = egui::Context::default();
+        let mut s = shared(ThemeId::TakeUi, UiMode::Dark);
+        s.settings.save_dir = std::env::temp_dir()
+            .join("takeshot-test-no-captures")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(main_home(&ctx, &s, Some(Page::Style)).page(), Page::Style);
+        assert_eq!(
+            main_home(&ctx, &s, Some(Page::Settings)).page(),
+            Page::Settings
+        );
+        assert_eq!(main_home(&ctx, &s, None).page(), Page::Start);
+    }
+
+    #[test]
+    fn pages_parse() {
+        use system::instance::Page;
+        assert!(matches!(
+            parse_page("inicio"),
+            Some(PageArg::Main(Page::Start))
+        ));
+        assert!(matches!(
+            parse_page("estilo"),
+            Some(PageArg::Main(Page::Style))
+        ));
+        assert!(matches!(
+            parse_page("ajustes"),
+            Some(PageArg::Main(Page::Settings))
+        ));
+        assert!(matches!(parse_page("componentes"), Some(PageArg::Gallery)));
+        assert!(matches!(parse_page("editor"), Some(PageArg::Editor)));
+        assert!(matches!(parse_page("captura"), Some(PageArg::Capture)));
+        assert!(matches!(parse_page("aviso"), Some(PageArg::Notice)));
+        assert!(parse_page("x").is_none());
+    }
 }

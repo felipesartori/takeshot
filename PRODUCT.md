@@ -37,14 +37,14 @@ Instant capture with in-place annotation combined with a presentation editor (ba
 ## Brand Commitments
 
 - Product name: Takeshot. Needs a logo and app icon in every format (Windows .ico, macOS .icns, Linux PNG set, tray icons for light and dark).
-- Design system based on TakeFlow's frontend: shadcn/ui neutral tokens, Roboto, 8px radius. Two complete, switchable themes, each with light, dark and system modes: **TakeUI** (TakeFlow family: purple `#8D43B1` actions, green `#3FCC59` for active, pill top navigation, own title bar) and **Coral UI** (own identity: coral `#FF6B47` actions with dark text, sidebar, native title bar). A theme changes palette, brand mark and layout; every feature must exist in both.
+- Design system based on TakeFlow's frontend: shadcn/ui neutral tokens, Roboto, 8px radius. Two switchable themes over one layout (pill top navigation, own title bar), each with light, dark and system modes: **TakeUI** (TakeFlow family: purple `#8D43B1` actions, green `#3FCC59` for active, selection ring) and **Coral UI** (own identity: coral `#FF6B47` actions with dark text, a deeper `#E8552F` in light mode so indicators keep 3:1 against white, crop-tick selection marks, the active tool filled in coral, its own mark and lowercase "takeshot"). A theme changes palette, brand mark and name and the look of a few components; every function stays in the same place in both.
 - The executable carries the TakeUI icon; window, taskbar and tray icons follow the active theme.
 - Public repository `takeflow-oficial/takeshot`, AGPL-3.0-or-later, copyright Takeflow Sistemas. No "inspired by" credits in the app or README.
 - Professional and modern, smooth controls without stutter, very little animation. Hover changes color only, never size.
 
 ## Evidence on Hand
 
-- Current UI screenshots: `docs/home.png`, `docs/editor.png`, `docs/capture.png` (anti-reference for the look; the flow is kept).
+- The interface before the redesign is the anti-reference for the look (the flow is kept); its screenshots are not kept in the repo. The redesigned screens are in `design/screens/` (exported from the `.fig`) and the README's pictures in `docs/images/`.
 - TakeFlow logo: `D:\Joseph\Desktop\DEV\takeflow\frontend\public\logo-takeflow.png`.
 - No Takeshot logo exists yet; no testimonials, user counts or benchmarks exist and none may be invented.
 

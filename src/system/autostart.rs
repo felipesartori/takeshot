@@ -1,0 +1,91 @@
+//! Start with the system: the OS launches `takeshot --minimized` at login (Run key, LaunchAgent, XDG autostart).
+
+use auto_launch::{AutoLaunch, AutoLaunchBuilder};
+use std::path::PathBuf;
+
+/// The program the system should start for an entry it keeps (the login entry, a desktop
+/// shortcut): the running file, except inside an AppImage, whose running file lives in a mount
+/// that goes when it closes; then the AppImage itself (`$APPIMAGE`).
+pub fn launcher(running: PathBuf, appimage: Option<std::ffi::OsString>) -> PathBuf {
+    appimage
+        .filter(|a| !a.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(running)
+}
+
+/// `launcher` for this process.
+pub fn program() -> Result<PathBuf, String> {
+    let running = std::env::current_exe().map_err(|e| e.to_string())?;
+    Ok(launcher(running, std::env::var_os("APPIMAGE")))
+}
+
+/// The login entry for this executable; nothing changes on the system until `set_autostart`.
+pub fn autostart() -> Result<AutoLaunch, String> {
+    let exe = program()?;
+    // The Run value is "path args": quote the path, which may have spaces ("C:\\Program Files").
+    #[cfg(windows)]
+    let path = format!("\"{}\"", exe.display());
+    #[cfg(not(windows))]
+    let path = exe.to_string_lossy().into_owned();
+    let mut b = AutoLaunchBuilder::new();
+    b.set_app_name("Takeshot")
+        .set_app_path(&path)
+        .set_args(&["--minimized"]);
+    #[cfg(windows)]
+    b.set_windows_enable_mode(auto_launch::WindowsEnableMode::CurrentUser);
+    #[cfg(target_os = "macos")]
+    b.set_macos_launch_mode(auto_launch::MacOSLaunchMode::LaunchAgent);
+    #[cfg(target_os = "linux")]
+    b.set_linux_launch_mode(auto_launch::LinuxLaunchMode::XdgAutostart);
+    b.build().map_err(|e| e.to_string())
+}
+
+/// Adds or removes the login entry.
+pub fn set_autostart(on: bool) -> Result<(), String> {
+    let a = autostart()?;
+    if on { a.enable() } else { a.disable() }.map_err(|e| e.to_string())
+}
+
+/// Whether the login entry exists, read from the system each time (the switch shows the truth).
+pub fn autostart_enabled() -> bool {
+    autostart().is_ok_and(|a| a.is_enabled().unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_appimage_hands_the_system_the_appimage_itself() {
+        let mounted = PathBuf::from("/tmp/.mount_takeshAbc/usr/bin/takeshot");
+        let image = std::ffi::OsString::from("/home/ana/Apps/takeshot.AppImage");
+        assert_eq!(
+            launcher(mounted.clone(), Some(image)),
+            PathBuf::from("/home/ana/Apps/takeshot.AppImage")
+        );
+        assert_eq!(launcher(mounted.clone(), None), mounted);
+        assert_eq!(launcher(mounted.clone(), Some("".into())), mounted);
+    }
+
+    #[test]
+    fn autostart_starts_minimized_as_takeshot() {
+        let a = autostart().expect("autostart entry");
+        assert_eq!(a.get_app_name(), "Takeshot");
+        assert_eq!(a.get_args(), ["--minimized".to_string()]);
+    }
+
+    /// The whole Run entry: the current user only (no admin), and a quoted path, since an install
+    /// folder such as "C:\\Program Files" has spaces.
+    #[cfg(windows)]
+    #[test]
+    fn autostart_is_the_current_users_quoted_run_entry() {
+        let exe = std::env::current_exe().unwrap();
+        let want = AutoLaunch::new(
+            "Takeshot",
+            &format!("\"{}\"", exe.display()),
+            auto_launch::WindowsEnableMode::CurrentUser,
+            &["--minimized"],
+        );
+        assert_eq!(autostart().unwrap(), want);
+    }
+}

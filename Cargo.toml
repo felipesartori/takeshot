@@ -24,6 +24,71 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 mouse_position = "0.1"
 epaint_default_fonts = "0.37"
+sys-locale = "0.3.2"
+interprocess = "2.4.7"
+auto-launch = "0.6.0"
+tray-icon = "0.26.1"
+trash = "5.3.0"
+
+# Installers: `cargo build --release`, then `cargo packager --release --formats nsis,wix` (Windows),
+# `app` (macOS; CI signs it ad hoc and makes the dmg with hdiutil) or `deb,appimage` (Linux).
+# CI builds them on every run and publishes them on tags (.github/workflows/build.yml).
+[package.metadata.packager]
+product-name = "Takeshot"
+identifier = "br.com.takeflow.takeshot"
+publisher = "Takeflow Sistemas"
+copyright = "Copyright (c) 2026 Takeflow Sistemas"
+category = "Utility"
+license-file = "LICENSE"
+out-dir = "target/packages"
+# The licenses go with every copy (the fonts' OFL and the icons' ISC ask for it).
+resources = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+binaries = [{ path = "takeshot", main = true }]
+icons = [
+  "assets/brand/takeshot.ico",
+  "assets/brand/Takeshot.icns",
+  "assets/brand/png/takeui-app-32.png",
+  "assets/brand/png/takeui-app-64.png",
+  "assets/brand/png/takeui-app-128.png",
+  "assets/brand/png/takeui-app-256.png",
+  "assets/brand/png/takeui-app-512.png",
+]
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+template = "packaging/windows/installer.nsi"
+languages = ["English", "PortugueseBR"]
+appdata-paths = ["$APPDATA/takeshot", "$LOCALAPPDATA/takeshot"]
+
+# What `dpkg-shlibdeps` finds (scripts/linux-packages.sh), plus what is loaded at run time: EGL and GL
+# (glow), xkbcommon, X11 and Wayland (winit), and the tray's AppIndicator.
+[package.metadata.packager.deb]
+section = "graphics"
+depends = [
+  "libc6 (>= 2.39)",
+  "libgcc-s1",
+  "libgtk-3-0t64 | libgtk-3-0",
+  "libglib2.0-0t64 | libglib2.0-0",
+  "libgdk-pixbuf-2.0-0",
+  "libgbm1",
+  "libxcb1",
+  "libegl1",
+  "libgl1",
+  "libxkbcommon0",
+  "libxkbcommon-x11-0",
+  "libx11-6",
+  "libxcursor1",
+  "libxrandr2",
+  "libxi6",
+  "libwayland-client0",
+  "libwayland-cursor0",
+  "libwayland-egl1",
+  "libayatana-appindicator3-1 | libappindicator3-1",
+]
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+info-plist-path = "packaging/macos/Info.plist"
 
 [profile.release]
 opt-level = 3
@@ -35,3 +100,23 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[dev-dependencies]
+icns = "0.5.0"
+ico = "0.6.0"
+resvg = "0.49.0"
+
+[target."cfg(windows)".dependencies]
+winreg = "0.56.0"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSToolbar", "NSWindow"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSString"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.34"

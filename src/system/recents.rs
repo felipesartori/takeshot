@@ -1,0 +1,83 @@
+//! The latest captures in the save folder, for the tray menu and the Home gallery.
+
+use std::path::{Path, PathBuf};
+
+/// The `n` newest images in `dir` (the library's listing); a missing or unreadable folder has none.
+pub fn recent_captures(dir: &Path, n: usize) -> Vec<PathBuf> {
+    crate::system::library::scan(dir)
+        .into_iter()
+        .take(n)
+        .map(|e| e.path)
+        .collect()
+}
+
+/// How a recent capture is named in menus: "Today 14:32", "Yesterday 09:10", "05/11 18:00", or the
+/// file name when the file has no date.
+pub fn recent_label(path: &Path) -> String {
+    use crate::ui::i18n::{Msg, t};
+    use chrono::{DateTime, Duration, Local};
+    let Some(when) = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .map(DateTime::<Local>::from)
+    else {
+        return path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+    };
+    let today = Local::now().date_naive();
+    let time = when.format("%H:%M");
+    if when.date_naive() == today {
+        format!("{} {time}", t(Msg::Today))
+    } else if when.date_naive() == today - Duration::days(1) {
+        format!("{} {time}", t(Msg::Yesterday))
+    } else {
+        when.format("%d/%m %H:%M").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn scratch(test: &str) -> PathBuf {
+        let d =
+            std::env::temp_dir().join(format!("takeshot-recents-{}-{test}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn file_at(dir: &Path, name: &str, age_s: u64) -> PathBuf {
+        let p = dir.join(name);
+        let f = std::fs::File::create(&p).unwrap();
+        f.set_modified(SystemTime::now() - Duration::from_secs(age_s))
+            .unwrap();
+        p
+    }
+
+    #[test]
+    fn recents_are_the_newest_pngs_and_survive_odd_folders() {
+        let dir = scratch("odd");
+        // Seven PNGs, the higher the number the newer, plus noise that is not a capture.
+        let pngs: Vec<PathBuf> = (0..7)
+            .map(|i| file_at(&dir, &format!("shot-{i}.png"), 100 - i * 10))
+            .collect();
+        file_at(&dir, "notes.txt", 0);
+        file_at(&dir, "LOUD.PNG", 5);
+        std::fs::create_dir_all(dir.join("folder.png")).unwrap();
+        let got = recent_captures(&dir, 5);
+        let want = vec![
+            dir.join("LOUD.PNG"),
+            pngs[6].clone(),
+            pngs[5].clone(),
+            pngs[4].clone(),
+            pngs[3].clone(),
+        ];
+        assert_eq!(got, want);
+        assert!(recent_captures(&dir.join("missing"), 5).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

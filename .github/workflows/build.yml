@@ -8,12 +8,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   # rust-toolchain.toml pins the MSVC toolchain for local Windows builds; CI uses plain stable.
   RUSTUP_TOOLCHAIN: stable
   CARGO_TERM_COLOR: always
+  PACKAGER_VERSION: 0.11.8
 
 jobs:
   build:
@@ -28,14 +29,14 @@ jobs:
           - name: macos-universal
             os: macos-latest
           - name: linux-x64
-            os: ubuntu-22.04
+            os: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Rust
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component clippy
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
           if [ "${{ runner.os }}" = "macOS" ]; then rustup target add x86_64-apple-darwin aarch64-apple-darwin --toolchain stable; fi
 
       - name: Linux libraries
@@ -45,15 +46,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config clang libclang-dev libgtk-3-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev \
             libxrandr-dev libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libpipewire-0.3-dev \
-            libegl1-mesa-dev libgbm-dev libgl1-mesa-dev
+            libegl1-mesa-dev libgbm-dev libgl1-mesa-dev file
 
       - uses: Swatinem/rust-cache@v2
 
+      # bash stops at the first failing command; the Windows default (pwsh) only checks the last one.
       - name: Lint and test
-        if: runner.os == 'Linux'
+        shell: bash
         run: |
+          cargo fmt --check
           cargo clippy --all-targets -- -D warnings
-          cargo test --release
+          cargo test
 
       - name: Build (Windows / Linux)
         if: runner.os != 'macOS'
@@ -64,41 +67,150 @@ jobs:
         run: |
           cargo build --release --target aarch64-apple-darwin
           cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/universal/release
+          lipo -create -output target/universal/release/takeshot \
+            target/aarch64-apple-darwin/release/takeshot target/x86_64-apple-darwin/release/takeshot
+
+      - name: cargo-packager (cached)
+        id: packager
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-packager
+            ~/.cargo/bin/cargo-packager.exe
+          key: cargo-packager-${{ env.PACKAGER_VERSION }}-${{ runner.os }}
+
+      - name: cargo-packager (install)
+        if: steps.packager.outputs.cache-hit != 'true'
+        run: cargo install cargo-packager --version ${{ env.PACKAGER_VERSION }} --locked
+
+      # Code signing is off until the repository has the variable and the secrets. Windows: set the
+      # variable SIGN_WINDOWS=true and the secrets AZURE_TENANT_ID, AZURE_CLIENT_ID,
+      # AZURE_CLIENT_SECRET, SIGNING_ENDPOINT, SIGNING_ACCOUNT and SIGNING_PROFILE (Azure Artifact
+      # Signing). macOS: SIGN_MACOS=true and APPLE_CERTIFICATE (base64 .p12),
+      # APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific)
+      # and APPLE_TEAM_ID.
+      - name: Sign the program (Windows)
+        if: runner.os == 'Windows' && vars.SIGN_WINDOWS == 'true'
+        uses: azure/artifact-signing-action@v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.SIGNING_PROFILE }}
+          files-folder: target/release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Import the signing certificate (macOS)
+        if: runner.os == 'macOS' && vars.SIGN_MACOS == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+          rm cert.p12
 
       - name: Package
         shell: bash
+        env:
+          # linuxdeploy (AppImage) runs without FUSE on the runner.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          SIGN_MACOS: ${{ vars.SIGN_MACOS }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           mkdir -p dist
           case "${{ runner.os }}" in
             Windows)
-              cp target/release/takeshot.exe dist/Takeshot.exe
-              (cd dist && 7z a ../takeshot-${{ matrix.name }}.zip Takeshot.exe)
+              cargo packager --release --formats nsis,wix
+              cp target/packages/*-setup.exe "dist/takeshot-$VERSION-windows-x64-setup.exe"
+              cp target/packages/*.msi "dist/takeshot-$VERSION-windows-x64.msi"
+              mkdir -p portable
+              cp target/release/takeshot.exe portable/Takeshot.exe
+              cp LICENSE THIRD_PARTY_NOTICES.md portable/
+              (cd portable && 7z a "../dist/takeshot-$VERSION-windows-x64-portable.zip" .)
               ;;
             macOS)
-              APP=dist/Takeshot.app
-              mkdir -p "$APP/Contents/MacOS"
-              lipo -create -output "$APP/Contents/MacOS/takeshot" \
-                target/aarch64-apple-darwin/release/takeshot target/x86_64-apple-darwin/release/takeshot
-              sed "s/__VERSION__/$VERSION/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
-              codesign --force --deep -s - "$APP"
-              (cd dist && ditto -c -k --keepParent Takeshot.app ../takeshot-${{ matrix.name }}.zip)
+              # The packager reads target/release (it ignores --binaries-dir with Cargo.toml's
+              # config): the universal binary goes there.
+              mkdir -p target/release
+              cp target/universal/release/takeshot target/release/takeshot
+              cargo packager --release --formats app
+              APP=target/packages/Takeshot.app
+              lipo "$APP/Contents/MacOS/takeshot" -verify_arch arm64 x86_64
+              if [ "$SIGN_MACOS" = "true" ]; then
+                codesign --force --deep --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "$APP"
+              else
+                # Ad hoc: Apple Silicon runs nothing unsigned; Gatekeeper still asks the first time.
+                codesign --force --deep -s - "$APP"
+              fi
+              mkdir -p dmg
+              cp -R "$APP" dmg/
+              ln -s /Applications dmg/Applications
+              # hdiutil now and then fails with "Resource busy" on the runners.
+              for try in 1 2 3; do
+                hdiutil create -volname Takeshot -srcfolder dmg -ov -format UDZO "dist/takeshot-$VERSION-macos-universal.dmg" && break
+                sleep 10
+              done
+              test -f "dist/takeshot-$VERSION-macos-universal.dmg"
               ;;
             Linux)
-              cp target/release/takeshot dist/takeshot
-              tar -C dist -czf takeshot-${{ matrix.name }}.tar.gz takeshot
+              cargo packager --release --formats deb,appimage
+              cp target/packages/*.deb "dist/takeshot-$VERSION-linux-x86_64.deb"
+              cp target/packages/*.AppImage "dist/takeshot-$VERSION-linux-x86_64.AppImage"
+              tar -czf "dist/takeshot-$VERSION-linux-x86_64.tar.gz" -C target/release takeshot -C "$PWD" LICENSE THIRD_PARTY_NOTICES.md
               ;;
           esac
+          ls -la dist
+
+      - name: Sign the installers (Windows)
+        if: runner.os == 'Windows' && vars.SIGN_WINDOWS == 'true'
+        uses: azure/artifact-signing-action@v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.SIGNING_PROFILE }}
+          files-folder: dist
+          files-folder-filter: exe,msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Notarize (macOS)
+        if: runner.os == 'macOS' && vars.SIGN_MACOS == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG=$(ls dist/*.dmg)
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$DMG"
 
       - uses: actions/upload-artifact@v4
         with:
           name: takeshot-${{ matrix.name }}
-          path: takeshot-${{ matrix.name }}.*
+          path: dist/*
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
