@@ -104,12 +104,6 @@ fn sub_size(sub: Sub, recents: usize) -> Vec2 {
     vec2(SUB_WIDTH, h + PAD * 2.0)
 }
 
-fn separator(ui: &mut Ui, t: &Tokens) {
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), SEPARATOR), Sense::hover());
-    ui.painter()
-        .hline(r.x_range(), r.center().y, Stroke::new(1.0, t.line));
-}
-
 fn icon_for(a: &TrayAction) -> Ico {
     match a {
         TrayAction::Capture(crate::system::hotkeys::Shot::Area) => Ico::Scan,
@@ -155,7 +149,7 @@ pub fn main_body(
     });
     for e in entries {
         match e {
-            TrayEntry::Separator => separator(ui, t),
+            TrayEntry::Separator => kit::menu_line(ui, t),
             TrayEntry::Item {
                 label,
                 keys,
@@ -239,7 +233,7 @@ pub fn recents_body(
             });
         }
     }
-    separator(ui, t);
+    kit::menu_line(ui, t);
     if kit::menu_item(
         ui,
         t,

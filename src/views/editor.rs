@@ -14,7 +14,7 @@ use crate::system::fonts::FontLib;
 use crate::system::settings::DrawOpts;
 use crate::ui::chrome::{self, BAR_HEIGHT};
 use crate::ui::i18n::{Msg, t as tr, tf};
-use crate::ui::kit::{self, BtnKind, Ico};
+use crate::ui::kit::{self, BtnKind, Ico, MenuRow};
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::Tokens;
 use egui::{Align, Align2, Color32, Frame, Layout, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
@@ -919,18 +919,18 @@ fn object_list(ui: &mut Ui, t: &Tokens, ed: &Editor, acts: &mut Vec<EditorAction
                 row.eye.on_hover_text(tr(tip));
                 // A hidden object cannot be picked, so it has nothing to reorder.
                 if !o.hidden {
-                    row.row.context_menu(|ui| {
-                        for (msg, act) in [
-                            (Msg::BringToFront, EditorAction::ToFront),
-                            (Msg::SendToBack, EditorAction::ToBack),
-                        ] {
-                            if ui.button(tr(msg)).clicked() {
-                                acts.push(EditorAction::Select(o.id, false));
-                                acts.push(act);
-                                ui.close();
-                            }
-                        }
-                    });
+                    let rows = [
+                        MenuRow::Item(
+                            Ico::BringFront,
+                            tr(Msg::BringToFront),
+                            EditorAction::ToFront,
+                        ),
+                        MenuRow::Item(Ico::SendBack, tr(Msg::SendToBack), EditorAction::ToBack),
+                    ];
+                    if let Some(a) = kit::context_menu(&row.row, t, &rows) {
+                        acts.push(EditorAction::Select(o.id, false));
+                        acts.push(a);
+                    }
                 }
             }
             if moved && in_view {
@@ -949,7 +949,7 @@ mod tests {
     use crate::engine::model::{Ann, Shape};
     use crate::screens::editor::PanelTab;
     use crate::ui::i18n::every;
-    use crate::views::testing::{click, painted_at, run_editor};
+    use crate::views::testing::{click, menu_row_width, painted_at, right_click, run_editor};
     use egui::{Event, Key, Modifiers, Pos2};
 
     fn editor() -> (Editor, Shared) {
@@ -1855,6 +1855,26 @@ x"),
         let rect = ed.an.doc.objs()[0].id;
         assert_eq!(ed.an.doc.selected(), &[rect]);
         assert_eq!(ed.an.tool, Tool::Select);
+    }
+
+    #[test]
+    fn the_object_list_menu_is_the_theme_s() {
+        let (mut ed, mut shared) = editor();
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let row = panel_text(&painted, tr(Msg::ToolRect));
+        let (_, painted, blocks) =
+            run_editor(&mut ed, &mut shared, SIZE, true, right_click(row.center()));
+        let front = painted_at(&painted, &[tr(Msg::BringToFront)], |_| true).expect("the menu");
+        let glyph = crate::ui::icon::glyph(Ico::BringFront).to_string();
+        assert!(
+            painted_at(&painted, &[glyph.as_str()], |r| (r.center().y - front.y)
+                .abs()
+                < 4.0)
+            .is_some(),
+            "the kit's row, with its icon"
+        );
+        let w = menu_row_width(&blocks, front);
+        assert!(w <= 240.0, "a {w} px menu");
     }
 
     #[test]

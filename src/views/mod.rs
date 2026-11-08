@@ -328,6 +328,32 @@ pub(crate) mod testing {
         ]
     }
 
+    /// A right click at `p`, then two frames for the menu it opens to settle.
+    pub fn right_click(p: Pos2) -> Vec<Vec<Event>> {
+        let b = |pressed| Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![
+            vec![Event::PointerMoved(p)],
+            vec![b(true)],
+            vec![b(false)],
+            vec![],
+            vec![],
+        ]
+    }
+
+    /// The width of the narrowest 32 px tall block under `p`: a menu row.
+    pub fn menu_row_width(blocks: &[Block], p: Pos2) -> f32 {
+        blocks
+            .iter()
+            .filter(|(r, _)| (r.height() - 32.0).abs() < 0.5 && r.contains(p))
+            .map(|(r, _)| r.width())
+            .fold(f32::INFINITY, f32::min)
+    }
+
     pub fn double_click(p: Pos2) -> Vec<Vec<Event>> {
         vec![
             vec![Event::PointerMoved(p)],

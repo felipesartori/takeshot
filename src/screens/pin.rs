@@ -5,7 +5,7 @@
 
 use crate::screens::overlay::color_image;
 use crate::ui::i18n::{Msg, t as tr};
-use crate::ui::kit::{self, Ico};
+use crate::ui::kit::{self, Ico, MenuRow};
 use crate::ui::tokens::Tokens;
 use crate::{Shared, Switch};
 use egui::{Rect, ResizeDirection, Sense, Stroke, Ui, Vec2, pos2, vec2};
@@ -222,27 +222,19 @@ impl Pin {
             self.zoom = (self.zoom * if scroll > 0.0 { 1.06 } else { 1.0 / 1.06 }).clamp(0.15, 4.0);
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.base_size * self.zoom));
         }
-        resp.context_menu(|ui| {
-            ui.set_min_width(200.0);
-            for (icon, msg, act) in [
-                (Ico::Copy, Msg::Copy, PinAction::Copy),
-                (Ico::Download, Msg::SaveAs, PinAction::Save),
-                (Ico::Edit, Msg::EditInEditor, PinAction::Edit),
-                (Ico::Maximize, Msg::PinOriginalSize, PinAction::OriginalSize),
-            ] {
-                if kit::menu_item(ui, t, Some(icon), tr(msg), None, false).clicked() {
-                    acts.push(act);
-                    ui.close();
-                }
-            }
-            let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
-            ui.painter()
-                .hline(line.x_range(), line.center().y, Stroke::new(1.0, t.line));
-            if kit::menu_item(ui, t, Some(Ico::Close), tr(Msg::CloseWord), None, false).clicked() {
-                acts.push(PinAction::Close);
-                ui.close();
-            }
-        });
+        let rows = [
+            MenuRow::Item(Ico::Copy, tr(Msg::Copy), PinAction::Copy),
+            MenuRow::Item(Ico::Download, tr(Msg::SaveAs), PinAction::Save),
+            MenuRow::Item(Ico::Edit, tr(Msg::EditInEditor), PinAction::Edit),
+            MenuRow::Item(
+                Ico::Maximize,
+                tr(Msg::PinOriginalSize),
+                PinAction::OriginalSize,
+            ),
+            MenuRow::Line,
+            MenuRow::Item(Ico::Close, tr(Msg::CloseWord), PinAction::Close),
+        ];
+        acts.extend(kit::context_menu(&resp, t, &rows));
         acts
     }
 }
@@ -258,6 +250,7 @@ mod tests {
         fills: Vec<egui::Color32>,
         strokes: Vec<egui::Color32>,
         dots: Vec<egui::Color32>,
+        rects: Vec<egui::Rect>,
     }
 
     fn shapes(clipped: &[egui::epaint::ClippedShape]) -> Shapes {
@@ -270,6 +263,7 @@ mod tests {
                 egui::Shape::Rect(r) => {
                     out.fills.push(r.fill);
                     out.strokes.push(r.stroke.color);
+                    out.rects.push(r.rect);
                 }
                 egui::Shape::Circle(c) => out.dots.push(c.fill),
                 egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
@@ -470,6 +464,39 @@ mod tests {
             assert_eq!(acts, vec![PinAction::Copy], "{lang:?}");
         }
         set_lang(Lang::En);
+    }
+
+    #[test]
+    fn the_pin_menu_is_as_wide_as_its_labels() {
+        use crate::ui::i18n::{Msg, t as tr};
+        use crate::ui::tokens::{ThemeId, tokens};
+        let at = egui::pos2(200.0, 150.0);
+        let right = egui::PointerButton::Secondary;
+        let open = vec![
+            vec![egui::Event::PointerMoved(at)],
+            vec![mouse(at, right, true)],
+            vec![mouse(at, right, false)],
+            vec![],
+            vec![],
+        ];
+        let t = tokens(ThemeId::TakeUi, true);
+        let mut p = pin();
+        let painted = frames(&t, open, |ui| {
+            p.draw(ui, &t);
+        });
+        let copy = painted
+            .texts
+            .iter()
+            .find(|(s, _)| s == tr(Msg::Copy))
+            .map(|(_, r)| r.center())
+            .expect("the menu");
+        let w = painted
+            .rects
+            .iter()
+            .filter(|r| (r.height() - 32.0).abs() < 0.5 && r.contains(copy))
+            .map(|r| r.width())
+            .fold(f32::INFINITY, f32::min);
+        assert!(w <= 240.0, "a {w} px menu in an 800 px pin");
     }
 
     #[test]

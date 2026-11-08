@@ -1670,6 +1670,53 @@ pub fn menu_item(
     resp
 }
 
+/// The narrowest a context menu gets.
+pub const MENU_MIN_W: f32 = 180.0;
+
+/// A context menu's row: an icon and a label standing for `A`, or a line between groups.
+pub enum MenuRow<'a, A> {
+    Item(Ico, &'a str, A),
+    Line,
+}
+
+/// A menu's line between groups: 9 px tall, the line in the middle.
+pub fn menu_line(ui: &mut Ui, t: &Tokens) {
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+    ui.painter()
+        .hline(r.x_range(), r.center().y, Stroke::new(1.0, t.line));
+}
+
+/// The theme's context menu on `resp`, as wide as its longest label needs (at least
+/// `MENU_MIN_W`): a menu row takes the width it is given, so a menu left to itself spans the
+/// window. Returns what the row clicked stands for, and closes.
+pub fn context_menu<A: Clone>(resp: &Response, t: &Tokens, rows: &[MenuRow<'_, A>]) -> Option<A> {
+    let mut picked = None;
+    resp.context_menu(|ui| {
+        let label = rows
+            .iter()
+            .map(|r| match r {
+                MenuRow::Item(_, l, _) => text_size(ui, l, 13.0, Weight::Regular).x,
+                MenuRow::Line => 0.0,
+            })
+            .fold(0.0, f32::max);
+        // The label starts 36 px in and keeps 16 px from the right edge.
+        ui.set_width((label + 36.0 + 16.0).max(MENU_MIN_W));
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for r in rows {
+            match r {
+                MenuRow::Item(icon, label, a) => {
+                    if menu_item(ui, t, Some(*icon), label, None, false).clicked() {
+                        picked = Some(a.clone());
+                        ui.close();
+                    }
+                }
+                MenuRow::Line => menu_line(ui, t),
+            }
+        }
+    });
+    picked
+}
+
 /// What the shortcut status chip shows.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ChipState {
@@ -1792,6 +1839,7 @@ mod tests {
         fills: Vec<egui::Color32>,
         strokes: Vec<egui::Color32>,
         dots: Vec<egui::Color32>,
+        rects: Vec<egui::Rect>,
     }
 
     fn shapes(clipped: &[egui::epaint::ClippedShape]) -> Shapes {
@@ -1804,6 +1852,7 @@ mod tests {
                 egui::Shape::Rect(r) => {
                     out.fills.push(r.fill);
                     out.strokes.push(r.stroke.color);
+                    out.rects.push(r.rect);
                 }
                 egui::Shape::Circle(c) => out.dots.push(c.fill),
                 egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
@@ -1841,6 +1890,58 @@ mod tests {
             last = shapes(&full.shapes);
         }
         last
+    }
+
+    #[test]
+    fn a_context_menu_is_as_wide_as_its_longest_label() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let at = pos2(300.0, 200.0);
+        let b = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let open = vec![
+            vec![egui::Event::PointerMoved(at)],
+            vec![b(true)],
+            vec![b(false)],
+            vec![],
+            vec![],
+        ];
+        let long = "A label long enough to widen the menu";
+        let row = |labels: &[&str]| {
+            let painted = frames(&t, open.clone(), |ui| {
+                let resp = ui.allocate_response(ui.available_size(), Sense::click());
+                let rows: Vec<_> = labels
+                    .iter()
+                    .flat_map(|l| [MenuRow::Item(Ico::Copy, *l, *l), MenuRow::Line])
+                    .collect();
+                context_menu(&resp, &t, &rows);
+            });
+            let first = painted
+                .texts
+                .iter()
+                .find(|(s, _)| s == labels[0])
+                .map(|(_, r)| r.center())
+                .expect("the menu");
+            painted
+                .rects
+                .iter()
+                .filter(|r| (r.height() - 32.0).abs() < 0.5 && r.contains(first))
+                .map(|r| r.width())
+                .fold(f32::INFINITY, f32::min)
+        };
+        assert_eq!(
+            row(&["Copy"]),
+            MENU_MIN_W,
+            "short labels: the narrowest menu"
+        );
+        let w = row(&["Copy", long]);
+        assert!(
+            w > MENU_MIN_W && w < 400.0,
+            "as wide as the long label, not the 800 px window: {w}"
+        );
     }
 
     #[test]

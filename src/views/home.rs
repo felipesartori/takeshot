@@ -7,7 +7,7 @@ use crate::system::hotkeys::{Shot, label};
 use crate::system::library::{DayGroup, Period};
 use crate::system::settings::HomeView;
 use crate::ui::i18n::{Msg, t as tr, tf};
-use crate::ui::kit::{self, BtnKind, CARD_TEXT_H, CardAction, Ico};
+use crate::ui::kit::{self, BtnKind, CARD_TEXT_H, CardAction, Ico, MenuRow};
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::Tokens;
 use egui::{Align, Layout, Rect, RichText, Ui, UiBuilder, pos2, vec2};
@@ -564,28 +564,22 @@ fn item_answers(
         acts.push(MainAction::Select(e.path.clone()));
     }
     let resp = r.resp.on_hover_text(details(e, meta));
-    resp.context_menu(|ui| {
-        for (icon, msg, act) in [
-            (Ico::Copy, Msg::Copy, MainAction::Copy(e.path.clone())),
-            (
-                Ico::Edit,
-                Msg::EditInEditor,
-                MainAction::Edit(e.path.clone()),
-            ),
-            (
-                Ico::FolderOpen,
-                Msg::ShowInFolder,
-                MainAction::ShowInFolder(e.path.clone()),
-            ),
-            (Ico::Pin, Msg::PinOnScreen, MainAction::Pin(e.path.clone())),
-            (Ico::Trash, Msg::Delete, MainAction::Trash(e.path.clone())),
-        ] {
-            if kit::menu_item(ui, t, Some(icon), tr(msg), None, false).clicked() {
-                acts.push(act);
-                ui.close();
-            }
-        }
-    });
+    let p = || e.path.clone();
+    let rows = [
+        MenuRow::Item(Ico::Copy, tr(Msg::Copy), MainAction::Copy(p())),
+        MenuRow::Item(Ico::Edit, tr(Msg::EditInEditor), MainAction::Edit(p())),
+        MenuRow::Item(
+            Ico::FolderOpen,
+            tr(Msg::ShowInFolder),
+            MainAction::ShowInFolder(p()),
+        ),
+        MenuRow::Item(Ico::Pin, tr(Msg::PinOnScreen), MainAction::Pin(p())),
+        MenuRow::Line,
+        MenuRow::Item(Ico::Trash, tr(Msg::Delete), MainAction::Trash(p())),
+    ];
+    if let Some(a) = kit::context_menu(&resp, t, &rows) {
+        acts.push(a);
+    }
 }
 
 /// The chosen capture's preview, name, day and time, dimensions, size and folder, then Copy,
@@ -805,7 +799,9 @@ mod tests {
     use crate::system::settings::HomeView;
     use crate::ui::i18n::{Msg, every, t as tr};
     use crate::ui::kit::Ico;
-    use crate::views::testing::{click, content_box, double_click, painted_at, run, run_painted};
+    use crate::views::testing::{
+        click, content_box, double_click, menu_row_width, painted_at, right_click, run, run_painted,
+    };
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
 
@@ -1105,6 +1101,28 @@ mod tests {
                 today.y < a.y && a.y < c.y,
                 "{view:?}: Today first, then the older day"
             );
+        }
+    }
+
+    #[test]
+    fn the_card_menu_is_as_wide_as_its_labels() {
+        for view in [HomeView::Grid, HomeView::List] {
+            let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+            shared.settings.home_view = view;
+            shared.settings.home_details = false;
+            let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+            let card = painted_at(&painted, &["a.png"], |_| true).expect("the capture");
+            let (_, painted, blocks) = run_painted(
+                &mut home,
+                &mut shared,
+                (1160.0, 740.0),
+                true,
+                right_click(card),
+            );
+            let item = painted_at(&painted, &[tr(Msg::EditInEditor)], |_| true)
+                .unwrap_or_else(|| panic!("{view:?}: the menu in {painted:?}"));
+            let w = menu_row_width(&blocks, item);
+            assert!(w <= 240.0, "{view:?}: a {w} px menu in a 1160 px window");
         }
     }
 
