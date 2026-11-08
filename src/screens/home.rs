@@ -543,7 +543,10 @@ impl Home {
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O)) {
                 acts.push(MainAction::OpenImage);
             }
-            if self.page == Page::Start && !egui::Popup::is_any_open(&ctx) {
+            // A menu or a dialog over the gallery takes its keys.
+            let covered =
+                egui::Popup::is_any_open(&ctx) || ctx.memory(|m| m.top_modal_layer().is_some());
+            if self.page == Page::Start && !covered {
                 self.gallery_keys(ui, &mut acts);
             }
         }

@@ -1038,6 +1038,73 @@ mod tests {
         assert!(!acts.contains(&MainAction::OpenImage), "{acts:?}");
     }
 
+    fn delete_key() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Delete,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn trashed(acts: &[MainAction]) -> bool {
+        acts.iter().any(|a| matches!(a, MainAction::Trash(_)))
+    }
+
+    #[test]
+    fn delete_waits_while_typing_in_search() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        home.apply(
+            MainAction::Select(PathBuf::from("a.png")),
+            &egui::Context::default(),
+            &mut shared,
+        );
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let search = painted_at(&painted, &every(Msg::SearchByName), |_| true).unwrap();
+        let mut frames = click(search);
+        frames.push(vec![delete_key()]);
+        let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, frames);
+        assert!(
+            !trashed(&acts),
+            "Delete belongs to the search text: {acts:?}"
+        );
+    }
+
+    #[test]
+    fn gallery_keys_wait_behind_a_dialog() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        home.apply(
+            MainAction::Select(PathBuf::from("a.png")),
+            &ctx,
+            &mut shared,
+        );
+        let mut acts = Vec::new();
+        for (i, events) in [vec![], vec![], vec![delete_key()]].into_iter().enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1160.0, 740.0),
+                )),
+                time: Some(i as f64 * 0.05),
+                events,
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                let t = shared.tokens(None);
+                crate::views::begin_frame(ui.ctx(), &t);
+                acts.extend(crate::views::main_window(ui, &t, &mut home, &mut shared));
+                egui::Modal::new(egui::Id::new("a-dialog")).show(ui.ctx(), |ui| {
+                    ui.label("About");
+                });
+            });
+            full.textures_delta.clear();
+        }
+        assert!(!trashed(&acts), "Delete belongs to the dialog: {acts:?}");
+    }
+
     #[test]
     fn only_visible_rows_ask_for_thumbnails() {
         let now = SystemTime::now();
