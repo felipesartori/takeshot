@@ -93,9 +93,9 @@ pub fn tokens(theme: ThemeId, dark: bool) -> Tokens {
         text: c([0xE5E5E5, 0x171717, 0xEDEDED, 0x161616]),
         muted: c([0xA3A3A3, 0x5C5C5C, 0xA1A1A1, 0x5A5A5A]),
         faint: c([0x737373, 0x8F8F8F, 0x707070, 0x8C8C8C]),
-        primary: c([0x8D43B1, 0x8D43B1, 0xFF6B47, 0xFF6B47]),
-        primary_hover: c([0x9A52BE, 0x7E3BA0, 0xFF805F, 0xFF805F]),
-        primary_press: c([0x7B3A9C, 0x6F348D, 0xF0582F, 0xF0582F]),
+        primary: c([0x8D43B1, 0x8D43B1, 0xFF6B47, 0xE8552F]),
+        primary_hover: c([0x9A52BE, 0x7E3BA0, 0xFF805F, 0xDB4C25]),
+        primary_press: c([0x7B3A9C, 0x6F348D, 0xF0582F, 0xCF4520]),
         on_primary: c([0xFFFFFF, 0xFFFFFF, 0x1F0D07, 0x1F0D07]),
         accent: c([0xC79BE6, 0x7A3A9E, 0xFF8A66, 0xC2410C]),
         tint: c([0x2B2033, 0xF4ECF9, 0x33201A, 0xFFEDE6]),
@@ -144,7 +144,8 @@ mod tests {
     fn coral_light_matches_spec() {
         let t = tokens(ThemeId::Coral, false);
         assert_eq!(t.shell, hex("#F6F6F5"));
-        assert_eq!(t.primary, hex("#FF6B47"));
+        // A deeper coral in light mode: 3.6:1 against white for indicators (user, 2026-11-08).
+        assert_eq!(t.primary, hex("#E8552F"));
         assert_eq!(t.on_primary, hex("#1F0D07"));
         assert_eq!(t.accent, hex("#C2410C"));
         assert_eq!(t.sel_style, SelStyle::CropTicks);
@@ -178,14 +179,14 @@ mod tests {
         ("text", ["#E5E5E5", "#171717", "#EDEDED", "#161616"]),
         ("muted", ["#A3A3A3", "#5C5C5C", "#A1A1A1", "#5A5A5A"]),
         ("faint", ["#737373", "#8F8F8F", "#707070", "#8C8C8C"]),
-        ("primary", ["#8D43B1", "#8D43B1", "#FF6B47", "#FF6B47"]),
+        ("primary", ["#8D43B1", "#8D43B1", "#FF6B47", "#E8552F"]),
         (
             "primary_hover",
-            ["#9A52BE", "#7E3BA0", "#FF805F", "#FF805F"],
+            ["#9A52BE", "#7E3BA0", "#FF805F", "#DB4C25"],
         ),
         (
             "primary_press",
-            ["#7B3A9C", "#6F348D", "#F0582F", "#F0582F"],
+            ["#7B3A9C", "#6F348D", "#F0582F", "#CF4520"],
         ),
         ("on_primary", ["#FFFFFF", "#FFFFFF", "#1F0D07", "#1F0D07"]),
         ("accent", ["#C79BE6", "#7A3A9E", "#FF8A66", "#C2410C"]),
