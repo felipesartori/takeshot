@@ -340,6 +340,25 @@ mod tests {
         assert_eq!(r.width(), 600.0);
         assert_eq!(r.height(), 450.0);
         assert_eq!(r.center().y, start.center().y);
+        // Every other corner and edge keeps its opposite: 80 px out on a 400 px side is 120 %.
+        type Spot = fn(Rect) -> egui::Pos2;
+        let left_bottom: Spot = |r| r.left_bottom();
+        let right_top: Spot = |r| r.right_top();
+        let right_mid: Spot = |r| pos2(r.right(), r.center().y);
+        let bottom_mid: Spot = |r| pos2(r.center().x, r.bottom());
+        let top_mid: Spot = |r| pos2(r.center().x, r.top());
+        for (dir, delta, kept) in [
+            (D::NorthEast, egui::vec2(80.0, -60.0), left_bottom),
+            (D::SouthWest, egui::vec2(-80.0, 60.0), right_top),
+            (D::West, egui::vec2(-80.0, 0.0), right_mid),
+            (D::North, egui::vec2(0.0, -60.0), bottom_mid),
+            (D::South, egui::vec2(0.0, 60.0), top_mid),
+        ] {
+            let r = resize_window(start, dir, delta, base);
+            assert!((r.width() - 480.0).abs() < 0.5, "{dir:?}: {r:?}");
+            assert!((r.height() - 360.0).abs() < 0.5, "{dir:?}: {r:?}");
+            assert!(kept(r).distance(kept(start)) < 0.5, "{dir:?}: {r:?}");
+        }
         // Never below 15 % nor above 400 % of the picture.
         let r = resize_window(start, D::SouthEast, egui::vec2(-1000.0, -1000.0), base);
         assert!((r.width() - 60.0).abs() < 0.5, "{r:?}");
