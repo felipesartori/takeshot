@@ -504,6 +504,11 @@ fn main() -> eframe::Result {
     ui::chrome::init(false);
     let args = parse_args();
     let settings = settings::Settings::load();
+    // The language first: window titles are set before the first frame.
+    ui::i18n::set_lang(ui::i18n::resolve(
+        args.lang.unwrap_or(settings.lang),
+        ui::i18n::system_locale().as_deref(),
+    ));
 
     // The resident is one per user: a second launch shows the running one and leaves.
     let resident_mode = matches!(args.launch, Launch::Home) && args.screenshot.is_none();
@@ -615,12 +620,12 @@ fn main() -> eframe::Result {
                     .with_position(editor_window.0);
             } else if args.screenshot.is_some() {
                 vp = vp
-                    .with_title("Takeshot · captura")
+                    .with_title(ui::i18n::t(ui::i18n::Msg::CaptureWindowTitle))
                     .with_inner_size([1280.0, 720.0])
                     .with_decorations(false);
             } else {
                 vp = vp
-                    .with_title("Takeshot · captura")
+                    .with_title(ui::i18n::t(ui::i18n::Msg::CaptureWindowTitle))
                     .with_decorations(false)
                     .with_position(pos)
                     .with_inner_size(size)
@@ -654,7 +659,7 @@ fn main() -> eframe::Result {
         }
         (Launch::Gallery, _) => {
             vp = vp
-                .with_title("Takeshot · componentes")
+                .with_title(ui::i18n::t(ui::i18n::Msg::GalleryWindowTitle))
                 .with_inner_size([1280.0, 900.0]);
         }
         (Launch::Notice, _) => {
@@ -743,9 +748,9 @@ fn main() -> eframe::Result {
                         Mode::Overlay(Box::new(if demo { o.demo() } else { o }))
                     }
                     None => {
-                        shared.toast(format!(
-                            "Não consegui capturar a tela: {}",
-                            capture_error.unwrap_or_default()
+                        shared.toast(ui::i18n::tf(
+                            ui::i18n::Msg::CaptureFailed,
+                            &[&capture_error.unwrap_or_default()],
                         ));
                         Mode::Home(Box::new(home::Home::new(ctx, &shared)))
                     }

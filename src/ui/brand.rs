@@ -1,4 +1,5 @@
-//! Brand images embedded in the binary: the app icon per theme, tray icons and the mark.
+//! The brand: the app icon per theme, tray icons and the mark, embedded in the binary, and the
+//! product name as each theme writes it (`wordmark`).
 //! The PNGs come from `cargo run --example brand`, which renders the SVG masters in assets/brand/.
 
 use crate::ui::style::{Weight, font};

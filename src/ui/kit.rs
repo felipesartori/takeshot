@@ -1536,7 +1536,7 @@ pub fn color_add(ui: &mut Ui, t: &Tokens, tip: &str) -> Response {
     resp.on_hover_text(tip)
 }
 
-/// TakeUI top navigation: height 30, fully rounded.
+/// The main window's page navigation in the title bar: height 30, fully rounded.
 pub fn nav_pill(ui: &mut Ui, t: &Tokens, icon: Ico, label: &str, active: bool) -> Response {
     let lw = text_size(ui, label, 13.0, Weight::Medium).x;
     let (rect, resp) =
@@ -1573,7 +1573,7 @@ pub fn nav_pill(ui: &mut Ui, t: &Tokens, icon: Ico, label: &str, active: bool) -
     resp
 }
 
-/// TakeUI's Settings section: full width, height 36, a 16 px icon 12 px in and the label after it.
+/// A section of Ajustes: full width, height 36, a 16 px icon 12 px in and the label after it.
 /// The open section is tinted with the label and icon in the accent colour.
 pub fn section_item(ui: &mut Ui, t: &Tokens, icon: Ico, label: &str, active: bool) -> Response {
     let w = ui.available_width();

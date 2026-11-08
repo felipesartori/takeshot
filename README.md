@@ -22,7 +22,9 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 - Paleta de cores com cor personalizada, 5 espessuras (a roda do mouse ajusta), retângulo e círculo preenchidos.
 - Texto com várias fontes do sistema (sans, negrito, serifada, elegante, mono, impacto, condensada, manuscrita) e opção de texto com fundo.
 - Toda marca continua editável, na captura e no editor, com qualquer ferramenta: sobre a própria forma (a linha de uma forma vazada, o miolo de uma preenchida, o texto) o cursor vira a cruz de mover, e arrastar seleciona e move; fora das formas, a ferramenta desenha. Com Selecionar (`V`) um clique escolhe, `Shift`+clique soma à seleção, arrastar move e as alças redimensionam (pontas em linha e seta, oito alças em retângulo, elipse e borrar, quatro cantos em texto, traço e numeração).
-- Com algo selecionado, a barra de opções mostra a cor, a espessura e o preenchimento do objeto, muda o objeto e tem duplicar e excluir.
+- Na captura, as ferramentas ficam numa coluna ao lado da área (a partir do topo dela), as opções da ferramenta ou do objeto escolhido num painel ao lado, e Fixar, Salvar, Editar e Copiar numa linha embaixo da área, terminando na borda direita dela. Perto da borda da tela, tudo passa para o lado de dentro sem cobrir a área.
+- Com algo selecionado, o painel de opções mostra a cor, a espessura e o preenchimento do objeto, muda o objeto e tem duplicar e excluir.
+- Retângulos com cantos arredondados (0 a 40 px), no painel de opções da captura e no painel Objeto do editor.
 - Com a ferramenta Texto, um clique num texto existente volta a editá-lo, com o cursor onde se clicou (sobre ele o ponteiro vira o de texto); com as outras ferramentas, duplo clique. Enquanto se digita: cursor, setas, seleção com o mouse, `Ctrl+A`, colar; a moldura tracejada arrasta o texto; Enter confirma, `Shift+Enter` quebra a linha. Excluir um passo numerado não renumera os outros.
 - Desfazer e refazer cobrem criar, mover, redimensionar, mudar o estilo, duplicar e excluir; um arraste inteiro é um passo só.
 - Na captura, as ferramentas de desenho começam dentro da área escolhida.
@@ -31,10 +33,10 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 
 ![Editor](docs/editor.png)
 
-- Barra de título com o nome do arquivo e as dimensões, desfazer e refazer, Fixar na tela, Salvar como, Salvar e Copiar; barra de ferramentas com as dez ferramentas, cores, espessuras e zoom de 10 a 400 % (`Ctrl`+roda e a pinça do touchpad aproximam no ponteiro, em proporção ao giro; espaço ou o botão do meio arrastam a imagem).
-- Painel Objeto: cor, espessura, opacidade, preenchimento, fonte e fundo do texto do objeto selecionado (ou da ferramenta), Duplicar e Excluir, e a lista de objetos: clique escolhe, o olho oculta, o botão direito traz para frente ou envia para trás. Arrastar um controle deslizante é um passo só de desfazer.
-- Sobre o objeto selecionado, uma barra pequena com a cor, duplicar, trazer para frente, enviar para trás e excluir.
-- Painel Estilo, o mesmo de Estilo na janela principal:
+- Barra de título fina, com o nome do arquivo e as dimensões, desfazer e refazer, Fixar na tela, Salvar como, Salvar e Copiar; barra de ferramentas com as dez ferramentas, cores, espessuras e zoom de 10 a 400 % (`Ctrl`+roda e a pinça do touchpad aproximam no ponteiro, em proporção ao giro; espaço ou o botão do meio arrastam a imagem).
+- Painel com as abas Objeto e Estilo. Objeto: cor, espessura, cantos, opacidade, preenchimento, fonte e fundo do texto do objeto selecionado (ou da ferramenta), Duplicar e Excluir, e a lista de objetos: clique escolhe, o olho oculta, o botão direito traz para frente ou envia para trás. Arrastar um controle deslizante é um passo só de desfazer.
+- Sobre o objeto selecionado, uma barra pequena com a cor, a espessura (com a opacidade no mesmo menu), preencher, duplicar, trazer para frente, enviar para trás e excluir.
+- Aba Estilo, a mesma de Estilo na janela principal, em abas (Fundo, Moldura e Marca d'água):
   - 12 degradês prontos, degradê personalizado (duas cores e ângulo), cor sólida, fundo com a própria captura borrada ou transparente.
   - Margem, cantos arredondados, sombra, barra de janela e formatos 16:9, 4:3, 1:1 e 9:16.
   - Marca d'água com logo (PNG, JPG, WebP) e texto: 9 posições (cantos, bordas, centro) ou faixa superior/inferior com cor própria; tamanho, distância e opacidade ajustáveis; sobre o fundo ou sobre a captura.
@@ -46,20 +48,20 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 - Copiar ou salvar direto da captura pode aplicar o estilo completo, só os cantos arredondados ou nada (em Estilo).
 
 **Extras**
-- Fixar uma captura por cima das outras janelas (arrastar move, roda do mouse dá zoom, duplo clique fecha).
+- Fixar uma captura por cima das outras janelas: arrastar o meio move, arrastar uma borda ou um canto muda o tamanho mantendo a proporção, a roda do mouse dá zoom, duplo clique ou `Esc` fecha, e o botão direito copia, salva, abre no editor ou volta ao tamanho original.
 - Arrastar uma imagem para a janela principal ou colar com `Ctrl+V` abre no editor.
 
 **Janela principal**
-- Início: as capturas da pasta em grade, com filtros (Todas, Hoje, Esta semana) e busca por nome. Passar o mouse num card mostra copiar, editar, mostrar na pasta e mandar para a lixeira; duplo clique abre no editor; o botão direito traz o mesmo menu.
-- Estilo: prévia ao vivo do fundo, da moldura e da marca d'água que vão em cada cópia, com o que acontece ao copiar ou salvar direto da captura.
+- Início: as capturas da pasta agrupadas por dia (Hoje, Ontem, datas), em grade ou em lista, com filtros (Todas, Hoje, Esta semana) e busca por nome. Na grade, passar o mouse num card mostra copiar, editar, mostrar na pasta e mandar para a lixeira; na lista, os mesmos botões aparecem na linha. Duplo clique abre no editor e o botão direito traz o mesmo menu. O botão Detalhes mostra um painel com a prévia, a data, as dimensões, o tamanho e a pasta da captura escolhida, e Copiar, Abrir no editor, Mostrar na pasta, Fixar e Excluir. No teclado, as setas escolhem, `Enter` abre no editor, `Ctrl+C` copia e `Del` manda para a lixeira.
+- Estilo: prévia ao vivo do fundo, da moldura e da marca d'água que vão em cada cópia, ajustados em abas, com o que acontece ao copiar ou salvar direto da captura no pé do painel.
 - Ajustes: inicialização, aparência, janela e bandeja, captura, pasta de salvar, atalhos (com "Alterar" para gravar teclas novas) e sobre.
-- Aparência: dois temas, TakeUI e Coral UI, em claro, escuro ou seguindo o sistema, trocados na hora em Ajustes > Geral > Aparência, assim como o idioma (Automático, English, Português). A lua e o sol na barra de título alternam entre claro e escuro.
+- Aparência: dois temas sobre o mesmo layout, TakeUI (roxo) e Coral UI (coral, com marcas de corte na seleção), em claro, escuro ou seguindo o sistema, trocados na hora em Ajustes > Geral > Aparência, assim como o idioma (Automático, English, Português). A lua e o sol na barra de título alternam entre claro e escuro.
 
 **Bandeja**
 - O Takeshot fica na área de notificação: os atalhos funcionam com a janela fechada. Abrir o programa de novo só traz a janela que já está rodando.
 - Menu do ícone (clique direito): capturar área, tela inteira ou em 3 segundos; abrir o Takeshot; as 5 capturas recentes (clique copia, `Shift`+clique abre no editor) e a pasta delas; estilo e marca d'água; ajustes; tema claro, escuro ou do sistema; sobre; sair.
 - Clique esquerdo no ícone abre o Início ou captura uma área, como estiver em Ajustes.
-- O X da janela pergunta na primeira vez se é para sair ou minimizar para a bandeja, e pode lembrar a escolha (muda em Ajustes > "Ao clicar no X"). Sair de vez é pelo menu da bandeja.
+- O X da janela pergunta na primeira vez se é para sair ou minimizar para a bandeja, e pode lembrar a escolha (muda em Ajustes > "Ao clicar no X"). Sair de vez é pelo menu da bandeja, e fecha também os editores, as imagens fixadas e a captura; um editor com mudanças pergunta antes (Descartar, Cancelar, Salvar e fechar), e Cancelar mantém tudo aberto.
 - Ajustes > "Iniciar com o sistema" abre o Takeshot no login, direto na bandeja (`takeshot --minimized`).
 
 ## Atalhos

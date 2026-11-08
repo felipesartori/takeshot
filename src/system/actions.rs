@@ -99,10 +99,13 @@ pub fn auto_path(dir: &str) -> PathBuf {
 pub fn ask_save_path(dir: &str, parent: Option<&eframe::Frame>) -> Option<PathBuf> {
     let _ = std::fs::create_dir_all(dir);
     let mut d = rfd::FileDialog::new()
-        .set_title("Salvar captura")
+        .set_title(crate::ui::i18n::t(crate::ui::i18n::Msg::SaveCaptureTitle))
         .set_directory(dir)
         .set_file_name(default_name())
-        .add_filter("PNG (sem perdas)", &["png"]);
+        .add_filter(
+            crate::ui::i18n::t(crate::ui::i18n::Msg::PngLossless),
+            &["png"],
+        );
     if let Some(f) = parent {
         d = d.set_parent(f);
     }
