@@ -1425,6 +1425,39 @@ pub fn status_chip(ui: &mut Ui, t: &Tokens, state: ChipState, label: &str) -> Re
     resp
 }
 
+/// The short notice at the bottom of a window ("Copied"), in the theme: a card with a dot in the
+/// primary colour and the text.
+pub fn toast(ctx: &egui::Context, t: &Tokens, text: &str) {
+    egui::Area::new(egui::Id::unique("toast"))
+        .order(egui::Order::Tooltip)
+        .anchor(Align2::CENTER_BOTTOM, vec2(0.0, -28.0))
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(t.surf)
+                .stroke(Stroke::new(1.0, t.border))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(egui::Margin::symmetric(14, 9))
+                .shadow(egui::Shadow {
+                    offset: [0, 6],
+                    blur: 22,
+                    spread: 0,
+                    color: Color32::from_black_alpha(90),
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
+                        ui.painter().circle_filled(r.center(), 4.0, t.primary);
+                        ui.label(
+                            egui::RichText::new(text)
+                                .font(font(13.0, Weight::Regular))
+                                .color(t.text),
+                        );
+                    });
+                });
+        });
+}
+
 /// Marks a selected thumbnail, swatch or object: a 2 px ring (TakeUI) or four crop ticks (Coral UI).
 pub fn selection_marker(painter: &Painter, t: &Tokens, rect: Rect) {
     match t.sel_style {
@@ -1459,6 +1492,76 @@ pub fn selection_marker(painter: &Painter, t: &Tokens, rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Texts, rectangle fills, rectangle strokes and circle fills one frame painted.
+    #[derive(Default)]
+    struct Shapes {
+        texts: Vec<(String, egui::Rect)>,
+        fills: Vec<egui::Color32>,
+        strokes: Vec<egui::Color32>,
+        dots: Vec<egui::Color32>,
+    }
+
+    fn shapes(clipped: &[egui::epaint::ClippedShape]) -> Shapes {
+        fn walk(s: &egui::Shape, out: &mut Shapes) {
+            match s {
+                egui::Shape::Text(t) => out.texts.push((
+                    t.galley.text().to_owned(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
+                egui::Shape::Rect(r) => {
+                    out.fills.push(r.fill);
+                    out.strokes.push(r.stroke.color);
+                }
+                egui::Shape::Circle(c) => out.dots.push(c.fill),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Shapes::default();
+        clipped.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    }
+
+    /// Frames of `draw` at 800 × 600 in `t`'s look, one per event list after a first empty one;
+    /// returns what the last frame painted.
+    fn frames(
+        t: &crate::ui::tokens::Tokens,
+        events: Vec<Vec<egui::Event>>,
+        mut draw: impl FnMut(&mut egui::Ui),
+    ) -> Shapes {
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        crate::ui::style::apply(&ctx, t);
+        let mut last = Shapes::default();
+        for (i, ev) in std::iter::once(Vec::new()).chain(events).enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                time: Some(i as f64 * 0.05),
+                events: ev,
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| draw(ui));
+            full.textures_delta.clear();
+            last = shapes(&full.shapes);
+        }
+        last
+    }
+
+    #[test]
+    fn the_toast_follows_the_theme() {
+        for theme in [ThemeId::TakeUi, ThemeId::Coral] {
+            for dark in [true, false] {
+                let t = tokens(theme, dark);
+                let painted = frames(&t, vec![vec![]; 8], |ui| toast(ui.ctx(), &t, "Copied"));
+                assert!(painted.fills.contains(&t.surf), "{theme:?} {dark}: card");
+                assert!(painted.dots.contains(&t.primary), "{theme:?} {dark}: dot");
+            }
+        }
+    }
     use crate::ui::tokens::{ThemeId, tokens};
 
     /// What a few frames with the pointer outside or over a widget produced.

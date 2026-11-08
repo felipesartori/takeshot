@@ -479,11 +479,7 @@ fn about(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
         ui.add(egui::Image::new((mark, vec2(56.0, 56.0))));
         ui.add_space(14.0);
         ui.vertical(|ui| {
-            ui.label(
-                RichText::new("Takeshot")
-                    .font(font(22.0, Weight::Bold))
-                    .color(t.text),
-            );
+            ui.label(crate::ui::brand::wordmark(t.theme, 22.0).color(t.text));
             ui.label(
                 RichText::new(format!(
                     "{} · {} {}",
@@ -565,6 +561,28 @@ mod tests {
             (label.y - card.center().y).abs() <= 1.0,
             "{label:?} beside {card:?}"
         );
+    }
+
+    #[test]
+    fn the_about_section_shows_the_theme_s_wordmark() {
+        use crate::ui::tokens::ThemeId;
+        for (theme, word) in [(ThemeId::TakeUi, "Takeshot"), (ThemeId::Coral, "takeshot")] {
+            let (mut home, mut shared) = Home::for_tests(vec![]);
+            shared.settings.ui_theme = theme;
+            home.open(Page::Settings);
+            home.apply(
+                MainAction::Section(SettingsSection::About),
+                &egui::Context::default(),
+                &mut shared,
+            );
+            let (_, painted) =
+                crate::views::testing::run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+            let bar = crate::ui::chrome::BAR_HEIGHT;
+            assert!(
+                painted.iter().any(|(s, r)| s == word && r.top() > bar),
+                "{theme:?}: {word}"
+            );
+        }
     }
 
     #[test]

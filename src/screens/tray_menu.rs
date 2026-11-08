@@ -148,11 +148,7 @@ pub fn main_body(
     ui.horizontal(|ui| {
         ui.set_height(HEADER);
         ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("Takeshot")
-                .font(font(13.0, Weight::Bold))
-                .color(t.text),
-        );
+        ui.label(crate::ui::brand::wordmark(t.theme, 13.0).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             kit::status_chip(ui, t, chip.0, chip.1);
         });
@@ -444,6 +440,80 @@ mod tests {
     /// The status chip the menu tests show.
     const READY: (kit::ChipState, &str) = (kit::ChipState::Ready, "PrtSc ready");
     use super::*;
+
+    /// Texts, rectangle fills, rectangle strokes and circle fills one frame painted.
+    #[derive(Default)]
+    struct Shapes {
+        texts: Vec<(String, egui::Rect)>,
+        fills: Vec<egui::Color32>,
+        strokes: Vec<egui::Color32>,
+        dots: Vec<egui::Color32>,
+    }
+
+    fn shapes(clipped: &[egui::epaint::ClippedShape]) -> Shapes {
+        fn walk(s: &egui::Shape, out: &mut Shapes) {
+            match s {
+                egui::Shape::Text(t) => out.texts.push((
+                    t.galley.text().to_owned(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
+                egui::Shape::Rect(r) => {
+                    out.fills.push(r.fill);
+                    out.strokes.push(r.stroke.color);
+                }
+                egui::Shape::Circle(c) => out.dots.push(c.fill),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Shapes::default();
+        clipped.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    }
+
+    /// Frames of `draw` at 800 × 600 in `t`'s look, one per event list after a first empty one;
+    /// returns what the last frame painted.
+    fn frames(
+        t: &crate::ui::tokens::Tokens,
+        events: Vec<Vec<egui::Event>>,
+        mut draw: impl FnMut(&mut egui::Ui),
+    ) -> Shapes {
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        crate::ui::style::apply(&ctx, t);
+        let mut last = Shapes::default();
+        for (i, ev) in std::iter::once(Vec::new()).chain(events).enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                time: Some(i as f64 * 0.05),
+                events: ev,
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| draw(ui));
+            full.textures_delta.clear();
+            last = shapes(&full.shapes);
+        }
+        last
+    }
+
+    #[test]
+    fn the_tray_menu_header_follows_the_theme() {
+        use crate::ui::tokens::{ThemeId, tokens};
+        for (theme, word) in [(ThemeId::TakeUi, "Takeshot"), (ThemeId::Coral, "takeshot")] {
+            let t = tokens(theme, true);
+            let painted = frames(&t, vec![], |ui| {
+                main_body(ui, &t, &[], (kit::ChipState::Ready, "PrtSc"));
+            });
+            assert!(
+                painted.texts.iter().any(|(s, _)| s == word),
+                "{theme:?}: {:?}",
+                painted.texts
+            );
+        }
+    }
     use crate::system::hotkeys::Shot;
     use crate::system::tray::tray_entries;
     use crate::ui::tokens::{ThemeId, UiMode, tokens};

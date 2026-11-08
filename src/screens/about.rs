@@ -53,11 +53,7 @@ pub fn dialog(
                     ui.image((id, egui::vec2(56.0, 56.0)));
                 }
                 ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new("Takeshot")
-                        .font(font(22.0, Weight::Bold))
-                        .color(t.text),
-                );
+                ui.label(crate::ui::brand::wordmark(t.theme, 22.0).color(t.text));
                 ui.label(
                     egui::RichText::new(format!(
                         "{} · {} {}",
@@ -117,6 +113,81 @@ pub fn dialog(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Texts, rectangle fills, rectangle strokes and circle fills one frame painted.
+    #[derive(Default)]
+    struct Shapes {
+        texts: Vec<(String, egui::Rect)>,
+        fills: Vec<egui::Color32>,
+        strokes: Vec<egui::Color32>,
+        dots: Vec<egui::Color32>,
+    }
+
+    fn shapes(clipped: &[egui::epaint::ClippedShape]) -> Shapes {
+        fn walk(s: &egui::Shape, out: &mut Shapes) {
+            match s {
+                egui::Shape::Text(t) => out.texts.push((
+                    t.galley.text().to_owned(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
+                egui::Shape::Rect(r) => {
+                    out.fills.push(r.fill);
+                    out.strokes.push(r.stroke.color);
+                }
+                egui::Shape::Circle(c) => out.dots.push(c.fill),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Shapes::default();
+        clipped.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    }
+
+    /// Frames of `draw` at 800 × 600 in `t`'s look, one per event list after a first empty one;
+    /// returns what the last frame painted.
+    fn frames(
+        t: &crate::ui::tokens::Tokens,
+        events: Vec<Vec<egui::Event>>,
+        mut draw: impl FnMut(&mut egui::Ui),
+    ) -> Shapes {
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        crate::ui::style::apply(&ctx, t);
+        let mut last = Shapes::default();
+        for (i, ev) in std::iter::once(Vec::new()).chain(events).enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                time: Some(i as f64 * 0.05),
+                events: ev,
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| draw(ui));
+            full.textures_delta.clear();
+            last = shapes(&full.shapes);
+        }
+        last
+    }
+
+    #[test]
+    fn the_about_dialog_shows_the_theme_s_wordmark() {
+        use crate::ui::tokens::{ThemeId, tokens};
+        for (theme, word) in [(ThemeId::TakeUi, "Takeshot"), (ThemeId::Coral, "takeshot")] {
+            let t = tokens(theme, true);
+            let info = AboutInfo::current();
+            let painted = frames(&t, vec![vec![]], |ui| {
+                dialog(ui.ctx(), &t, &info, None);
+            });
+            assert!(
+                painted.texts.iter().any(|(s, _)| s == word),
+                "{theme:?}: {:?}",
+                painted.texts
+            );
+        }
+    }
 
     #[test]
     fn about_shows_the_crate_version_and_platform() {

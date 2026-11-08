@@ -8,7 +8,6 @@ use crate::Shared;
 use crate::screens::about::{self, AboutAnswer, AboutInfo};
 use crate::screens::home::Home;
 use crate::screens::tray_menu::{MenuOutcome, TrayMenu};
-use crate::screens::widgets;
 use crate::system::actions;
 use crate::system::hotkeys::{Shot, effective_status, label, should_offer_priority};
 use crate::system::instance::Page;
@@ -536,7 +535,7 @@ fn open_windows_keyboard_settings() {
 fn draw_toast(ctx: &egui::Context, shared: &mut Shared) {
     if let Some((msg, at)) = &shared.toast {
         if at.elapsed().as_secs_f32() < 2.6 {
-            widgets::toast(ctx, msg);
+            crate::ui::kit::toast(ctx, &shared.tokens(ctx.system_theme()), msg);
             ctx.request_repaint();
         } else {
             shared.toast = None;

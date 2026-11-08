@@ -385,7 +385,11 @@ impl eframe::App for App {
                 views::begin_frame(&ctx, &t);
                 e.ui(ui, frame, &t, &mut self.shared)
             }
-            Mode::Pin(p) => p.ui(ui, frame, &mut self.shared),
+            Mode::Pin(p) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                views::begin_frame(&ctx, &t);
+                p.ui(ui, frame, &t, &mut self.shared)
+            }
             Mode::Notice(n) => {
                 let t = self.shared.tokens(ctx.system_theme());
                 views::begin_frame(&ctx, &t);
@@ -421,7 +425,7 @@ impl eframe::App for App {
             && !matches!(self.mode, Mode::Resident { .. })
         {
             if at.elapsed().as_secs_f32() < 2.6 {
-                widgets::toast(&ctx, msg);
+                ui::kit::toast(&ctx, &self.shared.tokens(ctx.system_theme()), msg);
                 ctx.request_repaint();
             } else {
                 self.shared.toast = None;
@@ -610,7 +614,7 @@ fn main() -> eframe::Result {
                 let sz = egui::vec2(img.width() as f32, img.height() as f32);
                 let k = (900.0 / sz.x).min(700.0 / sz.y).min(1.0);
                 vp = vp
-                    .with_title("Takeshot · fixado")
+                    .with_title("Takeshot")
                     .with_decorations(false)
                     .with_always_on_top()
                     .with_inner_size(sz * k)
@@ -666,7 +670,6 @@ fn main() -> eframe::Result {
             let ctx = &cc.egui_ctx;
             let fonts = Arc::new(fonts::FontLib::load());
             fonts.install(ctx);
-            widgets::apply_theme(ctx);
             // Ctrl+0, Ctrl+1 and Ctrl+plus or minus belong to the editor's zoom, not egui's UI zoom.
             ctx.options_mut(|o| o.zoom_with_keyboard = false);
             // Theme, mode and language: command-line overrides win for this run only.
@@ -690,6 +693,7 @@ fn main() -> eframe::Result {
                 },
             };
             shared.logo.sync(ctx, &shared.settings.watermark);
+            views::begin_frame(ctx, &shared.tokens(ctx.system_theme()));
             let mode = match args.launch {
                 Launch::Capture { .. } if instant_notice.is_some() => {
                     Mode::Notice(Box::new(instant_notice.take().unwrap()))
