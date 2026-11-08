@@ -124,7 +124,16 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
-!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+; Takeshot: relaunched elevated for every user (/AllUsers), the welcome and the license were seen.
+Function TsSkipIfRelaunched
+  Call SkipIfPassive
+  ClearErrors
+  ${GetOptions} $CMDLINE "/AllUsers" $R0
+  ${IfNot} ${Errors}
+    Abort
+  ${EndIf}
+FunctionEnd
+!define MUI_PAGE_CUSTOMFUNCTION_PRE TsSkipIfRelaunched
 ; Takeshot: what Takeshot does, in the user's language.
 !define MUI_WELCOMEPAGE_TITLE "$(tsWelcomeTitle)"
 !define MUI_WELCOMEPAGE_TEXT "$(tsWelcomeText)"
@@ -132,7 +141,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 ; 2. License Page (if defined)
 !if "${LICENSE}" != ""
-  !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE TsSkipIfRelaunched
   !insertmacro MUI_PAGE_LICENSE "${LICENSE}"
 !endif
 
