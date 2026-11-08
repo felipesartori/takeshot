@@ -1,6 +1,6 @@
 [package]
 name = "takeshot"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Fast screenshot tool for Windows, macOS and Linux: capture with PrtSc, annotate with editable objects, add backgrounds and watermarks."
 license = "AGPL-3.0-or-later"
@@ -55,8 +55,13 @@ icons = [
 ]
 
 [package.metadata.packager.nsis]
-installer-mode = "currentUser"
+# Asks who to install for: just me (default, no administrator) or every user (asks for one then).
+installer-mode = "both"
 template = "packaging/windows/installer.nsi"
+installer-icon = "assets/brand/takeshot.ico"
+# From assets/brand/installer-*.svg by `cargo run --example brand`.
+sidebar-image = "packaging/windows/installer-sidebar.bmp"
+header-image = "packaging/windows/installer-header.bmp"
 languages = ["English", "PortugueseBR"]
 appdata-paths = ["$APPDATA/takeshot", "$LOCALAPPDATA/takeshot"]
 

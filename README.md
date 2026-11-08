@@ -106,7 +106,7 @@ Get the latest version from [Releases](https://github.com/takeflow-oficial/takes
 
 | System | File |
 |---|---|
-| Windows 10 and 11 (x64) | `takeshot-<version>-windows-x64-setup.exe` (recommended: installs for your user, no administrator), `takeshot-<version>-windows-x64.msi`, or the portable `takeshot-<version>-windows-x64-portable.zip` |
+| Windows 10 and 11 (x64) | `takeshot-<version>-windows-x64-setup.exe` (recommended: asks who to install for, just you with no administrator or everyone on the computer), `takeshot-<version>-windows-x64.msi`, or the portable `takeshot-<version>-windows-x64-portable.zip` |
 | macOS 11+ (Apple Silicon and Intel) | `takeshot-<version>-macos-universal.dmg` |
 | Linux x86_64 (glibc 2.39+: Ubuntu 24.04+, Debian 13+, Fedora 40+) | `takeshot-<version>-linux-x86_64.deb`, `takeshot-<version>-linux-x86_64.AppImage`, or `takeshot-<version>-linux-x86_64.tar.gz` |
 
@@ -293,7 +293,7 @@ Baixe a versão mais recente em [Releases](https://github.com/takeflow-oficial/t
 
 | Sistema | Arquivo |
 |---|---|
-| Windows 10 e 11 (x64) | `takeshot-<versão>-windows-x64-setup.exe` (recomendado: instala para o seu usuário, sem administrador), `takeshot-<versão>-windows-x64.msi`, ou o portátil `takeshot-<versão>-windows-x64-portable.zip` |
+| Windows 10 e 11 (x64) | `takeshot-<versão>-windows-x64-setup.exe` (recomendado: pergunta para quem instalar, só você sem administrador ou todos no computador), `takeshot-<versão>-windows-x64.msi`, ou o portátil `takeshot-<versão>-windows-x64-portable.zip` |
 | macOS 11+ (Apple Silicon e Intel) | `takeshot-<versão>-macos-universal.dmg` |
 | Linux x86_64 (glibc 2.39+: Ubuntu 24.04+, Debian 13+, Fedora 40+) | `takeshot-<versão>-linux-x86_64.deb`, `takeshot-<versão>-linux-x86_64.AppImage`, ou `takeshot-<versão>-linux-x86_64.tar.gz` |
 

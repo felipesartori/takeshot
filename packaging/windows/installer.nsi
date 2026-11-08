@@ -1,5 +1,7 @@
 ; Takeshot's NSIS installer: cargo-packager 0.11.8's template with its changes marked "Takeshot:".
-; It installs per user under %LOCALAPPDATA%\Programs, and the uninstaller removes the login entry.
+; It asks who to install for (just me without an administrator, under %LOCALAPPDATA%\Programs, or
+; every user, asking for one only then), carries Takeshot's icon, pictures and texts, and the
+; uninstaller removes the login entry.
 ; Set the compression algorithm.
 !if "{{compression}}" == ""
   SetCompressor /SOLID lzma
@@ -87,11 +89,18 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !define MULTIUSER_INSTALLMODE_FUNCTION RestorePreviousInstallLocation
   !define MULTIUSER_EXECUTIONLEVEL Highest
   !include MultiUser.nsh
+  ; Takeshot: MultiUser's mixed mode needs "Highest", which shows the UAC prompt before the first
+  ; page. Run as the user instead: "just me" needs nothing more, and "every user" relaunches the
+  ; installer elevated (TsModeLeave), the uninstaller too (un.onInit).
+  RequestExecutionLevel user
+  !include nsDialogs.nsh
 !endif
 
 ; installer icon
 !if "${INSTALLERICON}" != ""
   !define MUI_ICON "${INSTALLERICON}"
+  ; Takeshot: the uninstaller wears the same icon.
+  !define MUI_UNICON "${INSTALLERICON}"
 !endif
 
 ; installer sidebar image
@@ -103,6 +112,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !if "${HEADERIMAGE}" != ""
   !define MUI_HEADERIMAGE
   !define MUI_HEADERIMAGE_BITMAP  "${HEADERIMAGE}"
+  ; Takeshot: the mark on the right, the page's title on the left.
+  !define MUI_HEADERIMAGE_RIGHT
+  !define MUI_HEADERIMAGE_UNBITMAP "${HEADERIMAGE}"
 !endif
 
 ; Define registry key to store installer language
@@ -113,6 +125,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+; Takeshot: what Takeshot does, in the user's language.
+!define MUI_WELCOMEPAGE_TITLE "$(tsWelcomeTitle)"
+!define MUI_WELCOMEPAGE_TEXT "$(tsWelcomeText)"
 !insertmacro MUI_PAGE_WELCOME
 
 ; 2. License Page (if defined)
@@ -122,9 +137,66 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !endif
 
 ; 3. Install mode (if it is set to `both`)
+; Takeshot: our own page instead of MULTIUSER_PAGE_INSTALLMODE, which only shows to an
+; administrator. "Just me" is the default and needs no administrator; "every user" relaunches the
+; installer elevated with /AllUsers, and stays here if the UAC prompt is refused.
 !if "${INSTALLMODE}" == "both"
-  !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
-  !insertmacro MULTIUSER_PAGE_INSTALLMODE
+  Var TsCurrentUser
+  Var TsAllUsers
+  Page custom TsModePage TsModeLeave
+  Function TsModePage
+    Call SkipIfPassive
+    IfSilent 0 +2
+      Abort
+    ; Relaunched for every user: already chosen.
+    ClearErrors
+    ${GetOptions} $CMDLINE "/AllUsers" $R0
+    ${IfNot} ${Errors}
+      Abort
+    ${EndIf}
+    !insertmacro MUI_HEADER_TEXT "$(tsModeTitle)" "$(tsModeSubtitle)"
+    nsDialogs::Create 1018
+    Pop $R0
+    ReadEnvStr $R1 USERNAME
+    ${NSD_CreateRadioButton} 0 6u 100% 12u "$(tsModeMe) ($R1)"
+    Pop $TsCurrentUser
+    ${NSD_CreateLabel} 12u 20u -12u 20u "$(tsModeMeHint)"
+    Pop $R0
+    ${NSD_CreateRadioButton} 0 48u 100% 12u "$(tsModeAll)"
+    Pop $TsAllUsers
+    ${NSD_CreateLabel} 12u 62u -12u 20u "$(tsModeAllHint)"
+    Pop $R0
+    ; Every user is checked when Takeshot is installed only that way already, so an update stays in
+    ; place instead of adding a copy for the user.
+    ReadRegStr $R0 HKLM "${UNINSTKEY}" "UninstallString"
+    ReadRegStr $R1 HKCU "${UNINSTKEY}" "UninstallString"
+    ${If} $R0 != ""
+    ${AndIf} $R1 == ""
+      ${NSD_Check} $TsAllUsers
+    ${Else}
+      ${NSD_Check} $TsCurrentUser
+    ${EndIf}
+    nsDialogs::Show
+  FunctionEnd
+  Function TsModeLeave
+    ${NSD_GetState} $TsAllUsers $R0
+    ${If} $R0 == ${BST_CHECKED}
+      ${If} $MultiUser.Privileges == "Admin"
+      ${OrIf} $MultiUser.Privileges == "Power"
+        Call MultiUser.InstallMode.AllUsers
+      ${Else}
+        ClearErrors
+        ExecShell "runas" "$EXEPATH" "/AllUsers"
+        ${If} ${Errors}
+          MessageBox MB_OK|MB_ICONEXCLAMATION "$(tsModeNoAdmin)"
+          Abort
+        ${EndIf}
+        Quit
+      ${EndIf}
+    ${Else}
+      Call MultiUser.InstallMode.CurrentUser
+    ${EndIf}
+  FunctionEnd
 !endif
 
 
@@ -318,8 +390,14 @@ Var AppStartMenuFolder
 !define MUI_FINISHPAGE_SHOWREADME
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "$(createDesktop)"
 !define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateDesktopShortcut
+; Takeshot: the desktop shortcut is opt-in (the Start menu has one already).
+!define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
 ; Show run app after installation.
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${MAINBINARYNAME}.exe"
+; Takeshot: where to find it once installed.
+!define MUI_FINISHPAGE_TITLE "$(tsFinishTitle)"
+!define MUI_FINISHPAGE_TEXT "$(tsFinishText)"
+!define MUI_FINISHPAGE_RUN_TEXT "$(tsFinishRun)"
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_FINISH
 
@@ -359,6 +437,34 @@ FunctionEnd
 {{#each language_files}}
   !include "{{this}}"
 {{/each}}
+
+; Takeshot: our texts, in English and Brazilian Portuguese ($_CLICK names the Next button).
+LangString tsWelcomeTitle ${LANG_ENGLISH} "Welcome to Takeshot ${VERSION}"
+LangString tsWelcomeTitle ${LANG_PORTUGUESEBR} "Bem-vindo ao Takeshot ${VERSION}"
+LangString tsWelcomeText ${LANG_ENGLISH} "Takeshot captures the screen with PrtSc, marks it up with arrows, boxes, text and steps that stay editable, and puts a background, a frame and a watermark on every copy.$\r$\n$\r$\nIt lives in the tray, near the clock, and works with no window open.$\r$\n$\r$\n$_CLICK"
+LangString tsWelcomeText ${LANG_PORTUGUESEBR} "O Takeshot captura a tela com PrtSc, anota com setas, caixas, texto e passos que continuam editáveis, e aplica fundo, moldura e marca d'água em cada cópia.$\r$\n$\r$\nEle fica na bandeja, perto do relógio, e funciona sem janela aberta.$\r$\n$\r$\n$_CLICK"
+LangString tsModeTitle ${LANG_ENGLISH} "Who to install for"
+LangString tsModeTitle ${LANG_PORTUGUESEBR} "Para quem instalar"
+LangString tsModeSubtitle ${LANG_ENGLISH} "Choose whether Takeshot is just yours or everyone's on this computer."
+LangString tsModeSubtitle ${LANG_PORTUGUESEBR} "Escolha se o Takeshot é só seu ou de todos neste computador."
+LangString tsModeMe ${LANG_ENGLISH} "Just me"
+LangString tsModeMe ${LANG_PORTUGUESEBR} "Só para mim"
+LangString tsModeMeHint ${LANG_ENGLISH} "No administrator needed. Installs in AppData\Local\Programs\Takeshot and updates without asking. Recommended."
+LangString tsModeMeHint ${LANG_PORTUGUESEBR} "Sem administrador. Instala em AppData\Local\Programs\Takeshot e atualiza sem pedir permissão. Recomendado."
+LangString tsModeAll ${LANG_ENGLISH} "Everyone who uses this computer"
+LangString tsModeAll ${LANG_PORTUGUESEBR} "Para todos os usuários deste computador"
+LangString tsModeAllHint ${LANG_ENGLISH} "Asks for an administrator. Installs in Program Files\Takeshot; each update asks again."
+LangString tsModeAllHint ${LANG_PORTUGUESEBR} "Pede administrador. Instala em Arquivos de Programas\Takeshot; cada atualização pede permissão de novo."
+LangString tsModeNoAdmin ${LANG_ENGLISH} "Without an administrator's permission, Takeshot can only be installed for you. Choose $\"Just me$\" or try again."
+LangString tsModeNoAdmin ${LANG_PORTUGUESEBR} "Sem a permissão de administrador, o Takeshot só pode ser instalado para você. Escolha $\"Só para mim$\" ou tente de novo."
+LangString tsFinishTitle ${LANG_ENGLISH} "Takeshot is installed"
+LangString tsFinishTitle ${LANG_PORTUGUESEBR} "Takeshot instalado"
+LangString tsFinishText ${LANG_ENGLISH} "Done. Press PrtSc anywhere to capture an area; the tray icon brings the menu and Home."
+LangString tsFinishText ${LANG_PORTUGUESEBR} "Pronto. Aperte PrtSc em qualquer lugar para capturar uma área; o ícone na bandeja traz o menu e o Início."
+LangString tsFinishRun ${LANG_ENGLISH} "Open Takeshot now"
+LangString tsFinishRun ${LANG_PORTUGUESEBR} "Abrir o Takeshot agora"
+LangString tsUninstallAdmin ${LANG_ENGLISH} "Takeshot was installed for everyone on this computer; removing it needs an administrator."
+LangString tsUninstallAdmin ${LANG_PORTUGUESEBR} "O Takeshot foi instalado para todos neste computador; removê-lo pede um administrador."
 
 !macro SetContext
   !if "${INSTALLMODE}" == "currentUser"
@@ -415,6 +521,13 @@ Function .onInit
 
   !if "${INSTALLMODE}" == "both"
     !insertmacro MULTIUSER_INIT
+    ; Takeshot: just me unless asked for every user (/AllUsers), even when launched as an
+    ; administrator or silently: MultiUser would pick every user for an administrator.
+    ClearErrors
+    ${GetOptions} $CMDLINE "/AllUsers" $R0
+    ${If} ${Errors}
+      Call MultiUser.InstallMode.CurrentUser
+    ${EndIf}
   !endif
 FunctionEnd
 
@@ -574,6 +687,27 @@ Function un.onInit
 
   !if "${INSTALLMODE}" == "both"
     !insertmacro MULTIUSER_UNINIT
+    ; Takeshot: an install for every user is registered under HKLM: remove it as such, and ask for
+    ; an administrator first when this uninstaller runs without one (it runs as the user).
+    ReadRegStr $R0 HKLM "${UNINSTKEY}" "UninstallString"
+    ${If} $R0 == "$\"$INSTDIR\uninstall.exe$\""
+      ${If} $MultiUser.Privileges != "Admin"
+      ${AndIf} $MultiUser.Privileges != "Power"
+        StrCpy $R1 ""
+        IfSilent 0 +2
+          StrCpy $R1 "/S"
+        ClearErrors
+        ExecShell "runas" "$INSTDIR\uninstall.exe" "$R1"
+        ${If} ${Errors}
+          IfSilent +2
+            MessageBox MB_OK|MB_ICONEXCLAMATION "$(tsUninstallAdmin)"
+        ${EndIf}
+        Quit
+      ${EndIf}
+      Call un.MultiUser.InstallMode.AllUsers
+    ${Else}
+      Call un.MultiUser.InstallMode.CurrentUser
+    ${EndIf}
   !endif
 
   !insertmacro MUI_UNGETLANGUAGE

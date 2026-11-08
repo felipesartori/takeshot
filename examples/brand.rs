@@ -1,5 +1,6 @@
-//! Renders the brand SVG masters in assets/brand/ into PNGs, takeshot.ico and Takeshot.icns.
-//! Run with `cargo run --example brand` after changing any SVG; the outputs are committed.
+//! Renders the brand SVG masters in assets/brand/ into PNGs, takeshot.ico, Takeshot.icns and the
+//! Windows installer's pictures (packaging/windows/*.bmp). Run with `cargo run --example brand`
+//! after changing any SVG; the outputs are committed.
 
 use std::fs;
 use std::path::Path;
@@ -12,11 +13,20 @@ const ICO_SIZES: &[u32] = &[16, 20, 24, 32, 40, 48, 64, 256];
 const ICNS_SIZES: &[u32] = &[16, 32, 64, 128, 256, 512, 1024];
 
 fn render(name: &str, size: u32) -> Vec<u8> {
+    render_size(name, size, size)
+}
+
+/// `name`'s SVG at `w` x `h` (scaled by the width), straight-alpha RGBA. Text is set in the
+/// app's own Quicksand, so the wordmark matches the app on any machine.
+fn render_size(name: &str, w: u32, h: u32) -> Vec<u8> {
     let svg = fs::read(Path::new(DIR).join(format!("{name}.svg"))).expect("read svg");
-    let tree =
-        resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default()).expect("parse svg");
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).expect("pixmap");
-    let scale = size as f32 / tree.size().width();
+    let mut opts = resvg::usvg::Options::default();
+    opts.fontdb_mut()
+        .load_font_file("assets/fonts/Quicksand-Medium.ttf")
+        .expect("load Quicksand");
+    let tree = resvg::usvg::Tree::from_data(&svg, &opts).expect("parse svg");
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h).expect("pixmap");
+    let scale = w as f32 / tree.size().width();
     resvg::render(
         &tree,
         resvg::tiny_skia::Transform::from_scale(scale, scale),
@@ -31,6 +41,16 @@ fn render(name: &str, size: u32) -> Vec<u8> {
             [c.red(), c.green(), c.blue(), c.alpha()]
         })
         .collect()
+}
+
+/// The installer's pictures: 24-bit BMPs, as NSIS shows them (no alpha), at the size the
+/// installer's window has at 100 %.
+fn save_bmp(name: &str, w: u32, h: u32) {
+    let rgba = render_size(name, w, h);
+    let rgb: Vec<u8> = rgba.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let img = image::RgbImage::from_raw(w, h, rgb).expect("buffer size");
+    let out = Path::new("packaging/windows").join(format!("{name}.bmp"));
+    img.save(&out).expect("write bmp");
 }
 
 fn save_png(name: &str, size: u32) {
@@ -84,5 +104,7 @@ fn main() {
     family
         .write(fs::File::create(Path::new(DIR).join("Takeshot.icns")).expect("create icns"))
         .expect("write icns");
-    println!("brand assets written to {DIR}");
+    save_bmp("installer-sidebar", 164, 314);
+    save_bmp("installer-header", 150, 57);
+    println!("brand assets written to {DIR} and packaging/windows");
 }
