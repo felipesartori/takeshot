@@ -686,7 +686,11 @@ impl Annotator {
                 .frame(egui::Frame::NONE)
                 .margin(egui::Margin::ZERO)
                 .font(font.clone())
-                .hint_text(hint)
+                .hint_text(
+                    egui::RichText::new(hint)
+                        .font(font.clone())
+                        .color(ink.gamma_multiply(0.5)),
+                )
                 .desired_rows(1)
                 .desired_width(field.width())
                 .return_key(egui::KeyboardShortcut::new(

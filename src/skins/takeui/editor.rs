@@ -1009,6 +1009,33 @@ mod tests {
     }
 
     #[test]
+    fn the_hint_has_the_text_size() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let (mut ed, mut shared) = editor();
+        shared.settings.draw.font_size = 60.0;
+        ed.an.tool = Tool::Text;
+        ed.an.draft = Some(TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: String::new(),
+            started: 0.0,
+        });
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![vec![]]);
+        let view = ed.view().expect("the canvas view");
+        let size = 60.0 * view.k;
+        let hint = painted
+            .iter()
+            .find(|(s, _)| s == tr(Msg::TypeHere))
+            .map(|(_, r)| *r)
+            .expect("the hint");
+        assert!(hint.height() >= size, "{hint:?} for a {size} px text");
+        let at = view.to_screen(pos2(500.0, 500.0));
+        assert!(
+            (hint.left() - at.x).abs() < 2.0 && (hint.top() - at.y).abs() < 2.0,
+            "{hint:?} at {at:?}"
+        );
+    }
+
+    #[test]
     fn typing_edits_at_the_caret() {
         let left = || key(Key::ArrowLeft, Modifiers::NONE);
         let (ed, _) = type_into(
