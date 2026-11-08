@@ -157,7 +157,7 @@ impl ThumbQueue {
 /// The queue and whether the owner went away, shared with the worker.
 type Shared = (Mutex<(ThumbQueue, bool)>, Condvar);
 
-/// Makes thumbnails on one background thread, newest request first, through the disk cache at
+/// Makes thumbnails on a few background threads, newest request first, through the disk cache at
 /// `cache` when there is one; each result wakes the app.
 pub struct Thumbs {
     jobs: Arc<Shared>,
@@ -165,49 +165,26 @@ pub struct Thumbs {
 }
 
 impl Thumbs {
+    /// Half the processor's threads, at most 3: a first visit to a folder of photos goes faster,
+    /// while at most 3 full pictures (about 50 MB each for 12 MP) are decoded at once.
     pub fn new(ctx: &egui::Context, cache: Option<PathBuf>) -> Self {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        Self::with_workers(ctx, cache, (cores / 2).clamp(1, 3))
+    }
+
+    pub fn with_workers(ctx: &egui::Context, cache: Option<PathBuf>, workers: usize) -> Self {
         let jobs: Arc<Shared> =
             Arc::new((Mutex::new((ThumbQueue::default(), false)), Condvar::new()));
         let (done, rx) = channel();
-        let ctx = ctx.clone();
-        let queue = jobs.clone();
-        let spawned = std::thread::Builder::new()
-            .name("takeshot-thumbs".into())
-            .spawn(move || {
-                // The cache is kept to its cap here, off the UI thread, and every so often.
-                let mut stored = 0usize;
-                loop {
-                    if let Some(dir) = &cache
-                        && stored.is_multiple_of(500)
-                    {
-                        crate::system::thumbcache::prune(dir, crate::system::thumbcache::CAP);
-                    }
-                    let path = {
-                        let (lock, ready) = &*queue;
-                        let Ok(mut guard) = lock.lock() else { return };
-                        loop {
-                            if guard.1 {
-                                return;
-                            }
-                            if let Some(p) = guard.0.pop() {
-                                break p;
-                            }
-                            guard = match ready.wait(guard) {
-                                Ok(g) => g,
-                                Err(_) => return,
-                            };
-                        }
-                    };
-                    let thumb = make_thumb(&path, cache.as_deref());
-                    stored += 1;
-                    if done.send((path, thumb)).is_err() {
-                        return;
-                    }
-                    ctx.request_repaint();
-                }
-            });
-        if let Err(e) = spawned {
-            eprintln!("takeshot: no thumbnails: {e}");
+        for worker in 0..workers.max(1) {
+            let (ctx, queue, done, cache) =
+                (ctx.clone(), jobs.clone(), done.clone(), cache.clone());
+            let spawned = std::thread::Builder::new()
+                .name(format!("takeshot-thumbs-{worker}"))
+                .spawn(move || thumb_worker(&ctx, &queue, &done, cache.as_deref(), worker == 0));
+            if let Err(e) = spawned {
+                eprintln!("takeshot: no thumbnails: {e}");
+            }
         }
         Self {
             jobs,
@@ -236,6 +213,48 @@ impl Thumbs {
             .lock()
             .map(|rx| rx.try_iter().collect())
             .unwrap_or_default()
+    }
+}
+
+/// One thumbnail thread: takes the newest request, makes it and sends it back, until the owner goes.
+/// The first one also keeps the disk cache to its cap, at start and every 500 thumbnails.
+fn thumb_worker(
+    ctx: &egui::Context,
+    queue: &Shared,
+    done: &std::sync::mpsc::Sender<(PathBuf, Thumb)>,
+    cache: Option<&Path>,
+    prunes: bool,
+) {
+    let mut made = 0usize;
+    loop {
+        if let Some(dir) = cache
+            && prunes
+            && made.is_multiple_of(500)
+        {
+            crate::system::thumbcache::prune(dir, crate::system::thumbcache::CAP);
+        }
+        let path = {
+            let (lock, ready) = queue;
+            let Ok(mut guard) = lock.lock() else { return };
+            loop {
+                if guard.1 {
+                    return;
+                }
+                if let Some(p) = guard.0.pop() {
+                    break p;
+                }
+                guard = match ready.wait(guard) {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+            }
+        };
+        let thumb = make_thumb(&path, cache);
+        made += 1;
+        if done.send((path, thumb)).is_err() {
+            return;
+        }
+        ctx.request_repaint();
     }
 }
 
@@ -384,6 +403,23 @@ mod tests {
             make_thumb(p, Some(&cache)).unwrap();
         });
         println!("thumb_bench: from the cache: {png:.2} ms a capture, {jpg:.2} ms a photo");
+        for workers in [1, 3] {
+            let thumbs = Thumbs::with_workers(&egui::Context::default(), None, workers);
+            let t = std::time::Instant::now();
+            for p in &paths {
+                thumbs.request(p.clone());
+            }
+            let mut n = 0;
+            while n < paths.len() {
+                n += thumbs.poll().len();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            println!(
+                "thumb_bench: {workers} workers, no cache: {:.2} s for all {}",
+                t.elapsed().as_secs_f64(),
+                paths.len()
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -512,6 +548,45 @@ mod tests {
             make_thumb(&shot, None).unwrap().0.get_pixel(0, 0).0,
             [200, 0, 0, 255]
         );
+    }
+
+    #[test]
+    fn every_request_comes_back_once_from_several_workers() {
+        let d = temp_dir("workers");
+        let paths: Vec<PathBuf> = (0..12)
+            .map(|i| {
+                let p = d.join(format!("{i}.png"));
+                image::RgbaImage::new(30 + i, 20).save(&p).unwrap();
+                p
+            })
+            .collect();
+        let thumbs = Thumbs::with_workers(&egui::Context::default(), None, 3);
+        for p in &paths {
+            thumbs.request(p.clone());
+        }
+        let mut got = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while got.len() < paths.len() && std::time::Instant::now() < deadline {
+            got.extend(thumbs.poll());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        got.extend(thumbs.poll());
+        let mut names: Vec<_> = got.iter().map(|(p, _)| p.clone()).collect();
+        names.sort();
+        let mut want = paths.clone();
+        want.sort();
+        assert_eq!(names, want, "each once");
+        for (p, r) in &got {
+            let w = 30
+                + p.file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .parse::<u32>()
+                    .unwrap();
+            assert_eq!(r.as_ref().unwrap().1, [w, 20], "{p:?}");
+        }
     }
 
     #[test]
