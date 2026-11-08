@@ -1,14 +1,14 @@
+# Lint and tests on Windows, macOS and Linux and, with `package`, the seven installers as
+# artifacts. ci.yml runs it on pull requests, release.yml before publishing a release.
 name: build
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
-  pull_request:
-  workflow_dispatch:
-
-permissions:
-  contents: read
+  workflow_call:
+    inputs:
+      package:
+        description: Build the installers too
+        type: boolean
+        default: false
 
 env:
   # rust-toolchain.toml pins the MSVC toolchain for local Windows builds; CI uses plain stable.
@@ -59,11 +59,11 @@ jobs:
           cargo test
 
       - name: Build (Windows / Linux)
-        if: runner.os != 'macOS'
+        if: inputs.package && runner.os != 'macOS'
         run: cargo build --release
 
       - name: Build (macOS universal)
-        if: runner.os == 'macOS'
+        if: inputs.package && runner.os == 'macOS'
         run: |
           cargo build --release --target aarch64-apple-darwin
           cargo build --release --target x86_64-apple-darwin
@@ -72,6 +72,7 @@ jobs:
             target/aarch64-apple-darwin/release/takeshot target/x86_64-apple-darwin/release/takeshot
 
       - name: cargo-packager (cached)
+        if: inputs.package
         id: packager
         uses: actions/cache@v4
         with:
@@ -81,7 +82,7 @@ jobs:
           key: cargo-packager-${{ env.PACKAGER_VERSION }}-${{ runner.os }}
 
       - name: cargo-packager (install)
-        if: steps.packager.outputs.cache-hit != 'true'
+        if: inputs.package && steps.packager.outputs.cache-hit != 'true'
         run: cargo install cargo-packager --version ${{ env.PACKAGER_VERSION }} --locked
 
       # Code signing is off until the repository has the variable and the secrets. Windows: set the
@@ -91,7 +92,7 @@ jobs:
       # APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific)
       # and APPLE_TEAM_ID.
       - name: Sign the program (Windows)
-        if: runner.os == 'Windows' && vars.SIGN_WINDOWS == 'true'
+        if: inputs.package && runner.os == 'Windows' && vars.SIGN_WINDOWS == 'true'
         uses: azure/artifact-signing-action@v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -107,7 +108,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Import the signing certificate (macOS)
-        if: runner.os == 'macOS' && vars.SIGN_MACOS == 'true'
+        if: inputs.package && runner.os == 'macOS' && vars.SIGN_MACOS == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -121,6 +122,7 @@ jobs:
           rm cert.p12
 
       - name: Package
+        if: inputs.package
         shell: bash
         env:
           # linuxdeploy (AppImage) runs without FUSE on the runner.
@@ -174,7 +176,7 @@ jobs:
           ls -la dist
 
       - name: Sign the installers (Windows)
-        if: runner.os == 'Windows' && vars.SIGN_WINDOWS == 'true'
+        if: inputs.package && runner.os == 'Windows' && vars.SIGN_WINDOWS == 'true'
         uses: azure/artifact-signing-action@v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -190,7 +192,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Notarize (macOS)
-        if: runner.os == 'macOS' && vars.SIGN_MACOS == 'true'
+        if: inputs.package && runner.os == 'macOS' && vars.SIGN_MACOS == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -201,22 +203,8 @@ jobs:
           xcrun stapler staple "$DMG"
 
       - uses: actions/upload-artifact@v4
+        if: inputs.package
         with:
           name: takeshot-${{ matrix.name }}
           path: dist/*
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*
-          generate_release_notes: true

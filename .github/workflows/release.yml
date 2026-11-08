@@ -1,0 +1,60 @@
+# One button for a release: Actions > release > Run workflow (on main), or
+# `gh workflow run release`. It releases the version in Cargo.toml: lint, tests and the seven
+# installers on Windows, macOS and Linux, then the tag vX.Y.Z on this commit and the GitHub Release
+# with the installers. Bump `version` in Cargo.toml (in a pull request) before the next one.
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: release
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        shell: bash
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Release from main only (this run is on ${{ github.ref }})."
+            exit 1
+          fi
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "::error::v$version is out already: bump version in Cargo.toml first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      package: true
+    secrets: inherit
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Takeshot ${{ needs.version.outputs.version }}
+          files: artifacts/*
+          generate_release_notes: true
