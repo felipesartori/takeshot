@@ -7,27 +7,37 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 ## O que faz
 
 **Captura**
+
+![Captura](docs/capture.png)
+
 - Seleção de área com lupa de pixels, coordenadas e cor (tecla `C` copia o hex da cor sob o cursor).
 - Alças para ajustar a seleção, setas movem, `Shift`+setas redimensionam, `Ctrl+A` pega a tela inteira. Com um objeto selecionado, as setas movem o objeto.
 - Opção de lembrar a última área selecionada.
 - Tela inteira direto no editor e captura com temporizador de 3 segundos.
 
-**Ferramentas** (barra flutuante sob a seleção)
+**Ferramentas** (barra sob a área escolhida: ferramentas, desfazer, refazer, fixar, salvar, copiar, Editar e fechar; uma segunda barra traz as opções da ferramenta ou do objeto selecionado)
 - Caneta, linha, seta, retângulo, círculo/elipse, marcador, texto, borrar ou pixelar, numeração de passos.
 - `Shift` enquanto arrasta: linhas em ângulos de 45°, quadrados e círculos perfeitos, traço livre reto.
 - `Alt` enquanto arrasta: retângulo, círculo e desfoque a partir do centro.
 - Paleta de cores com cor personalizada, 5 espessuras (a roda do mouse ajusta), retângulo e círculo preenchidos.
 - Texto com várias fontes do sistema (sans, negrito, serifada, elegante, mono, impacto, condensada, manuscrita) e opção de texto com fundo.
 - Toda marca continua editável, na captura e no editor: o que acabou de ser desenhado fica selecionado, e com Selecionar (`V`) um clique escolhe, `Shift`+clique soma à seleção, arrastar move e as alças redimensionam (pontas em linha e seta, oito alças em retângulo, elipse e borrar, quatro cantos em texto, traço e numeração).
-- Com algo selecionado, a barra de opções mostra a cor, a espessura e o preenchimento do objeto e muda o objeto.
+- Com algo selecionado, a barra de opções mostra a cor, a espessura e o preenchimento do objeto, muda o objeto e tem duplicar e excluir.
 - Duplo clique num texto, com Selecionar ou Texto, volta a editá-lo. Excluir um passo numerado não renumera os outros.
 - Desfazer e refazer cobrem criar, mover, redimensionar, mudar o estilo, duplicar e excluir; um arraste inteiro é um passo só.
 - Na captura, as ferramentas de desenho começam dentro da área escolhida.
 
 **Editor**
-- 12 degradês prontos, degradê personalizado (duas cores e ângulo), cor sólida, fundo com a própria captura borrada ou transparente.
-- Margem, cantos arredondados, sombra, barra de janela e formatos 16:9, 4:3, 1:1 e 9:16.
-- Marca d'água com logo (PNG, JPG, WebP) e texto: 9 posições (cantos, bordas, centro) ou faixa superior/inferior com cor própria; tamanho, distância e opacidade ajustáveis; sobre o fundo ou sobre a captura.
+
+![Editor](docs/editor.png)
+
+- Barra de título com o nome do arquivo e as dimensões, desfazer e refazer, Fixar na tela, Salvar como, Salvar e Copiar; barra de ferramentas com as dez ferramentas, cores, espessuras e zoom até 400 % (`Ctrl`+roda aproxima no ponteiro; espaço ou o botão do meio arrastam a imagem).
+- Painel Objeto: cor, espessura, opacidade, preenchimento, fonte e fundo do texto do objeto selecionado (ou da ferramenta), Duplicar e Excluir, e a lista de objetos: clique escolhe, o olho oculta, o botão direito traz para frente ou envia para trás. Arrastar um controle deslizante é um passo só de desfazer.
+- Sobre o objeto selecionado, uma barra pequena com a cor, duplicar, trazer para frente, enviar para trás e excluir.
+- Painel Estilo, o mesmo de Estilo na janela principal:
+  - 12 degradês prontos, degradê personalizado (duas cores e ângulo), cor sólida, fundo com a própria captura borrada ou transparente.
+  - Margem, cantos arredondados, sombra, barra de janela e formatos 16:9, 4:3, 1:1 e 9:16.
+  - Marca d'água com logo (PNG, JPG, WebP) e texto: 9 posições (cantos, bordas, centro) ou faixa superior/inferior com cor própria; tamanho, distância e opacidade ajustáveis; sobre o fundo ou sobre a captura.
 - Copiar, salvar, salvar como e fixar na tela.
 - Fechar o editor com mudanças que não foram copiadas nem salvas pergunta antes: Descartar, Cancelar, ou Copiar e fechar.
 
@@ -69,6 +79,8 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 | `Ctrl+Z` / `Ctrl+Y` ou `Ctrl+Shift+Z` | Desfazer / refazer |
 | `Esc` | Limpar a seleção de objetos, depois voltar para Selecionar, depois fechar a captura |
 | `Ctrl+W` | Fechar o editor (pergunta se há mudanças não exportadas) |
+| `Ctrl+0` / `Ctrl+1` / `Ctrl+=` / `Ctrl+-` | Editor: ajustar à janela / 100 % / aproximar / afastar |
+| espaço + arrastar | Editor: mover a imagem ampliada |
 
 Os atalhos globais funcionam enquanto o Takeshot estiver na bandeja e podem ser trocados em Ajustes > Atalhos. Com uma captura aberta, um novo `PrtSc` não faz nada.
 
@@ -92,7 +104,7 @@ cargo build --release
 
 No Windows o `rust-toolchain.toml` usa o toolchain MSVC. Em outros sistemas rode com `RUSTUP_TOOLCHAIN=stable cargo build --release`. No Linux instale antes: `libgtk-3-dev libxcb1-dev libxcb-randr0-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev`.
 
-`takeshot --screenshot saida.png` abre a janela, desenha 120 quadros e salva a imagem dela (usado na verificação automática; não passa pela bandeja nem pela instância única). `takeshot --edit` abre o editor com uma imagem de exemplo. `takeshot --minimized` sobe só na bandeja.
+`takeshot --screenshot saida.png` abre a janela, desenha 120 quadros e salva a imagem dela (usado na verificação automática; não passa pela bandeja nem pela instância única). `takeshot --edit` abre o editor com uma imagem de exemplo; `--page editor` e `--page captura` abrem o editor e a captura na imagem de exemplo (com `--theme`, `--mode` e `--lang` para conferir os temas). `takeshot --minimized` sobe só na bandeja.
 
 ## Licença
 
