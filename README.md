@@ -23,7 +23,7 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 - Texto com várias fontes do sistema (sans, negrito, serifada, elegante, mono, impacto, condensada, manuscrita) e opção de texto com fundo.
 - Toda marca continua editável, na captura e no editor, com qualquer ferramenta: sobre a própria forma (a linha de uma forma vazada, o miolo de uma preenchida, o texto) o cursor vira a cruz de mover, e arrastar seleciona e move; fora das formas, a ferramenta desenha. Com Selecionar (`V`) um clique escolhe, `Shift`+clique soma à seleção, arrastar move e as alças redimensionam (pontas em linha e seta, oito alças em retângulo, elipse e borrar, quatro cantos em texto, traço e numeração).
 - Com algo selecionado, a barra de opções mostra a cor, a espessura e o preenchimento do objeto, muda o objeto e tem duplicar e excluir.
-- Duplo clique num texto, com Selecionar ou Texto, volta a editá-lo. Excluir um passo numerado não renumera os outros.
+- Com a ferramenta Texto, um clique num texto existente volta a editá-lo, com o cursor onde se clicou (sobre ele o ponteiro vira o de texto); com as outras ferramentas, duplo clique. Enquanto se digita: cursor, setas, seleção com o mouse, `Ctrl+A`, colar; Enter confirma, `Shift+Enter` quebra a linha. Excluir um passo numerado não renumera os outros.
 - Desfazer e refazer cobrem criar, mover, redimensionar, mudar o estilo, duplicar e excluir; um arraste inteiro é um passo só.
 - Na captura, as ferramentas de desenho começam dentro da área escolhida.
 

@@ -8,7 +8,7 @@ use crate::system::fonts::{self, FontLib};
 use crate::system::settings::DrawOpts;
 use crate::ui::kit::selection_marker;
 use crate::ui::tokens::Tokens;
-use egui::{Color32, Painter, Pos2, Response, Shape as EShape, Stroke, Ui, vec2};
+use egui::{Color32, Painter, Pos2, Response, Shape as EShape, Stroke, Ui, Vec2, vec2};
 
 /// How far from a handle, in screen points, a press still grabs it.
 const HANDLE_REACH: f32 = 7.0;
@@ -35,6 +35,34 @@ pub struct TextDraft {
     pub pos: Pos2,
     pub text: String,
     pub started: f64,
+    /// Where the caret goes when the field opens (a character index); `None` leaves it to the
+    /// field (the end).
+    pub caret: Option<usize>,
+}
+
+/// The character index nearest `rel` (picture px from the text's top-left) in `text`: the line
+/// under it, then the boundary between letters nearest it.
+fn caret_at(text: &str, font: usize, size: f32, rel: Vec2, m: TextMeasure) -> usize {
+    let line_h = m("Ag", font, size, false).y.max(1.0);
+    let line = (rel.y / line_h).floor().max(0.0) as usize;
+    let mut before = 0;
+    let lines: Vec<&str> = text.split('\n').collect();
+    let last = lines.len().saturating_sub(1);
+    for (i, l) in lines.iter().enumerate() {
+        if i < line.min(last) {
+            before += l.chars().count() + 1;
+            continue;
+        }
+        let chars: Vec<char> = l.chars().collect();
+        let nearest = (0..=chars.len())
+            .min_by(|a, b| {
+                let w = |k: usize| m(&chars[..k].iter().collect::<String>(), font, size, false).x;
+                (w(*a) - rel.x).abs().total_cmp(&(w(*b) - rel.x).abs())
+            })
+            .unwrap_or(0);
+        return before + nearest;
+    }
+    text.chars().count()
 }
 
 /// An object drag in progress: the whole selection, or one handle of one object.
@@ -198,6 +226,7 @@ impl Annotator {
                         pos: view.to_img(p),
                         text: String::new(),
                         started: now,
+                        caret: None,
                     });
                 }
             }
@@ -280,9 +309,19 @@ impl Annotator {
         m: TextMeasure,
         opts: &mut DrawOpts,
     ) -> SelectOutcome {
-        if resp.double_clicked()
-            && matches!(self.tool, Tool::Select | Tool::Text)
-            && let Some(p) = ui.input(|i| i.pointer.interact_pos())
+        // A double click edits a text with any tool; the Text tool edits one with a single click
+        // (or a press), so it never starts a new text on top of it.
+        let press = if resp.drag_started() {
+            ui.input(|i| i.pointer.press_origin())
+        } else if resp.clicked() || resp.double_clicked() {
+            ui.input(|i| i.pointer.interact_pos())
+        } else {
+            None
+        };
+        let text_tool_press = self.tool == Tool::Text && (resp.clicked() || resp.drag_started());
+        if (resp.double_clicked() || text_tool_press)
+            && let Some(p) = press
+            && self.text_at(view.to_img(p), m)
             && self.edit_text_at(view.to_img(p), m, opts)
         {
             return SelectOutcome::Consumed;
@@ -369,9 +408,19 @@ impl Annotator {
     }
 
     /// For the pointer: the handle under `p_img` (or the one being dragged) and whether an object is there.
-    /// What is under the pointer: a handle of the selection, and whether an object itself is
-    /// (any tool moves it).
-    pub fn hover(&self, p_img: Pos2, view: &View, m: TextMeasure) -> (Option<Handle>, bool) {
+    /// Whether a visible text object is at `p_img`.
+    fn text_at(&self, p_img: Pos2, m: TextMeasure) -> bool {
+        self.doc.hit(p_img, 0.0, m).is_some_and(|id| {
+            self.doc
+                .objs()
+                .iter()
+                .any(|o| o.id == id && matches!(o.ann.shape, Shape::Text { .. }))
+        })
+    }
+
+    /// What is under the pointer: a handle of the selection, whether an object itself is (any
+    /// tool moves it), and whether that object is a text (the Text tool edits it).
+    pub fn hover(&self, p_img: Pos2, view: &View, m: TextMeasure) -> (Option<Handle>, bool, bool) {
         let handle = match self.dragging {
             Some(Drag::Resize { handle, .. }) => Some(handle),
             _ => self
@@ -381,7 +430,7 @@ impl Annotator {
         };
         let over = matches!(self.dragging, Some(Drag::Move { .. }))
             || self.doc.hit(p_img, HIT_REACH / view.k, m).is_some();
-        (handle, over)
+        (handle, over, self.text_at(p_img, m))
     }
 
     /// Selection, moving and resizing on a canvas response, with any tool: the selection's handles
@@ -549,8 +598,9 @@ impl Annotator {
         }
     }
 
-    /// Double click on a text object: takes it out of the picture and reopens it for typing,
-    /// with its font, size, background and colour back in the options.
+    /// A text object at `p_img` (a double click, or the Text tool's click): takes it out of the
+    /// picture and reopens it for typing with the caret where it was clicked, and its font,
+    /// size, background and colour back in the options.
     pub fn edit_text_at(&mut self, p_img: Pos2, m: TextMeasure, opts: &mut DrawOpts) -> bool {
         self.commit_draft(opts);
         let Some(id) = self.doc.hit(p_img, 0.0, m) else {
@@ -584,10 +634,12 @@ impl Annotator {
         opts.text_box = boxed;
         opts.color = color;
         self.doc.select(None, false);
+        let caret = caret_at(&text, font, size, p_img - pos, m);
         self.draft = Some(TextDraft {
             pos,
             text,
             started: 0.0,
+            caret: Some(caret),
         });
         true
     }
@@ -673,13 +725,26 @@ impl Annotator {
             );
             ui.painter().layout_job(job)
         };
+        // One field per draft (a text reopened where another was keeps its own state).
+        let id = egui::Id::unique((
+            "takeshot-text-draft",
+            d.started.to_bits(),
+            d.pos.x.to_bits(),
+            d.pos.y.to_bits(),
+        ));
+        if let Some(i) = d.caret.take() {
+            let mut state =
+                egui::widgets::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            let at = egui::text::CCursor::new(i.min(d.text.chars().count()));
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(at)));
+            state.store(ui.ctx(), id);
+        }
         let resp = ui.place(
             field,
             egui::TextEdit::multiline(&mut d.text)
-                .id(egui::Id::unique((
-                    "takeshot-text-draft",
-                    d.started.to_bits(),
-                )))
+                .id(id)
                 .frame(egui::Frame::NONE)
                 .margin(egui::Margin::ZERO)
                 .font(font.clone())
@@ -1509,6 +1574,88 @@ mod tests {
         assert!(!an.doc.undo(), "one step for the whole move");
     }
 
+    fn text_obj(text: &str) -> Ann {
+        Ann {
+            shape: Shape::Text {
+                pos: pos2(100.0, 100.0),
+                text: text.into(),
+                font: 0,
+                size: 20.0,
+                boxed: false,
+            },
+            color: [0, 0, 255, 255],
+            width: 3.0,
+            filled: false,
+        }
+    }
+
+    fn double_click(p: Pos2) -> Vec<Vec<Event>> {
+        vec![press(p), release(p), press(p), release(p), vec![]]
+    }
+
+    #[test]
+    fn the_text_tool_edits_a_text_with_one_click() {
+        // The test measure: 10 px a character at size 20. A click after "Pico" puts the caret
+        // there.
+        let (mut an, _) = with(Tool::Text, vec![text_obj("Pico em outubro")]);
+        let mut opts = DrawOpts::default();
+        run(Modifiers::NONE, click(pos2(141.0, 108.0)), |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        let d = an.draft.as_ref().expect("editing the text");
+        assert_eq!(d.text, "Pico em outubro");
+        assert_eq!(d.caret, Some(4));
+        assert!(an.doc.objs().is_empty(), "taken out while it is typed");
+        // Off every text, the Text tool starts a new one.
+        let (mut an, _) = with(Tool::Text, vec![text_obj("Pico")]);
+        run(Modifiers::NONE, click(pos2(400.0, 400.0)), |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert_eq!(an.draft.as_ref().map(|d| d.text.as_str()), Some(""));
+        assert_eq!(an.doc.objs().len(), 1);
+    }
+
+    #[test]
+    fn a_double_click_edits_any_text_with_any_tool() {
+        for tool in [Tool::Select, Tool::Arrow, Tool::Rect] {
+            let (mut an, _) = with(tool, vec![text_obj("Pico")]);
+            let mut opts = DrawOpts::default();
+            run(
+                Modifiers::NONE,
+                double_click(pos2(121.0, 108.0)),
+                |ui, resp| an.handle_canvas(ui, resp, &VIEW, &m, &mut opts),
+            );
+            let d = an
+                .draft
+                .as_ref()
+                .unwrap_or_else(|| panic!("{tool:?} edits"));
+            assert_eq!((d.text.as_str(), d.caret), ("Pico", Some(2)), "{tool:?}");
+        }
+    }
+
+    #[test]
+    fn the_text_tool_shows_the_text_cursor_over_a_text() {
+        let (an, _) = with(Tool::Text, vec![text_obj("Pico")]);
+        let (_, over, over_text) = an.hover(pos2(121.0, 108.0), &VIEW, &m);
+        assert!(over && over_text);
+        let ctx = |tool, over_object, over_text| crate::engine::cursor::CursorCtx {
+            tool,
+            over_image: true,
+            over_chrome: false,
+            handle: None,
+            over_object,
+            over_text,
+            typing: false,
+            dragging: false,
+            space_pan: false,
+            area: crate::engine::cursor::Area::NotApplicable,
+        };
+        use crate::engine::cursor::pick;
+        assert_eq!(pick(&ctx(Tool::Text, true, true)), egui::CursorIcon::Text);
+        assert_eq!(pick(&ctx(Tool::Arrow, true, true)), egui::CursorIcon::Move);
+        assert_eq!(pick(&ctx(Tool::Text, true, false)), egui::CursorIcon::Move);
+    }
+
     #[test]
     fn a_drawing_tool_moves_any_shape_under_it() {
         // Not selected: pressing on its line picks it, shows its style and moves it.
@@ -1575,8 +1722,8 @@ mod tests {
             vec![rect_ann((100.0, 100.0), (300.0, 300.0), false)],
         );
         // On the outline rectangle's line, and inside its box away from the line.
-        let (_, on_line) = an.hover(pos2(100.0, 200.0), &VIEW, &m);
-        let (_, in_box) = an.hover(pos2(200.0, 200.0), &VIEW, &m);
+        let (_, on_line, _) = an.hover(pos2(100.0, 200.0), &VIEW, &m);
+        let (_, in_box, _) = an.hover(pos2(200.0, 200.0), &VIEW, &m);
         assert!(on_line && !in_box);
         let ctx = |over_object| crate::engine::cursor::CursorCtx {
             tool: Tool::Pen,
@@ -1584,6 +1731,7 @@ mod tests {
             over_chrome: false,
             handle: None,
             over_object,
+            over_text: false,
             typing: false,
             dragging: false,
             space_pan: false,
@@ -1897,7 +2045,7 @@ mod tests {
             Tool::Select,
             vec![rect_ann((100.0, 100.0), (200.0, 200.0), true)],
         );
-        assert_eq!(an.hover(pos2(150.0, 150.0), &VIEW, &m), (None, true));
+        assert_eq!(an.hover(pos2(150.0, 150.0), &VIEW, &m), (None, true, false));
         assert_eq!(
             an.hover(pos2(200.0, 200.0), &VIEW, &m).0,
             None,
@@ -1906,9 +2054,12 @@ mod tests {
         an.doc.select(Some(ids[0]), false);
         assert_eq!(
             an.hover(pos2(201.0, 199.0), &VIEW, &m),
-            (Some(Handle::SE), true)
+            (Some(Handle::SE), true, false)
         );
-        assert_eq!(an.hover(pos2(400.0, 400.0), &VIEW, &m), (None, false));
+        assert_eq!(
+            an.hover(pos2(400.0, 400.0), &VIEW, &m),
+            (None, false, false)
+        );
         an.dragging = Some(Drag::Resize {
             id: ids[0],
             handle: Handle::N,

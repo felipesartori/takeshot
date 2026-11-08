@@ -714,8 +714,8 @@ impl Editor {
             {
                 // While a new shape is drawn or the picture panned, handles and objects underneath
                 // keep the pointer.
-                let (handle, over_object) = if self.an.live.is_some() || panning {
-                    (None, false)
+                let (handle, over_object, over_text) = if self.an.live.is_some() || panning {
+                    (None, false, false)
                 } else {
                     self.an.hover(view.to_img(p), &view, &measure)
                 };
@@ -725,6 +725,7 @@ impl Editor {
                     over_chrome: false,
                     handle,
                     over_object,
+                    over_text,
                     typing: self.an.draft.is_some(),
                     dragging: if panning {
                         resp.dragged()
@@ -1091,6 +1092,7 @@ mod tests {
             pos: pos2(0.0, 0.0),
             text: "hi".into(),
             started: 0.0,
+            caret: None,
         });
         assert!(unsaved_edits(&an, saved), "text being typed");
         an.draft = None;

@@ -440,12 +440,12 @@ impl Overlay {
         {
             // A drawing tool reaches objects only inside the area, like its clicks.
             let reachable = !drawing_tool || sel_screen.is_some_and(|r| r.contains(p));
-            let (handle, over_object) = if self.an.live.is_some()
+            let (handle, over_object, over_text) = if self.an.live.is_some()
                 || self.sel.is_none()
                 || !matches!(self.drag, Drag::None)
                 || !reachable
             {
-                (None, false)
+                (None, false, false)
             } else {
                 self.an.hover(view.to_img(p), view, &measure)
             };
@@ -455,6 +455,7 @@ impl Overlay {
                 over_chrome: false,
                 handle,
                 over_object,
+                over_text,
                 typing: self.an.draft.is_some(),
                 dragging: self.an.dragging.is_some(),
                 space_pan: false,
@@ -1152,6 +1153,7 @@ mod tests {
             pos: pos2(500.0, 500.0),
             text: "Pico".into(),
             started: 0.0,
+            caret: None,
         });
         let n = o.an.doc.objs().len();
         o.apply(CaptureAction::SetTool(Tool::Rect), &ctx, None, &mut sh);
@@ -1279,6 +1281,7 @@ mod tests {
             pos: pos2(500.0, 500.0),
             text: "Pico".into(),
             started: 0.0,
+            caret: None,
         });
         let key = |pressed| egui::Event::Key {
             key: Key::R,
@@ -1333,6 +1336,7 @@ mod tests {
             pos: pos2(500.0, 500.0),
             text: "Pico".into(),
             started: 0.0,
+            caret: None,
         });
         let n = o.an.doc.objs().len();
         let s = ui_frames(&mut o, &mut sh, vec![vec![esc()]]);

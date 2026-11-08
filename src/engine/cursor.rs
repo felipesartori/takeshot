@@ -24,6 +24,8 @@ pub struct CursorCtx {
     pub handle: Option<Handle>,
     /// Over an object itself (its line, its fill, its text; not its box): any tool moves it.
     pub over_object: bool,
+    /// Over a text object: the Text tool edits it.
+    pub over_text: bool,
     pub typing: bool,
     pub dragging: bool,
     pub space_pan: bool,
@@ -64,6 +66,9 @@ pub fn pick(c: &CursorCtx) -> CursorIcon {
     if c.area == Area::NotStarted {
         return CursorIcon::Crosshair;
     }
+    if c.over_text && c.tool == Tool::Text {
+        return CursorIcon::Text;
+    }
     if c.over_object {
         return CursorIcon::Move;
     }
@@ -93,6 +98,7 @@ mod tests {
             over_chrome: false,
             handle: None,
             over_object: false,
+            over_text: false,
             typing: false,
             dragging: false,
             space_pan: false,

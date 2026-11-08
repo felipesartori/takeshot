@@ -971,6 +971,7 @@ mod tests {
             pos: pos2(50.0, 50.0),
             text: "Pico".into(),
             started: 0.0,
+            caret: None,
         });
         let key = |pressed| Event::Key {
             key: Key::R,
@@ -1011,6 +1012,7 @@ mod tests {
             pos: pos2(500.0, 500.0),
             text: text.into(),
             started: 0.0,
+            caret: None,
         });
         run_editor(&mut ed, &mut shared, SIZE, true, frames);
         (ed, shared)
@@ -1030,6 +1032,7 @@ mod tests {
             pos: pos2(500.0, 500.0),
             text: String::new(),
             started: 0.0,
+            caret: None,
         });
         let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![vec![]]);
         let view = ed.view().expect("the canvas view");
@@ -1045,6 +1048,26 @@ mod tests {
             (hint.left() - at.x).abs() < 2.0 && (hint.top() - at.y).abs() < 2.0,
             "{hint:?} at {at:?}"
         );
+    }
+
+    #[test]
+    fn an_edited_text_opens_with_the_caret_where_it_was_clicked() {
+        let (mut ed, mut shared) = editor();
+        ed.an.tool = Tool::Text;
+        ed.an.draft = Some(TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: "Pico".into(),
+            started: 1.0,
+            caret: Some(2),
+        });
+        run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![vec![], vec![Event::Text("X".into())]],
+        );
+        assert_eq!(draft(&ed), Some("PiXco"));
     }
 
     #[test]
