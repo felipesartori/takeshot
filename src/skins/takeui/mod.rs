@@ -1,5 +1,6 @@
 //! The TakeUI skin (option A of the prototypes): the TakeFlow family look.
 
+pub mod capture;
 pub mod editor;
 pub mod home;
 pub mod settings;
@@ -116,6 +117,21 @@ pub(crate) mod testing {
                 ed.apply(a.clone(), ui.ctx(), None, shared);
             }
             acts.extend(frame);
+        });
+        (acts, p)
+    }
+
+    /// The capture's bars and hint over `run_frames`, the window as large as the sample picture;
+    /// returns the actions without carrying them out (they reach the clipboard and the disk).
+    pub fn run_capture(
+        ov: &mut crate::screens::overlay::Overlay,
+        shared: &mut Shared,
+        frames: Vec<Vec<Event>>,
+    ) -> (Vec<crate::screens::overlay::CaptureAction>, Painted) {
+        let mut acts = Vec::new();
+        let p = run_frames(shared, (1600.0, 900.0), true, frames, |ui, t, shared| {
+            let screen = ui.max_rect();
+            acts.extend(crate::skins::capture(ui, t, ov, shared, screen));
         });
         (acts, p)
     }

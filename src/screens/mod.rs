@@ -3,7 +3,6 @@
 pub mod about;
 pub mod editor;
 pub mod home;
-pub mod icons;
 pub mod notice;
 pub mod overlay;
 pub mod pin;

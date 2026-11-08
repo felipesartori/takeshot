@@ -18,9 +18,6 @@ pub const MARKER_ALPHA: u8 = 125;
 pub const MARKER_WIDTH_FACTOR: f32 = 5.0;
 /// The screen outside the selection is dimmed to 50 %.
 pub const DIM_ALPHA: f32 = 0.5;
-/// Size label: dark translucent fill with light grey text.
-pub const SIZE_LABEL_FILL: [u8; 4] = [0, 0, 0, 200];
-pub const SIZE_LABEL_TEXT: [u8; 3] = [0xde, 0xde, 0xde];
 
 pub const WIDTHS: [f32; 5] = [2.0, 3.0, 5.0, 8.0, 12.0];
 

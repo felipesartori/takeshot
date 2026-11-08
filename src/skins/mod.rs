@@ -32,6 +32,18 @@ pub fn editor(
     takeui::editor::editor(ui, t, ed, shared)
 }
 
+/// The capture's bars and hint in the current theme (TakeUI for both until the Coral UI skin
+/// exists), over `screen`. Returns what the user asked for; `Overlay::apply` does it.
+pub fn capture(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    ov: &crate::screens::overlay::Overlay,
+    shared: &Shared,
+    screen: egui::Rect,
+) -> Vec<crate::screens::overlay::CaptureAction> {
+    takeui::capture::capture(ui, t, ov, shared, screen)
+}
+
 /// Applies the egui style for this look when it changed since the last frame (theme or light and
 /// dark); true when it did.
 pub fn begin_frame(ctx: &egui::Context, t: &Tokens) -> bool {
