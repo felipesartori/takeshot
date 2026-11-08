@@ -94,7 +94,7 @@ pub fn visible(entries: &[Entry], p: Period, query: &str, now: DateTime<Local>) 
         .collect()
 }
 
-/// The day a capture falls on, for the gallery's groups.
+/// The day a capture falls on, for the words that tell it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Day {
     Today,
@@ -113,30 +113,6 @@ pub fn day_of(t: SystemTime, now: DateTime<Local>) -> Day {
     } else {
         Day::Date(date)
     }
-}
-
-/// One day's captures in the gallery, in the order they are shown.
-#[derive(Clone, PartialEq, Debug)]
-pub struct DayGroup {
-    pub day: Day,
-    pub items: Vec<usize>,
-}
-
-/// The entries at `shown` (newest first) in groups by their local day: today, yesterday, then
-/// dates; a day with nothing shown has no group.
-pub fn group_by_day(entries: &[Entry], shown: &[usize], now: DateTime<Local>) -> Vec<DayGroup> {
-    let mut groups: Vec<DayGroup> = Vec::new();
-    for &i in shown {
-        let day = day_of(entries[i].modified, now);
-        match groups.last_mut() {
-            Some(g) if g.day == day => g.items.push(i),
-            _ => groups.push(DayGroup {
-                day,
-                items: vec![i],
-            }),
-        }
-    }
-    groups
 }
 
 /// How many entries each filter shows: all, today, this week.
@@ -297,50 +273,6 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn captures_group_by_day() {
-        use chrono::{NaiveDate, TimeZone};
-        let now = Local.with_ymd_and_hms(2026, 11, 8, 15, 0, 0).unwrap();
-        let at = |y: i32, m: u32, d: u32, h: u32| {
-            SystemTime::from(Local.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap())
-        };
-        let e = |name: &str, t: SystemTime| Entry {
-            path: PathBuf::from(name),
-            name: name.into(),
-            modified: t,
-            bytes: 1,
-        };
-        let entries = vec![
-            e("a", at(2026, 11, 8, 14)),
-            e("b", at(2026, 11, 8, 9)),
-            e("c", at(2026, 11, 7, 22)),
-            e("d", at(2026, 11, 5, 10)),
-            e("e", at(2026, 11, 5, 8)),
-            e("f", at(2025, 12, 20, 10)),
-        ];
-        let all: Vec<usize> = (0..entries.len()).collect();
-        let day = |y, m, d| Day::Date(NaiveDate::from_ymd_opt(y, m, d).unwrap());
-        let got: Vec<_> = group_by_day(&entries, &all, now)
-            .into_iter()
-            .map(|g| (g.day, g.items))
-            .collect();
-        assert_eq!(
-            got,
-            vec![
-                (Day::Today, vec![0, 1]),
-                (Day::Yesterday, vec![2]),
-                (day(2026, 11, 5), vec![3, 4]),
-                (day(2025, 12, 20), vec![5]),
-            ]
-        );
-        // A search keeps only its groups.
-        let got: Vec<_> = group_by_day(&entries, &[2, 5], now)
-            .into_iter()
-            .map(|g| g.day)
-            .collect();
-        assert_eq!(got, vec![Day::Yesterday, day(2025, 12, 20)]);
-    }
 
     use super::*;
     use chrono::{Local, TimeZone};

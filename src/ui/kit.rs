@@ -1915,7 +1915,7 @@ mod tests {
                 let resp = ui.allocate_response(ui.available_size(), Sense::click());
                 let rows: Vec<_> = labels
                     .iter()
-                    .flat_map(|l| [MenuRow::Item(Ico::Copy, *l, *l), MenuRow::Line])
+                    .flat_map(|l| [MenuRow::Item(Ico::Copy, l, *l), MenuRow::Line])
                     .collect();
                 context_menu(&resp, &t, &rows);
             });

@@ -102,8 +102,6 @@ pub struct Home {
     /// The positions in `entries` the filter and the search let through, and the filters' counts,
     /// worked out when the list, the filter or the search changes.
     shown: Vec<usize>,
-    /// `shown` in groups by day.
-    groups: Vec<library::DayGroup>,
     counts: [usize; 3],
     filter: Period,
     query: String,
@@ -160,7 +158,6 @@ impl Home {
             autostart: false,
             entries: Vec::new(),
             shown: Vec::new(),
-            groups: Vec::new(),
             counts: [0; 3],
             filter: Period::All,
             query: String::new(),
@@ -248,9 +245,10 @@ impl Home {
         self.counts
     }
 
-    /// The shown captures in groups by day.
-    pub fn groups(&self) -> &[library::DayGroup] {
-        &self.groups
+    /// The captures the filter and the search let through, newest first (indices into the
+    /// entries).
+    pub fn shown(&self) -> &[usize] {
+        &self.shown
     }
 
     pub fn entry(&self, i: usize) -> &Entry {
@@ -416,7 +414,6 @@ impl Home {
     fn refilter(&mut self) {
         let now = chrono::Local::now();
         self.shown = library::visible(&self.entries, self.filter, &self.query, now);
-        self.groups = library::group_by_day(&self.entries, &self.shown, now);
         self.counts = library::counts(&self.entries, now);
     }
 
@@ -761,20 +758,51 @@ fn open_clipboard(shared: &mut Shared) {
 /// A gallery group's title: Today, Yesterday, or the date ("5 de novembro", "November 5"), with
 /// the year when it is not this one.
 pub(crate) fn day_label(day: library::Day, now: chrono::DateTime<chrono::Local>) -> String {
+    day_text(day, now, Msg::Months, Msg::DayMonth, Msg::DayMonthYear)
+}
+
+/// A capture's day in a few letters beside it, as mail lists do: the time today ("14:32"),
+/// Yesterday, else the date ("5 nov", "Nov 5"), with the year when it is not this one.
+pub(crate) fn when_label(
+    at: std::time::SystemTime,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    match library::day_of(at, now) {
+        library::Day::Today => chrono::DateTime::<chrono::Local>::from(at)
+            .format("%H:%M")
+            .to_string(),
+        day => day_text(
+            day,
+            now,
+            Msg::MonthsShort,
+            Msg::ShortDayMonth,
+            Msg::ShortDayMonthYear,
+        ),
+    }
+}
+
+/// Today, Yesterday, or the date in `months` ("|"-separated) by `this_year` or `other_year`.
+fn day_text(
+    day: library::Day,
+    now: chrono::DateTime<chrono::Local>,
+    months: Msg,
+    this_year: Msg,
+    other_year: Msg,
+) -> String {
     use chrono::Datelike;
     match day {
         library::Day::Today => tr(Msg::Today).to_string(),
         library::Day::Yesterday => tr(Msg::Yesterday).to_string(),
         library::Day::Date(d) => {
-            let month = tr(Msg::Months)
+            let month = tr(months)
                 .split('|')
                 .nth(d.month0() as usize)
                 .unwrap_or_default();
             let day = d.day().to_string();
             if d.year() == now.year() {
-                tf(Msg::DayMonth, &[&day, month])
+                tf(this_year, &[&day, month])
             } else {
-                tf(Msg::DayMonthYear, &[&day, month, &d.year().to_string()])
+                tf(other_year, &[&day, month, &d.year().to_string()])
             }
         }
     }
@@ -869,6 +897,27 @@ pub(crate) fn hotkey_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_capture_s_day_is_short_beside_it() {
+        use crate::ui::i18n::{Lang, set_lang};
+        use chrono::TimeZone;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 11, 8, 15, 0, 0)
+            .unwrap();
+        let at = |y, m, d, h, min| {
+            std::time::SystemTime::from(chrono::Local.with_ymd_and_hms(y, m, d, h, min, 0).unwrap())
+        };
+        set_lang(Lang::Pt);
+        assert_eq!(when_label(at(2026, 11, 8, 9, 5), now), "09:05");
+        assert_eq!(when_label(at(2026, 11, 7, 22, 0), now), "Ontem");
+        assert_eq!(when_label(at(2026, 11, 5, 10, 0), now), "5 nov");
+        assert_eq!(when_label(at(2025, 12, 20, 10, 0), now), "20 dez 2025");
+        set_lang(Lang::En);
+        assert_eq!(when_label(at(2026, 11, 7, 22, 0), now), "Yesterday");
+        assert_eq!(when_label(at(2026, 11, 5, 10, 0), now), "Nov 5");
+        assert_eq!(when_label(at(2025, 12, 20, 10, 0), now), "Dec 20, 2025");
+    }
 
     #[test]
     fn a_day_reads_in_the_user_s_language() {

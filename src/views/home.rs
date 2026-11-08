@@ -2,9 +2,9 @@
 //! captures from the save folder, as in "Início · escuro" and "Início · claro" of the design.
 
 use crate::Shared;
-use crate::screens::home::{Home, MainAction};
+use crate::screens::home::{Home, MainAction, when_label};
 use crate::system::hotkeys::{Shot, label};
-use crate::system::library::{DayGroup, Period};
+use crate::system::library::Period;
 use crate::system::settings::HomeView;
 use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{self, BtnKind, CARD_TEXT_H, CardAction, Ico, MenuRow};
@@ -297,58 +297,45 @@ fn capture_buttons(
     }
 }
 
-/// The grid; only the rows on screen are laid out and ask for thumbnails.
-/// A day's title row in the gallery.
-const HEAD_H: f32 = 40.0;
 /// The detail panel's width, its line included.
 const PANEL_W: f32 = 268.0;
 /// The column titles over the list.
 const TITLES_H: f32 = 30.0;
 
-/// One row of the gallery: a day's title, a row of cards (group, first item) or a list row.
+/// One row of the gallery, by place among the shown captures: a row of cards from the first
+/// one, or one capture's list row.
 #[derive(Clone, Copy)]
 enum Row {
-    Head(usize),
-    Cards(usize, usize),
+    Cards(usize),
     Item(usize),
 }
 
-/// The gallery's rows with where each starts and how tall it is, for `cols` cards of `card_h`
-/// (or the list), and the height they take together.
-fn layout(
-    groups: &[DayGroup],
-    view: HomeView,
-    cols: usize,
-    card_h: f32,
-) -> (Vec<(Row, f32, f32)>, f32) {
+/// The gallery's rows for `shown` captures with where each starts and how tall it is, for `cols`
+/// cards of `card_h` (or the list), and the height they take together.
+fn layout(shown: usize, view: HomeView, cols: usize, card_h: f32) -> (Vec<(Row, f32, f32)>, f32) {
     let mut rows = Vec::new();
     let mut y = 0.0;
-    for (g, group) in groups.iter().enumerate() {
-        rows.push((Row::Head(g), y, HEAD_H));
-        y += HEAD_H;
-        match view {
-            HomeView::Grid => {
-                for start in (0..group.items.len()).step_by(cols.max(1)) {
-                    rows.push((Row::Cards(g, start), y, card_h));
-                    y += card_h + GAP;
-                }
+    match view {
+        HomeView::Grid => {
+            for start in (0..shown).step_by(cols.max(1)) {
+                rows.push((Row::Cards(start), y, card_h));
+                y += card_h + GAP;
             }
-            HomeView::List => {
-                for &i in &group.items {
-                    rows.push((Row::Item(i), y, kit::ROW_H));
-                    y += kit::ROW_H + 2.0;
-                }
-                y += GAP - 2.0;
+        }
+        HomeView::List => {
+            for n in 0..shown {
+                rows.push((Row::Item(n), y, kit::ROW_H));
+                y += kit::ROW_H + 2.0;
             }
         }
     }
     (rows, y)
 }
 
-/// The captures in groups by day, as cards or list rows. Only the rows in view are drawn, so only
-/// they ask for thumbnails.
+/// The captures, newest first, as cards or list rows, each telling its day. Only the rows in view
+/// are drawn, so only they ask for thumbnails.
 fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, view: HomeView, acts: &mut Vec<MainAction>) {
-    let groups = home.groups().to_vec();
+    let shown = home.shown().to_vec();
     let now = chrono::Local::now();
     let avail = ui.available_size();
     let room = avail.y
@@ -360,7 +347,7 @@ fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, view: HomeView, acts: &mut 
     // The scroll bar takes its room beside the rows, and only when they overflow.
     let height = |w: f32| {
         let (cols, card) = grid(w);
-        layout(&groups, view, cols, card.y).1
+        layout(shown.len(), view, cols, card.y).1
     };
     let width = if height(avail.x) > room {
         avail.x - ui.spacing().scroll.allocated_width()
@@ -368,14 +355,13 @@ fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, view: HomeView, acts: &mut 
         avail.x
     };
     let (cols, card) = grid(width);
-    let (rows, total) = layout(&groups, view, cols, card.y);
+    let (rows, total) = layout(shown.len(), view, cols, card.y);
     home.set_columns(if view == HomeView::Grid { cols } else { 1 });
     let reveal = home.take_reveal();
     let chosen = home.selected().map(|p| p.to_path_buf());
     let chosen_row = |row: Row| match (row, &chosen) {
-        (Row::Item(i), Some(p)) => home.entry(i).path == *p,
-        (Row::Cards(g, start), Some(p)) => groups[g]
-            .items
+        (Row::Item(n), Some(p)) => home.entry(shown[n]).path == *p,
+        (Row::Cards(start), Some(p)) => shown
             .iter()
             .skip(start)
             .take(cols)
@@ -408,49 +394,30 @@ fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, view: HomeView, acts: &mut 
                     continue;
                 }
                 let r = Rect::from_min_size(origin + vec2(0.0, y), vec2(width, h));
-                let key = match row {
-                    Row::Head(g) | Row::Cards(g, _) => (g, y as i64),
-                    Row::Item(i) => (i, -1),
+                // Rows and cards go by their capture's path, so an open menu never passes to
+                // another capture when the folder changes.
+                let first = match row {
+                    Row::Cards(n) | Row::Item(n) => home.entry(shown[n]).path.clone(),
                 };
                 ui.scope_builder(
-                    UiBuilder::new().max_rect(r).id_salt(("gallery-row", key)),
+                    UiBuilder::new().max_rect(r).id_salt(("gallery-row", first)),
                     |ui| match row {
-                        Row::Head(g) => day_head(ui, t, &groups[g], now),
-                        Row::Cards(g, start) => {
+                        Row::Cards(start) => {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = GAP;
-                                for &i in groups[g].items.iter().skip(start).take(cols) {
-                                    card_item(ui, t, home, i, card, acts);
+                                for &i in shown.iter().skip(start).take(cols) {
+                                    let path = home.entry(i).path.clone();
+                                    ui.push_id(path, |ui| {
+                                        card_item(ui, t, home, i, card, now, acts)
+                                    });
                                 }
                             });
                         }
-                        Row::Item(i) => list_item(ui, t, home, i, width, acts),
+                        Row::Item(n) => list_item(ui, t, home, shown[n], width, now, acts),
                     },
                 );
             }
         });
-}
-
-/// A day's title and how many captures it has.
-fn day_head(ui: &mut Ui, t: &Tokens, group: &DayGroup, now: chrono::DateTime<chrono::Local>) {
-    let r = ui.max_rect();
-    let p = ui.painter();
-    let label = crate::screens::home::day_label(group.day, now);
-    let at = pos2(r.left(), r.center().y);
-    let shown = p.text(
-        at,
-        egui::Align2::LEFT_CENTER,
-        label,
-        font(13.0, Weight::Bold),
-        t.text,
-    );
-    p.text(
-        pos2(shown.right() + 8.0, at.y),
-        egui::Align2::LEFT_CENTER,
-        group.items.len().to_string(),
-        font(12.0, Weight::Regular),
-        t.faint,
-    );
 }
 
 /// The list's column titles, on the columns of its rows.
@@ -460,7 +427,7 @@ fn column_titles(ui: &mut Ui, t: &Tokens, width: f32) {
     let p = ui.painter();
     for (at, m) in [
         (Some(c.name), Msg::ColName),
-        (c.cells[0], Msg::ColTime),
+        (c.cells[0], Msg::ColDate),
         (c.cells[1], Msg::ColDimensions),
         (c.cells[2], Msg::ColSize),
     ] {
@@ -504,12 +471,13 @@ fn card_item(
     home: &mut Home,
     i: usize,
     card: egui::Vec2,
+    now: chrono::DateTime<chrono::Local>,
     acts: &mut Vec<MainAction>,
 ) {
     let e = home.entry(i).clone();
     let (thumb, dims) = home.card_thumb(&e.path);
     let meta = meta_of(dims, &human_size(e.bytes));
-    let line = format!("{} · {meta}", time_of(&e));
+    let line = format!("{} · {meta}", when_label(e.modified, now));
     let selected = home.selected() == Some(e.path.as_path());
     let r = kit::capture_card(ui, t, card, thumb, &e.name, &line, selected);
     item_answers(t, &e, &meta, r, acts);
@@ -522,6 +490,7 @@ fn list_item(
     home: &mut Home,
     i: usize,
     width: f32,
+    now: chrono::DateTime<chrono::Local>,
     acts: &mut Vec<MainAction>,
 ) {
     let e = home.entry(i).clone();
@@ -535,7 +504,7 @@ fn list_item(
         width,
         thumb,
         &e.name,
-        [&time_of(&e), &dims_text, &size],
+        [&when_label(e.modified, now), &dims_text, &size],
         selected,
     );
     let meta = meta_of(dims, &size);
@@ -1075,33 +1044,48 @@ mod tests {
     }
 
     #[test]
-    fn the_gallery_is_grouped_by_day() {
+    fn the_gallery_flows_without_day_titles() {
         let now = SystemTime::now();
         let day = Duration::from_secs(24 * 3600);
         let entries = vec![
             entry("a.png", now),
-            entry("b.png", now),
-            entry("c.png", now - day - day),
+            entry("b.png", now - day),
+            entry("c.png", now - day * 3),
         ];
-        for view in [HomeView::Grid, HomeView::List] {
-            let (mut home, mut shared) = Home::for_tests(entries.clone());
-            shared.settings.home_view = view;
-            let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
-            // Below the filters, which have a Today pill too.
-            let today = painted_at(&painted, &[tr(Msg::Today)], |r| r.top() > 200.0)
-                .expect("the Today group");
-            let count = painted
+        let (mut home, mut shared) = Home::for_tests(entries);
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let y = |painted: &[(String, egui::Rect)], name: &str| {
+            painted_at(painted, &[name], |_| true)
+                .unwrap_or_else(|| panic!("{name}"))
+                .y
+        };
+        assert_eq!(
+            y(&painted, "a.png"),
+            y(&painted, "c.png"),
+            "one row of cards across the days"
+        );
+        let yesterday = format!("{} · ", tr(Msg::Yesterday));
+        assert!(
+            painted.iter().any(|(s, _)| s.starts_with(&yesterday)),
+            "the card tells its day: {painted:?}"
+        );
+        shared.settings.home_view = HomeView::List;
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let (a, b, c) = (
+            y(&painted, "a.png"),
+            y(&painted, "b.png"),
+            y(&painted, "c.png"),
+        );
+        assert!(
+            ((b - a) - (c - b)).abs() < 0.5,
+            "rows one after the other: {a} {b} {c}"
+        );
+        assert!(
+            painted
                 .iter()
-                .find(|(s, r)| s == "2" && (r.center().y - today.y).abs() < 2.0)
-                .is_some();
-            assert!(count, "{view:?}: Today's count beside it");
-            let a = painted_at(&painted, &["a.png"], |_| true).expect("a.png");
-            let c = painted_at(&painted, &["c.png"], |_| true).expect("c.png");
-            assert!(
-                today.y < a.y && a.y < c.y,
-                "{view:?}: Today first, then the older day"
-            );
-        }
+                .any(|(s, r)| s == tr(Msg::Yesterday) && (r.center().y - b).abs() < 2.0),
+            "the row tells its day"
+        );
     }
 
     #[test]
