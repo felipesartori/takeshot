@@ -25,4 +25,12 @@ These need a desktop session and go through by hand before a release (a VM or a 
 
 ## Last run
 
-(filled in by the last run of `scripts/linux-smoke.sh`)
+2026-11-08, v0.1.0, Docker Desktop on Windows 10, `ubuntu:24.04`:
+
+| Package | Session | Result |
+|---|---|---|
+| `.deb` (apt pulled GTK, Mesa and the rest from its `depends`) | X11, Xvfb 1280 x 800 | Home and the editor (Coral UI) drawn whole |
+| `.deb` | Wayland, sway headless (pixman) | Home drawn whole; Mesa falls back to software rendering, with EGL warnings |
+| `.AppImage` | X11, Xvfb, no GTK installed (only the AppImage excludelist's libraries) | Style drawn whole: GTK and its libraries come from the AppImage |
+
+The AppImage, like every AppImage, expects the libraries of AppImageCommunity's excludelist (glibc, GL, X11, fontconfig, freetype, harfbuzz, fribidi and a few more) from the system: any desktop has them, a bare container does not, so the script installs exactly those.
