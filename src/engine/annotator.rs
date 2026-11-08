@@ -1,7 +1,7 @@
 //! Drawing on a picture: the same logic runs on the capture overlay and in the editor.
 //! Annotations live in a [`Doc`] of objects that can be selected, moved, resized and restyled.
 
-use crate::engine::doc::{Doc, Handle, ObjId, TextMeasure, ann_bounds};
+use crate::engine::doc::{Doc, Handle, ObjId, Restyle, TextMeasure, ann_bounds};
 use crate::engine::model::*;
 use crate::engine::render::text_box_padding;
 use crate::system::fonts::{self, FontLib};
@@ -466,12 +466,29 @@ impl Annotator {
         };
         opts.color = o.ann.color;
         match o.ann.shape {
-            Shape::Text { .. } => {}
+            Shape::Text {
+                font, size, boxed, ..
+            } => {
+                opts.font = font;
+                opts.font_size = size;
+                opts.text_box = boxed;
+            }
             Shape::Rect(..) | Shape::Ellipse(..) => {
                 opts.width = o.ann.width;
                 opts.filled = o.ann.filled;
             }
+            Shape::Blur(_, _, mode) => opts.blur_mode = mode,
             _ => opts.width = o.ann.width,
+        }
+    }
+
+    /// Picks `id` from the object list: switches to Select, selects it (`additive` adds it) and
+    /// shows its style in the options.
+    pub fn pick(&mut self, id: ObjId, additive: bool, opts: &mut DrawOpts) {
+        self.set_tool(Tool::Select, opts);
+        self.doc.select(Some(id), additive);
+        if self.doc.selected().contains(&id) {
+            self.copy_style(id, opts);
         }
     }
 
@@ -490,11 +507,20 @@ impl Annotator {
 
     /// Applies to the selection what the options bar changed between `before` and `after`.
     pub fn restyle_from_opts(&mut self, before: &DrawOpts, after: &DrawOpts) {
-        let color = (after.color != before.color).then_some(after.color);
-        let width = (after.width != before.width).then_some(after.width);
-        let filled = (after.filled != before.filled).then_some(after.filled);
-        if color.is_some() || width.is_some() || filled.is_some() {
-            self.doc.restyle_selected(color, width, filled);
+        fn changed<T: PartialEq + Copy>(a: T, b: T) -> Option<T> {
+            (a != b).then_some(b)
+        }
+        let r = Restyle {
+            color: changed(before.color, after.color),
+            width: changed(before.width, after.width),
+            filled: changed(before.filled, after.filled),
+            font: changed(before.font, after.font),
+            font_size: changed(before.font_size, after.font_size),
+            text_box: changed(before.text_box, after.text_box),
+            blur_mode: changed(before.blur_mode, after.blur_mode),
+        };
+        if r != Restyle::default() {
+            self.doc.restyle_selected(&r);
         }
     }
 
@@ -983,6 +1009,55 @@ mod tests {
         let an = Annotator::with_doc(tool, Doc::from_anns(anns));
         let ids = an.doc.objs().iter().map(|o| o.id).collect();
         (an, ids)
+    }
+
+    fn text_ann(font: usize, size: f32, boxed: bool) -> Ann {
+        Ann {
+            shape: Shape::Text {
+                pos: pos2(100.0, 100.0),
+                text: "hi".into(),
+                font,
+                size,
+                boxed,
+            },
+            color: [0, 0, 255, 200],
+            width: 3.0,
+            filled: false,
+        }
+    }
+
+    #[test]
+    fn picking_from_the_list_selects_and_copies_the_style() {
+        let (mut an, ids) = with(Tool::Rect, vec![text_ann(1, 28.0, true)]);
+        let mut opts = DrawOpts::default();
+        an.pick(ids[0], false, &mut opts);
+        assert_eq!(an.tool, Tool::Select);
+        assert_eq!(an.doc.selected(), &[ids[0]]);
+        assert_eq!(
+            (opts.font, opts.font_size, opts.text_box, opts.color),
+            (1, 28.0, true, [0, 0, 255, 200])
+        );
+        assert_eq!(an.bar_tool(), Some(Tool::Text));
+    }
+
+    #[test]
+    fn the_options_restyle_a_selected_text() {
+        let (mut an, ids) = with(Tool::Select, vec![text_ann(0, 20.0, false)]);
+        an.doc.select(Some(ids[0]), false);
+        let before = DrawOpts::default();
+        let after = DrawOpts {
+            font: 2,
+            font_size: 40.0,
+            text_box: true,
+            ..before.clone()
+        };
+        an.restyle_from_opts(&before, &after);
+        match &an.doc.objs()[0].ann.shape {
+            Shape::Text {
+                font, size, boxed, ..
+            } => assert_eq!((*font, *size, *boxed), (2, 40.0, true)),
+            s => panic!("{s:?}"),
+        }
     }
 
     fn bounds(an: &Annotator, id: ObjId) -> Rect {

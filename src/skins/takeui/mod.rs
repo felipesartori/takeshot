@@ -73,7 +73,8 @@ pub(crate) mod testing {
         (acts, painted, blocks)
     }
 
-    /// `run_painted` for the editor window.
+    /// `run_painted` for the editor window; each frame's actions are carried out right away, as
+    /// `Editor::ui` does.
     pub fn run_editor(
         ed: &mut crate::screens::editor::Editor,
         shared: &mut Shared,
@@ -105,7 +106,11 @@ pub(crate) mod testing {
             let mut full = ctx.run_ui(input, |ui| {
                 let t = shared.tokens(None);
                 crate::skins::begin_frame(ui.ctx(), &t);
-                acts.extend(crate::skins::editor(ui, &t, ed, shared));
+                let frame = crate::skins::editor(ui, &t, ed, shared);
+                for a in &frame {
+                    ed.apply(a.clone(), ui.ctx(), None, shared);
+                }
+                acts.extend(frame);
             });
             full.textures_delta.clear();
             painted.clear();

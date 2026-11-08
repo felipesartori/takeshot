@@ -4,7 +4,8 @@
 //! action (a whole drag is one action); the selection lives outside the history.
 
 use crate::engine::model::{
-    Ann, MARKER_WIDTH_FACTOR, Shape, Tool, arrow_geom, constrain, counter_radius, norm_rect,
+    Ann, BlurMode, MARKER_WIDTH_FACTOR, Shape, Tool, arrow_geom, constrain, counter_radius,
+    norm_rect,
 };
 use egui::{Pos2, Rect, Vec2, vec2};
 
@@ -278,6 +279,74 @@ pub struct Doc {
     undo: Vec<Vec<Obj>>,
     redo: Vec<Vec<Obj>>,
     revision: u64,
+    /// While a gesture is held (a slider dragged), whether it already saved its undo step.
+    gesture: Option<bool>,
+}
+
+/// What a restyle changes on the selected objects; `None` leaves that part as it is. The text
+/// options reach only texts and the blur mode only blurs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Restyle {
+    pub color: Option<[u8; 4]>,
+    pub width: Option<f32>,
+    pub filled: Option<bool>,
+    pub font: Option<usize>,
+    pub font_size: Option<f32>,
+    pub text_box: Option<bool>,
+    pub blur_mode: Option<BlurMode>,
+}
+
+impl Restyle {
+    fn differs(&self, a: &Ann) -> bool {
+        let shape = match &a.shape {
+            Shape::Text {
+                font, size, boxed, ..
+            } => {
+                self.font.is_some_and(|f| f != *font)
+                    || self.font_size.is_some_and(|s| s != *size)
+                    || self.text_box.is_some_and(|b| b != *boxed)
+            }
+            Shape::Blur(_, _, m) => self.blur_mode.is_some_and(|b| b != *m),
+            _ => false,
+        };
+        self.color.is_some_and(|c| c != a.color)
+            || self.width.is_some_and(|w| w != a.width)
+            || self.filled.is_some_and(|f| f != a.filled)
+            || shape
+    }
+
+    fn apply(&self, a: &mut Ann) {
+        if let Some(c) = self.color {
+            a.color = c;
+        }
+        if let Some(w) = self.width {
+            a.width = w;
+        }
+        if let Some(f) = self.filled {
+            a.filled = f;
+        }
+        match &mut a.shape {
+            Shape::Text {
+                font, size, boxed, ..
+            } => {
+                if let Some(f) = self.font {
+                    *font = f;
+                }
+                if let Some(s) = self.font_size {
+                    *size = s;
+                }
+                if let Some(b) = self.text_box {
+                    *boxed = b;
+                }
+            }
+            Shape::Blur(_, _, m) => {
+                if let Some(b) = self.blur_mode {
+                    *m = b;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Doc {
@@ -484,36 +553,34 @@ impl Doc {
         self.changed();
     }
 
-    pub fn restyle_selected(
-        &mut self,
-        color: Option<[u8; 4]>,
-        width: Option<f32>,
-        filled: Option<bool>,
-    ) {
-        let differs = |o: &Obj| {
-            color.is_some_and(|c| c != o.ann.color)
-                || width.is_some_and(|w| w != o.ann.width)
-                || filled.is_some_and(|f| f != o.ann.filled)
-        };
+    /// Starts a gesture (a slider held): its restyles undo in one step, saved at its first change.
+    pub fn begin_gesture(&mut self) {
+        self.gesture = Some(false);
+    }
+
+    pub fn end_gesture(&mut self) {
+        self.gesture = None;
+    }
+
+    pub fn restyle_selected(&mut self, r: &Restyle) {
         if !self
             .objs
             .iter()
-            .any(|o| self.selected.contains(&o.id) && differs(o))
+            .any(|o| self.selected.contains(&o.id) && r.differs(&o.ann))
         {
             return;
         }
-        self.checkpoint();
+        match self.gesture {
+            Some(true) => {}
+            Some(false) => {
+                self.checkpoint();
+                self.gesture = Some(true);
+            }
+            None => self.checkpoint(),
+        }
         let sel = &self.selected;
         for o in self.objs.iter_mut().filter(|o| sel.contains(&o.id)) {
-            if let Some(c) = color {
-                o.ann.color = c;
-            }
-            if let Some(w) = width {
-                o.ann.width = w;
-            }
-            if let Some(f) = filled {
-                o.ann.filled = f;
-            }
+            r.apply(&mut o.ann);
         }
         self.changed();
     }
@@ -556,17 +623,14 @@ impl Doc {
         self.changed();
     }
 
-    #[allow(dead_code)] // The object list (TakeUI) and floating bar (Coral UI) call it from plans 5 and 6.
     pub fn bring_to_front(&mut self) {
         self.reorder(false);
     }
 
-    #[allow(dead_code)] // The object list (TakeUI) and floating bar (Coral UI) call it from plans 5 and 6.
     pub fn send_to_back(&mut self) {
         self.reorder(true);
     }
 
-    #[allow(dead_code)] // The object list (TakeUI) and floating bar (Coral UI) call it from plans 5 and 6.
     pub fn set_hidden(&mut self, id: ObjId, hidden: bool) {
         let Some(i) = self.objs.iter().position(|o| o.id == id) else {
             return;
@@ -989,6 +1053,81 @@ mod tests {
     }
 
     #[test]
+    fn a_held_gesture_undoes_in_one_step() {
+        let mut d = Doc::from_anns(vec![rect((0.0, 0.0), (50.0, 50.0))]);
+        let a = d.objs()[0].id;
+        d.select(Some(a), false);
+        let alpha = |d: &mut Doc, v: u8| {
+            d.restyle_selected(&Restyle {
+                color: Some([255, 0, 0, v]),
+                ..Default::default()
+            })
+        };
+        d.begin_gesture();
+        for v in [230, 200, 191] {
+            alpha(&mut d, v);
+        }
+        d.end_gesture();
+        assert_eq!(d.objs()[0].ann.color[3], 191);
+        assert!(d.undo());
+        assert_eq!(d.objs()[0].ann.color[3], 255);
+        assert!(!d.undo(), "one step for the whole gesture");
+        d.begin_gesture();
+        d.end_gesture();
+        assert!(!d.undo(), "a gesture that changed nothing leaves no step");
+        alpha(&mut d, 100);
+        alpha(&mut d, 50);
+        assert!(d.undo());
+        assert_eq!(
+            d.objs()[0].ann.color[3],
+            100,
+            "outside a gesture every change is a step"
+        );
+    }
+
+    #[test]
+    fn restyle_reaches_the_text_and_blur_options() {
+        let text = ann(Shape::Text {
+            pos: pos2(0.0, 0.0),
+            text: "hi".into(),
+            font: 0,
+            size: 20.0,
+            boxed: false,
+        });
+        let blur = ann(Shape::Blur(
+            pos2(100.0, 0.0),
+            pos2(150.0, 50.0),
+            BlurMode::Blur,
+        ));
+        let mut d = Doc::from_anns(vec![text, blur]);
+        let (t, b) = (d.objs()[0].id, d.objs()[1].id);
+        d.select(Some(t), false);
+        d.select(Some(b), true);
+        d.restyle_selected(&Restyle {
+            font: Some(2),
+            font_size: Some(32.0),
+            text_box: Some(true),
+            blur_mode: Some(BlurMode::Pixelate),
+            ..Default::default()
+        });
+        match &d.objs()[0].ann.shape {
+            Shape::Text {
+                font, size, boxed, ..
+            } => assert_eq!((*font, *size, *boxed), (2, 32.0, true)),
+            s => panic!("{s:?}"),
+        }
+        assert!(matches!(
+            d.objs()[1].ann.shape,
+            Shape::Blur(_, _, BlurMode::Pixelate)
+        ));
+        assert!(d.undo());
+        assert!(
+            matches!(d.objs()[1].ann.shape, Shape::Blur(_, _, BlurMode::Blur)),
+            "one step for the whole restyle"
+        );
+    }
+
+    #[test]
     fn restyle_duplicate_delete_order_are_undoable() {
         let mut d = Doc::new();
         let a = d.add(rect((0.0, 0.0), (50.0, 50.0))).unwrap();
@@ -998,7 +1137,12 @@ mod tests {
         type Op = (&'static str, fn(&mut Doc));
         let ops: Vec<Op> = vec![
             ("restyle", |d| {
-                d.restyle_selected(Some([0, 0, 255, 255]), Some(8.0), Some(true))
+                d.restyle_selected(&Restyle {
+                    color: Some([0, 0, 255, 255]),
+                    width: Some(8.0),
+                    filled: Some(true),
+                    ..Default::default()
+                })
             }),
             ("duplicate", |d| {
                 d.duplicate_selected(vec2(12.0, 12.0));
@@ -1084,7 +1228,10 @@ mod tests {
         bumped(&d, "translate");
         d.resize(a, Handle::SE, pos2(90.0, 90.0), false, &m);
         bumped(&d, "resize");
-        d.restyle_selected(Some([0, 0, 255, 255]), None, None);
+        d.restyle_selected(&Restyle {
+            color: Some([0, 0, 255, 255]),
+            ..Default::default()
+        });
         bumped(&d, "restyle");
         d.duplicate_selected(vec2(12.0, 12.0));
         bumped(&d, "duplicate");
@@ -1265,7 +1412,12 @@ mod tests {
         d.translate_selected(vec2(5.0, 0.0));
         check(&d, "translate with nothing selected");
         d.select(Some(a), false);
-        d.restyle_selected(Some([255, 0, 0, 255]), Some(4.0), Some(false));
+        d.restyle_selected(&Restyle {
+            color: Some([255, 0, 0, 255]),
+            width: Some(4.0),
+            filled: Some(false),
+            ..Default::default()
+        });
         check(&d, "restyle to the same style");
         d.send_to_back();
         check(&d, "send the back object to the back");

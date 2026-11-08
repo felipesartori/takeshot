@@ -698,20 +698,135 @@ pub fn tool_button(
     let fg = dim(fg, ui);
     match icon {
         Some(i) => draw_icon(p, rect.center(), i, 18.0, fg),
-        None => {
-            p.circle_stroke(rect.center(), 9.0, Stroke::new(1.6, fg));
-            draw_text(
-                p,
-                rect.center(),
-                Align2::CENTER_CENTER,
-                "1",
-                10.0,
-                Weight::Bold,
-                fg,
-            );
-        }
+        None => step_glyph(p, rect.center(), 18.0, fg),
     }
     resp.on_hover_text(tip)
+}
+
+/// The numbered step's icon, `size` px: a circle with "1".
+pub fn step_glyph(p: &Painter, center: egui::Pos2, size: f32, fg: Color32) {
+    p.circle_stroke(center, size / 2.0, Stroke::new(size / 11.0, fg));
+    draw_text(
+        p,
+        center,
+        Align2::CENTER_CENTER,
+        "1",
+        size * 0.55,
+        Weight::Bold,
+        fg,
+    );
+}
+
+/// The editor panel's tabs: full width, 29 px on `raised`, split in equal parts 2 px inside;
+/// the open one sits on `seg_sel`.
+pub fn tab_bar<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    t: &Tokens,
+    value: &mut T,
+    items: &[(T, &str)],
+) -> Response {
+    let w = ui.available_width();
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(w, 29.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(8), t.raised);
+    let part = (w - 4.0) / items.len().max(1) as f32;
+    for (i, (v, s)) in items.iter().enumerate() {
+        let r = Rect::from_min_size(
+            pos2(rect.left() + 2.0 + i as f32 * part, rect.top() + 2.0),
+            vec2(part, 25.0),
+        );
+        let item = ui.interact(r, resp.id.with(i), Sense::click());
+        let h = hover_mix(ui, &item);
+        // The bar answers for its parts: hovered or clicked when one of them is.
+        resp = resp.union(item.clone());
+        if item.clicked() && *value != *v {
+            *value = *v;
+            resp.mark_changed();
+        }
+        let sel = *value == *v;
+        let p = ui.painter();
+        if sel {
+            p.rect_filled(r, CornerRadius::same(6), t.seg_sel);
+        }
+        let fg = if sel { t.text } else { mix(t.muted, t.text, h) };
+        draw_text(
+            p,
+            r.center(),
+            Align2::CENTER_CENTER,
+            s,
+            13.0,
+            Weight::Medium,
+            dim(fg, ui),
+        );
+    }
+    resp
+}
+
+/// What a row of the object list answered: the row, and the eye that hides or shows its object.
+pub struct ObjectRow {
+    pub row: Response,
+    pub eye: Response,
+}
+
+/// A row of the editor's object list: full width, 34 px, a 16 px icon 10 px in (`None` draws the
+/// numbered step), the label at 36 px (13 medium) and the 15 px eye 10 px from the right. The
+/// selected row is tinted, in the accent colour; a hidden object is faint, its eye crossed out.
+pub fn object_row(
+    ui: &mut Ui,
+    t: &Tokens,
+    icon: Option<Ico>,
+    label: &str,
+    selected: bool,
+    hidden: bool,
+) -> ObjectRow {
+    let w = ui.available_width();
+    let (rect, row) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
+    let eye_at = pos2(rect.right() - 10.0 - 7.5, rect.center().y);
+    let eye = ui.interact(
+        Rect::from_center_size(eye_at, vec2(24.0, 24.0)),
+        row.id.with("eye"),
+        Sense::click(),
+    );
+    let h = hover_mix(ui, &row).max(hover_mix(ui, &eye));
+    let p = ui.painter();
+    let bg = if selected {
+        t.tint
+    } else {
+        mix(Color32::TRANSPARENT, t.raised, h)
+    };
+    p.rect_filled(rect, CornerRadius::same(8), bg);
+    let (ic, fg) = match (selected, hidden) {
+        (true, _) => (t.accent, t.accent),
+        (false, true) => (t.faint, t.faint),
+        (false, false) => (t.muted, t.text),
+    };
+    let icon_at = pos2(rect.left() + 10.0 + 8.0, rect.center().y);
+    match icon {
+        Some(i) => draw_icon(p, icon_at, i, 16.0, dim(ic, ui)),
+        None => step_glyph(p, icon_at, 15.0, dim(ic, ui)),
+    }
+    let room = (eye_at.x - 7.5 - 10.0 - (rect.left() + 36.0)).max(1.0);
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        label.to_owned(),
+        font(13.0, Weight::Medium),
+        dim(fg, ui),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let g = p.layout_job(job);
+    p.galley(
+        pos2(rect.left() + 36.0, rect.center().y - g.size().y / 2.0),
+        g,
+        fg,
+    );
+    let eye_fg = mix(t.faint, t.text, hover_mix(ui, &eye));
+    draw_icon(
+        p,
+        eye_at,
+        if hidden { Ico::EyeOff } else { Ico::Eye },
+        15.0,
+        dim(eye_fg, ui),
+    );
+    ObjectRow { row, eye }
 }
 
 /// An 18 × 18 colour to pick, as in the editor's tool bar: the colour in a circle, a 1 px ring
@@ -856,7 +971,8 @@ pub fn segmented<T: PartialEq + Copy>(
     resp
 }
 
-/// Label (84 px), track, and a value box such as "7 %".
+/// Label (84 px), track, and a value box such as "7 %". The answer carries the track's drag, so
+/// a caller can tell when the slider is grabbed and let go.
 pub fn slider_row(
     ui: &mut Ui,
     t: &Tokens,
@@ -921,7 +1037,7 @@ pub fn slider_row(
         Weight::Medium,
         dim(t.text, ui),
     );
-    resp
+    resp.union(drag)
 }
 
 /// 32 px tall single-line field with an optional leading icon; focus adds a 2 px primary ring outside.
@@ -1638,6 +1754,44 @@ mod tests {
                 full.textures_delta.clear();
             }
             assert_eq!(got, Some(want), "{want:?} at {at:?}");
+        }
+    }
+
+    #[test]
+    fn object_rows_keep_their_size_on_hover() {
+        let t = tokens(ThemeId::TakeUi, true);
+        let cases: Vec<(&str, Widget, f32)> = vec![
+            (
+                "object_row",
+                Box::new(|ui| object_row(ui, &t, Some(Ico::Rect), "Rectangle", false, false).row),
+                34.0,
+            ),
+            (
+                "object_row selected and hidden",
+                Box::new(|ui| object_row(ui, &t, None, "Step 1", true, true).row),
+                34.0,
+            ),
+            (
+                "tab_bar",
+                Box::new(|ui| {
+                    let mut tab = 0;
+                    tab_bar(ui, &t, &mut tab, &[(0, "Object"), (1, "Style")])
+                }),
+                29.0,
+            ),
+        ];
+        for (name, f, height) in &cases {
+            let still = rect_of(false, f.as_ref());
+            let hovered = rect_of(true, f.as_ref());
+            assert!(!still.hovered && hovered.hovered, "{name}: pointer missed");
+            assert_eq!(still.alloc, hovered.alloc, "{name} moves on hover");
+            assert_eq!(still.alloc.height(), *height, "{name}");
+            for run in [&still, &hovered] {
+                assert!(
+                    run.alloc.contains_rect(run.painted),
+                    "{name} paints outside"
+                );
+            }
         }
     }
 

@@ -107,10 +107,14 @@ pub enum EditorAction {
     SetOpacity(u8),
     SetFill(bool),
     SetFont(usize),
+    SetFontSize(f32),
     SetTextBox(bool),
     SetBlurMode(BlurMode),
+    /// A slider was grabbed (true) or let go: the changes in between undo in one step.
+    Gesture(bool),
     Zoom(Zoom),
-    /// Select an object; true adds it to the selection.
+    /// Pick an object from the list: switches to Select and shows its style; true adds it to the
+    /// selection.
     Select(ObjId, bool),
     Hide(ObjId, bool),
     Duplicate,
@@ -138,6 +142,19 @@ pub fn tool_name(t: Tool) -> Msg {
         Tool::Text => Msg::ToolText,
         Tool::Blur => Msg::ToolBlur,
         Tool::Counter => Msg::ToolStep,
+    }
+}
+
+/// An object's name in the panel and the list: the tool that draws it, a text with its first
+/// line, a numbered step with its number ("Text · Peak in October", "Step 2").
+pub fn object_label(kind: Tool, text: Option<&str>) -> String {
+    let name = t(tool_name(kind));
+    match (kind, text) {
+        (Tool::Counter, Some(n)) => format!("{name} {n}"),
+        (_, Some(s)) if !s.trim().is_empty() => {
+            format!("{name} · {}", s.lines().next().unwrap_or("").trim())
+        }
+        _ => name.to_string(),
     }
 }
 
@@ -271,8 +288,11 @@ impl Editor {
             EditorAction::SetOpacity(alpha) => restyle(self, shared, &|o| o.color[3] = alpha),
             EditorAction::SetFill(on) => restyle(self, shared, &|o| o.filled = on),
             EditorAction::SetFont(f) => restyle(self, shared, &|o| o.font = f),
+            EditorAction::SetFontSize(s) => restyle(self, shared, &|o| o.font_size = s),
             EditorAction::SetTextBox(on) => restyle(self, shared, &|o| o.text_box = on),
             EditorAction::SetBlurMode(m) => restyle(self, shared, &|o| o.blur_mode = m),
+            EditorAction::Gesture(true) => self.an.doc.begin_gesture(),
+            EditorAction::Gesture(false) => self.an.doc.end_gesture(),
             EditorAction::Zoom(z) => {
                 self.zoom = match z {
                     Zoom::Fit => None,
@@ -281,7 +301,10 @@ impl Editor {
                 self.pan = egui::Vec2::ZERO;
                 self.preview_dirty = true;
             }
-            EditorAction::Select(id, add) => self.an.doc.select(Some(id), add),
+            EditorAction::Select(id, add) => {
+                self.an.pick(id, add, &mut shared.settings.draw);
+                shared.settings_dirty = true;
+            }
             EditorAction::Hide(id, hidden) => self.an.doc.set_hidden(id, hidden),
             EditorAction::Duplicate => {
                 self.an.doc.duplicate_selected(egui::vec2(16.0, 16.0));

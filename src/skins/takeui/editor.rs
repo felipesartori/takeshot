@@ -3,15 +3,20 @@
 //! status bar, as in "Editor · escuro" of the design. Behaviour is in `screens::editor`.
 
 use crate::Shared;
-use crate::engine::model::{PALETTE, Tool, WIDTHS};
-use crate::screens::editor::{Editor, EditorAction, Zoom, tool_hint, tool_name};
+use crate::engine::doc::ObjId;
+use crate::engine::model::{BlurMode, PALETTE, Tool, WIDTHS};
+use crate::screens::editor::{
+    Editor, EditorAction, PanelTab, Zoom, object_label, tool_hint, tool_name,
+};
 use crate::screens::home::MainAction;
+use crate::system::fonts::FontLib;
+use crate::system::settings::DrawOpts;
 use crate::ui::chrome::{self, BAR_HEIGHT};
 use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{self, BtnKind, Ico};
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::Tokens;
-use egui::{Align, Color32, Frame, Layout, Rect, Stroke, Ui, UiBuilder, pos2, vec2};
+use egui::{Align, Align2, Color32, Frame, Layout, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 
 /// Heights of the tool bar and the status bar, and the right panel's width.
 pub const TOOL_BAR: f32 = 48.0;
@@ -43,7 +48,7 @@ pub fn editor(ui: &mut Ui, t: &Tokens, ed: &mut Editor, shared: &mut Shared) -> 
         .resizable(false)
         .show_separator_line(false)
         .frame(Frame::new().fill(t.surf))
-        .show(ui, |ui| panel(ui, t, shared, &mut acts));
+        .show(ui, |ui| panel(ui, t, ed, shared, &mut acts));
     egui::CentralPanel::no_frame().show(ui, |ui| acts.extend(ed.canvas(ui, t, shared)));
     chrome::resize_edges(ui);
     acts
@@ -290,28 +295,7 @@ fn tool_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Ve
         divider(ui, t);
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing.x = 6.0;
-        for c in PALETTE {
-            let on = opts.color[..3] == c[..3];
-            let col = Color32::from_rgb(c[0], c[1], c[2]);
-            let tip = format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
-            if kit::color_dot(ui, t, col, on, &tip).clicked() {
-                acts.push(EditorAction::SetColor(c));
-            }
-        }
-        let add = kit::color_add(ui, t, tr(Msg::CustomColor));
-        egui::Popup::from_toggle_button_response(&add)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                let c = opts.color;
-                let mut col = Color32::from_rgb(c[0], c[1], c[2]);
-                if egui::color_picker::color_picker_color32(
-                    ui,
-                    &mut col,
-                    egui::color_picker::Alpha::Opaque,
-                ) {
-                    acts.push(EditorAction::SetColor(col.to_array()));
-                }
-            });
+        palette(ui, t, opts.color, acts);
         ui.add_space(4.0);
         divider(ui, t);
         ui.add_space(4.0);
@@ -399,36 +383,409 @@ fn status_bar(ui: &mut Ui, t: &Tokens, ed: &Editor) {
     });
 }
 
-/// The right panel; Task 3 adds the Object tab. For now the style controls.
-fn panel(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<EditorAction>) {
+/// The palette's colours and the custom colour, for the tool bar and the panel.
+fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4], acts: &mut Vec<EditorAction>) {
+    for c in PALETTE {
+        let on = color[..3] == c[..3];
+        let col = Color32::from_rgb(c[0], c[1], c[2]);
+        let tip = format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
+        if kit::color_dot(ui, t, col, on, &tip).clicked() {
+            acts.push(EditorAction::SetColor(c));
+        }
+    }
+    let add = kit::color_add(ui, t, tr(Msg::CustomColor));
+    egui::Popup::from_toggle_button_response(&add)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let mut col = Color32::from_rgb(color[0], color[1], color[2]);
+            if egui::color_picker::color_picker_color32(
+                ui,
+                &mut col,
+                egui::color_picker::Alpha::Opaque,
+            ) {
+                acts.push(EditorAction::SetColor(col.to_array()));
+            }
+        });
+}
+
+/// The right panel, as in "Editor · escuro": the Object and Style tabs 12 px in, then the open
+/// tab's page, 20 px in, which scrolls.
+fn panel(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &mut Shared, acts: &mut Vec<EditorAction>) {
     let r = ui.max_rect();
     ui.painter()
         .vline(r.left() + 0.5, r.y_range(), Stroke::new(1.0, t.border));
-    egui::ScrollArea::vertical()
-        .id_salt("takeui-editor-panel")
-        .auto_shrink([false, false])
-        .scroll_bar_rect(r.shrink2(vec2(0.0, 8.0)))
-        .show(ui, |ui| {
-            Frame::new()
-                .inner_margin(egui::Margin {
-                    left: 20,
-                    right: 0,
-                    top: 20,
-                    bottom: 20,
-                })
-                .show(ui, |ui| {
-                    ui.set_width((r.width() - 40.0).max(0.0));
-                    let mut main = Vec::new();
-                    if super::style::controls(ui, t, shared, &mut main) {
-                        acts.push(EditorAction::StyleChanged);
-                    }
-                    for a in main {
-                        if a == MainAction::ChooseLogo {
-                            acts.push(EditorAction::ChooseLogo);
+    let tabs = Rect::from_min_size(r.min + vec2(12.0, 12.0), vec2(r.width() - 24.0, 29.0));
+    let mut tab = ed.tab();
+    ui.scope_builder(UiBuilder::new().max_rect(tabs), |ui| {
+        let items = [
+            (PanelTab::Object, tr(Msg::ObjectTab)),
+            (PanelTab::Style, tr(Msg::Style)),
+        ];
+        if kit::tab_bar(ui, t, &mut tab, &items).changed() {
+            acts.push(EditorAction::Tab(tab));
+        }
+    });
+    let body = Rect::from_min_max(pos2(r.left(), tabs.bottom()), r.max);
+    ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt(("takeui-editor-panel", tab == PanelTab::Style))
+            .auto_shrink([false, false])
+            .scroll_bar_rect(body.shrink2(vec2(0.0, 8.0)))
+            .show(ui, |ui| {
+                Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: 20,
+                        right: 0,
+                        top: 20,
+                        bottom: 20,
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width((r.width() - 40.0).max(0.0));
+                        match tab {
+                            PanelTab::Object => object_page(ui, t, ed, shared, acts),
+                            PanelTab::Style => style_page(ui, t, shared, acts),
                         }
-                    }
-                });
+                    });
+            });
+    });
+}
+
+fn style_page(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<EditorAction>) {
+    let mut main = Vec::new();
+    if super::style::controls(ui, t, shared, &mut main) {
+        acts.push(EditorAction::StyleChanged);
+    }
+    for a in main {
+        if a == MainAction::ChooseLogo {
+            acts.push(EditorAction::ChooseLogo);
+        }
+    }
+}
+
+/// The Object tab: what is selected (or the tool in hand), its options, Duplicate and Delete,
+/// then the list of objects. Groups sit 20 px apart.
+fn object_page(
+    ui: &mut Ui,
+    t: &Tokens,
+    ed: &Editor,
+    shared: &Shared,
+    acts: &mut Vec<EditorAction>,
+) {
+    ui.spacing_mut().item_spacing = vec2(6.0, 20.0);
+    header(ui, t, ed);
+    if let Some(tool) = ed.an.bar_tool() {
+        tool_options(ui, t, tool, &shared.settings.draw, &shared.fonts, acts);
+    }
+    if !ed.an.doc.selected().is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            if kit::button(
+                ui,
+                t,
+                BtnKind::Secondary,
+                Some(Ico::CopyPlus),
+                tr(Msg::Duplicate),
+                Some(&cmd("D")),
+            )
+            .clicked()
+            {
+                acts.push(EditorAction::Duplicate);
+            }
+            if kit::button(
+                ui,
+                t,
+                BtnKind::Secondary,
+                Some(Ico::Trash),
+                tr(Msg::Delete),
+                Some("Del"),
+            )
+            .clicked()
+            {
+                acts.push(EditorAction::Delete);
+            }
         });
+    }
+    let (rule, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().rect_filled(rule, 0.0, t.line);
+    object_list(ui, t, ed, acts);
+}
+
+/// The icon (18 px), the name (15 bold) and, for one object, where it stands ("2 of 3").
+fn header(ui: &mut Ui, t: &Tokens, ed: &Editor) {
+    let doc = &ed.an.doc;
+    let (kind, title, count) = match doc.selected() {
+        [] => (
+            Some(ed.an.tool),
+            tr(tool_name(ed.an.tool)).to_string(),
+            None,
+        ),
+        [one] => match doc.kind(*one) {
+            Some((kind, text)) => (
+                Some(kind),
+                object_label(kind, text.as_deref()),
+                doc.position_of(*one)
+                    .map(|(i, n)| tf(Msg::PositionOf, &[&i.to_string(), &n.to_string()])),
+            ),
+            None => (None, String::new(), None),
+        },
+        many => (
+            Some(Tool::Select),
+            tf(Msg::SelectedMany, &[&many.len().to_string()]),
+            None,
+        ),
+    };
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+    let p = ui.painter();
+    let icon_at = pos2(rect.left() + 9.0, rect.center().y);
+    match kind.map(tool_icon) {
+        Some(Some(i)) => {
+            p.text(
+                icon_at,
+                Align2::CENTER_CENTER,
+                crate::ui::icon::glyph(i),
+                crate::ui::icon::font(18.0),
+                t.text,
+            );
+        }
+        Some(None) => kit::step_glyph(p, icon_at, 17.0, t.text),
+        None => {}
+    }
+    let mut right = rect.right();
+    if let Some(c) = count {
+        let g = p.layout_no_wrap(c, font(12.0, Weight::Regular), t.faint);
+        right -= g.size().x + 12.0;
+        p.galley(
+            pos2(
+                rect.right() - g.size().x,
+                rect.center().y - g.size().y / 2.0,
+            ),
+            g,
+            t.faint,
+        );
+    }
+    let mut job = egui::text::LayoutJob::simple_singleline(title, font(15.0, Weight::Bold), t.text);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((right - rect.left() - 28.0).max(1.0));
+    let g = p.layout_job(job);
+    p.galley(
+        pos2(rect.left() + 28.0, rect.center().y - g.size().y / 2.0),
+        g,
+        t.text,
+    );
+}
+
+/// Frames a slider's change (`r`, now at `v`) so its whole drag undoes in one step: grabbing and
+/// letting go wrap the changes in between.
+fn gesture(
+    r: egui::Response,
+    v: f32,
+    acts: &mut Vec<EditorAction>,
+    set: impl Fn(f32) -> EditorAction,
+) {
+    if r.drag_started() {
+        acts.push(EditorAction::Gesture(true));
+    }
+    if r.changed() {
+        acts.push(set(v));
+    }
+    if r.drag_stopped() {
+        acts.push(EditorAction::Gesture(false));
+    }
+}
+
+/// A 13 px label on the left and a switch on the right; returns the new state when flipped.
+fn switch_row(ui: &mut Ui, t: &Tokens, label: &str, on: bool) -> Option<bool> {
+    let mut v = on;
+    let changed = ui
+        .horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(label)
+                    .font(font(13.0, Weight::Regular))
+                    .color(t.text),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                kit::switch(ui, t, &mut v).changed()
+            })
+            .inner
+        })
+        .inner;
+    changed.then_some(v)
+}
+
+/// The options of `tool`, for what is selected or what will be drawn next.
+fn tool_options(
+    ui: &mut Ui,
+    t: &Tokens,
+    tool: Tool,
+    opts: &DrawOpts,
+    fonts: &FontLib,
+    acts: &mut Vec<EditorAction>,
+) {
+    if tool != Tool::Blur {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 10.0;
+            ui.label(
+                egui::RichText::new(tr(Msg::Color))
+                    .font(font(13.0, Weight::Regular))
+                    .color(t.text),
+            );
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                palette(ui, t, opts.color, acts);
+            });
+        });
+    }
+    match tool {
+        Tool::Text => {
+            let mut v = opts.font_size;
+            let r = kit::slider_row(ui, t, tr(Msg::Size), &mut v, 8.0..=120.0, "px");
+            gesture(r, v, acts, |v| EditorAction::SetFontSize(v.round()));
+        }
+        Tool::Blur => {}
+        _ => {
+            let label = if tool == Tool::Counter {
+                Msg::Size
+            } else {
+                Msg::Width
+            };
+            let mut v = opts.width;
+            let r = kit::slider_row(ui, t, tr(label), &mut v, 1.0..=40.0, "px");
+            gesture(r, v, acts, |v| EditorAction::SetWidth(v.round().max(1.0)));
+        }
+    }
+    if tool != Tool::Blur {
+        let mut v = (opts.color[3] as f32 * 100.0 / 255.0).round();
+        let r = kit::slider_row(ui, t, tr(Msg::Opacity), &mut v, 0.0..=100.0, "%");
+        gesture(r, v, acts, |v| {
+            EditorAction::SetOpacity((v * 255.0 / 100.0).round() as u8)
+        });
+    }
+    match tool {
+        Tool::Rect | Tool::Ellipse => {
+            if let Some(on) = switch_row(ui, t, tr(Msg::Fill), opts.filled) {
+                acts.push(EditorAction::SetFill(on));
+            }
+        }
+        Tool::Text => {
+            let names: Vec<(usize, &str)> = fonts
+                .list
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (i, f.name.as_str()))
+                .collect();
+            let mut f = opts.font;
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 10.0;
+                ui.label(
+                    egui::RichText::new(tr(Msg::Font))
+                        .font(font(13.0, Weight::Regular))
+                        .color(t.text),
+                );
+                let w = ui.available_width();
+                if kit::select(ui, t, "takeui-editor-font", &mut f, &names, w).changed() {
+                    acts.push(EditorAction::SetFont(f));
+                }
+            });
+            if let Some(on) = switch_row(ui, t, tr(Msg::TextBackground), opts.text_box) {
+                acts.push(EditorAction::SetTextBox(on));
+            }
+        }
+        Tool::Blur => {
+            let mut m = opts.blur_mode;
+            let items = [
+                (BlurMode::Blur, tr(Msg::ToolBlur)),
+                (BlurMode::Pixelate, tr(Msg::Pixelate)),
+            ];
+            if kit::segmented(ui, t, &mut m, &items).changed() {
+                acts.push(EditorAction::SetBlurMode(m));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// "Objects": a row per object, front first; a click picks it (Shift adds it), the eye hides or
+/// shows it, the right button brings it to the front or sends it to the back. When the selection
+/// changes, its row scrolls into view.
+fn object_list(ui: &mut Ui, t: &Tokens, ed: &Editor, acts: &mut Vec<EditorAction>) {
+    let doc = &ed.an.doc;
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 12.0;
+        ui.label(
+            egui::RichText::new(tr(Msg::ObjectList))
+                .font(font(13.0, Weight::Bold))
+                .color(t.text),
+        );
+        if doc.objs().is_empty() {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tr(Msg::NoObjects))
+                        .font(font(12.0, Weight::Regular))
+                        .color(t.faint),
+                )
+                .wrap(),
+            );
+            return;
+        }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let seen_id = egui::Id::unique("takeui-editor-list-selection");
+            let seen = ui.ctx().data(|d| d.get_temp::<Vec<ObjId>>(seen_id));
+            let moved = seen.as_deref() != Some(doc.selected());
+            // The new selection counts as seen once its row is in view; until then it asks to
+            // scroll there (a request in a frame egui discards would otherwise be lost).
+            let mut in_view = doc.selected().is_empty();
+            for o in doc.objs().iter().rev() {
+                let Some((kind, text)) = doc.kind(o.id) else {
+                    continue;
+                };
+                let selected = doc.selected().contains(&o.id);
+                let label = object_label(kind, text.as_deref());
+                let row = kit::object_row(ui, t, tool_icon(kind), &label, selected, o.hidden);
+                if row.eye.clicked() {
+                    acts.push(EditorAction::Hide(o.id, !o.hidden));
+                } else if row.row.clicked() {
+                    let add = ui.input(|i| i.modifiers.shift);
+                    acts.push(EditorAction::Select(o.id, add));
+                }
+                if moved && doc.selected().first() == Some(&o.id) {
+                    in_view = ui.clip_rect().contains_rect(row.row.rect);
+                    if !in_view {
+                        // A jump, not an animation: motion is only the 80 ms colour ease.
+                        ui.scroll_to_rect_animation(
+                            row.row.rect,
+                            None,
+                            egui::style::ScrollAnimation::none(),
+                        );
+                    }
+                }
+                let tip = if o.hidden {
+                    Msg::ShowObject
+                } else {
+                    Msg::HideObject
+                };
+                row.eye.on_hover_text(tr(tip));
+                // A hidden object cannot be picked, so it has nothing to reorder.
+                if !o.hidden {
+                    row.row.context_menu(|ui| {
+                        for (msg, act) in [
+                            (Msg::BringToFront, EditorAction::ToFront),
+                            (Msg::SendToBack, EditorAction::ToBack),
+                        ] {
+                            if ui.button(tr(msg)).clicked() {
+                                acts.push(EditorAction::Select(o.id, false));
+                                acts.push(act);
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+            }
+            if moved && in_view {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(seen_id, doc.selected().to_vec()));
+            }
+        });
+    });
 }
 
 #[cfg(test)]
@@ -437,9 +794,10 @@ mod tests {
     use crate::engine::annotator::TextDraft;
     use crate::engine::doc::Doc;
     use crate::engine::model::{Ann, Shape};
+    use crate::screens::editor::PanelTab;
     use crate::skins::takeui::testing::{click, painted_at, run_editor};
     use crate::ui::i18n::every;
-    use egui::{Event, Key, Modifiers};
+    use egui::{Event, Key, Modifiers, Pos2};
 
     fn editor() -> (Editor, Shared) {
         let shared = Shared::for_tests();
@@ -615,5 +973,262 @@ mod tests {
             "16 px from the edge: {size:?}"
         );
         let _ = every(Msg::ObjectsOne);
+    }
+
+    const SIZE: (f32, f32) = (1280.0, 820.0);
+
+    fn in_panel(r: Rect) -> bool {
+        r.left() >= SIZE.0 - PANEL
+    }
+
+    /// The lowest painted text equal to `text` in the panel (the list sits below the header).
+    fn panel_text(painted: &[(String, Rect)], text: &str) -> Rect {
+        painted
+            .iter()
+            .filter(|(s, r)| s == text && in_panel(*r))
+            .map(|(_, r)| *r)
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap_or_else(|| panic!("{text:?} in the panel: {painted:?}"))
+    }
+
+    fn press(p: Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn a_row_click_selects_the_object() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let (mut ed, mut shared) = editor();
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let row = panel_text(&painted, tr(Msg::ToolRect));
+        run_editor(&mut ed, &mut shared, SIZE, true, click(row.center()));
+        let rect = ed.an.doc.objs()[0].id;
+        assert_eq!(ed.an.doc.selected(), &[rect]);
+        assert_eq!(ed.an.tool, Tool::Select);
+    }
+
+    #[test]
+    fn the_eye_hides_and_shows() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let (mut ed, mut shared) = editor();
+        let eye = |painted: &[(String, Rect)], icon: Ico| {
+            let row = panel_text(painted, tr(Msg::ToolRect));
+            let g = crate::ui::icon::glyph(icon).to_string();
+            painted
+                .iter()
+                .find(|(s, r)| {
+                    *s == g && in_panel(*r) && (r.center().y - row.center().y).abs() < 4.0
+                })
+                .map(|(_, r)| r.center())
+                .unwrap_or_else(|| panic!("{icon:?} beside the row"))
+        };
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            click(eye(&painted, Ico::Eye)),
+        );
+        assert!(ed.an.doc.objs()[0].hidden);
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            click(eye(&painted, Ico::EyeOff)),
+        );
+        assert!(!ed.an.doc.objs()[0].hidden);
+    }
+
+    #[test]
+    fn opacity_sets_the_alpha_of_the_selection() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let (mut ed, mut shared) = editor();
+        // The tool's colour differs from the object's: the change must keep the object's red.
+        shared.settings.draw.color = [0, 0, 255, 255];
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(
+            EditorAction::Select(rect, false),
+            &egui::Context::default(),
+            None,
+            &mut shared,
+        );
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let label = panel_text(&painted, tr(Msg::Opacity));
+        let value = painted
+            .iter()
+            .find(|(s, r)| {
+                s == "100 %" && in_panel(*r) && (r.center().y - label.center().y).abs() < 4.0
+            })
+            .map(|(_, r)| *r)
+            .expect("the value box");
+        // kit::slider_row: the track starts 96 px after the label and ends 12 px before the
+        // 58 px value box, whose text ends 8 px inside it.
+        let (lo, hi) = (label.left() + 96.0, value.right() + 8.0 - 58.0 - 12.0);
+        let at = |f: f32| pos2(lo + f * (hi - lo), label.center().y);
+        run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![
+                vec![Event::PointerMoved(at(0.5))],
+                vec![press(at(0.5), true)],
+                vec![Event::PointerMoved(at(0.6))],
+                vec![Event::PointerMoved(at(0.75))],
+                vec![press(at(0.75), false)],
+            ],
+        );
+        assert_eq!(ed.an.doc.objs()[0].ann.color, [255, 0, 0, 191]);
+        assert!(ed.an.doc.undo());
+        assert_eq!(ed.an.doc.objs()[0].ann.color, [255, 0, 0, 255]);
+        assert!(!ed.an.doc.undo(), "the whole drag is one undo step");
+    }
+
+    #[test]
+    fn the_style_tab_changes_the_saved_style() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let (mut ed, mut shared) = editor();
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let tab = panel_text(&painted, tr(Msg::Style));
+        run_editor(&mut ed, &mut shared, SIZE, true, click(tab.center()));
+        assert_eq!(ed.tab(), PanelTab::Style);
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let none = panel_text(&painted, tr(Msg::Transparent));
+        let (acts, _, _) = run_editor(&mut ed, &mut shared, SIZE, true, click(none.center()));
+        assert_eq!(
+            shared.settings.style.background,
+            crate::system::settings::Background::None
+        );
+        assert!(acts.contains(&EditorAction::StyleChanged), "{acts:?}");
+    }
+
+    #[test]
+    fn the_object_page_fits_the_panel_in_both_languages() {
+        // For each kind of object picked, nothing runs past the content's 20 px right padding
+        // (it holds the scroll bar) and no text runs into another, in either language.
+        let _lang = crate::ui::i18n::lang_lock();
+        let before = crate::ui::i18n::lang();
+        let ann = |shape| Ann {
+            shape,
+            color: [255, 0, 0, 255],
+            width: 3.0,
+            filled: false,
+        };
+        let anns = vec![
+            ann(Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0))),
+            ann(Shape::Text {
+                pos: pos2(400.0, 100.0),
+                text: "Peak in October, the best month of the year by far".into(),
+                font: 0,
+                size: 24.0,
+                boxed: true,
+            }),
+            ann(Shape::Blur(
+                pos2(500.0, 300.0),
+                pos2(700.0, 400.0),
+                crate::engine::model::BlurMode::Blur,
+            )),
+            ann(Shape::Counter {
+                center: pos2(800.0, 500.0),
+                n: 1,
+            }),
+        ];
+        for l in [crate::ui::i18n::Lang::Pt, crate::ui::i18n::Lang::En] {
+            crate::ui::i18n::set_lang(l);
+            for size in [(900.0, 600.0), SIZE] {
+                for pick in 0..anns.len() {
+                    let mut shared = Shared::for_tests();
+                    let base =
+                        image::RgbaImage::from_pixel(1200, 740, image::Rgba([240, 240, 240, 255]));
+                    let mut ed = Editor::new(
+                        &egui::Context::default(),
+                        base,
+                        Doc::from_anns(anns.clone()),
+                        &shared,
+                    );
+                    let id = ed.an.doc.objs()[pick].id;
+                    ed.apply(
+                        EditorAction::Select(id, false),
+                        &egui::Context::default(),
+                        None,
+                        &mut shared,
+                    );
+                    let (_, painted, _) = run_editor(&mut ed, &mut shared, size, true, vec![]);
+                    let left = size.0 - PANEL;
+                    let texts: Vec<_> = painted
+                        .iter()
+                        .filter(|(_, r)| {
+                            r.left() >= left
+                                && r.top() >= BAR_HEIGHT + TOOL_BAR
+                                && r.bottom() <= size.1 - STATUS_BAR
+                        })
+                        .collect();
+                    assert!(texts.len() > 8, "{l:?} {size:?} {pick}: {texts:?}");
+                    for (i, (text, r)) in texts.iter().enumerate() {
+                        assert!(
+                            r.right() <= size.0 - 20.0 + 0.5,
+                            "{l:?} {size:?} {pick}: {text:?} {r:?} past the padding"
+                        );
+                        for (other, o) in &texts[i + 1..] {
+                            assert!(
+                                !r.shrink(0.5).intersects(o.shrink(0.5)),
+                                "{l:?} {size:?} {pick}: {text:?} {r:?} runs into {other:?} {o:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        crate::ui::i18n::set_lang(before);
+    }
+
+    #[test]
+    fn a_long_list_scrolls_and_keeps_the_selection_in_view() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let mut shared = Shared::for_tests();
+        let base = image::RgbaImage::from_pixel(1200, 740, image::Rgba([240, 240, 240, 255]));
+        let anns = (1..=100u32)
+            .map(|n| Ann {
+                shape: Shape::Counter {
+                    center: pos2(30.0 + (n % 20) as f32 * 55.0, 40.0 + (n / 20) as f32 * 70.0),
+                    n,
+                },
+                color: [255, 0, 0, 255],
+                width: 3.0,
+                filled: false,
+            })
+            .collect();
+        let mut ed = Editor::new(
+            &egui::Context::default(),
+            base,
+            Doc::from_anns(anns),
+            &shared,
+        );
+        // Step 1 is the back-most object: the list's last row.
+        let first = ed.an.doc.objs()[0].id;
+        ed.apply(
+            EditorAction::Select(first, false),
+            &egui::Context::default(),
+            None,
+            &mut shared,
+        );
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![vec![], vec![]]);
+        let step = |n: u32| format!("{} {n}", tr(Msg::ToolStep));
+        let row = panel_text(&painted, &step(1));
+        let view = (BAR_HEIGHT + TOOL_BAR, SIZE.1 - STATUS_BAR);
+        assert!(
+            row.top() >= view.0 && row.bottom() <= view.1,
+            "the selected row is in view: {row:?}"
+        );
+        let front = panel_text(&painted, &step(100));
+        assert!(front.bottom() < view.0, "the list scrolled: {front:?}");
     }
 }
