@@ -283,11 +283,13 @@ pub struct Doc {
     gesture: Option<bool>,
 }
 
-/// What a restyle changes on the selected objects; `None` leaves that part as it is. The text
+/// What a restyle changes on the selected objects; `None` leaves that part as it is. The colour
+/// and the opacity are apart, so a multi-selection keeps each object's other half. The text
 /// options reach only texts and the blur mode only blurs.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Restyle {
-    pub color: Option<[u8; 4]>,
+    pub rgb: Option<[u8; 3]>,
+    pub alpha: Option<u8>,
     pub width: Option<f32>,
     pub filled: Option<bool>,
     pub font: Option<usize>,
@@ -309,15 +311,19 @@ impl Restyle {
             Shape::Blur(_, _, m) => self.blur_mode.is_some_and(|b| b != *m),
             _ => false,
         };
-        self.color.is_some_and(|c| c != a.color)
+        self.rgb.is_some_and(|c| c[..] != a.color[..3])
+            || self.alpha.is_some_and(|al| al != a.color[3])
             || self.width.is_some_and(|w| w != a.width)
             || self.filled.is_some_and(|f| f != a.filled)
             || shape
     }
 
     fn apply(&self, a: &mut Ann) {
-        if let Some(c) = self.color {
-            a.color = c;
+        if let Some([r, g, b]) = self.rgb {
+            a.color = [r, g, b, a.color[3]];
+        }
+        if let Some(al) = self.alpha {
+            a.color[3] = al;
         }
         if let Some(w) = self.width {
             a.width = w;
@@ -1059,7 +1065,7 @@ mod tests {
         d.select(Some(a), false);
         let alpha = |d: &mut Doc, v: u8| {
             d.restyle_selected(&Restyle {
-                color: Some([255, 0, 0, v]),
+                alpha: Some(v),
                 ..Default::default()
             })
         };
@@ -1138,7 +1144,7 @@ mod tests {
         let ops: Vec<Op> = vec![
             ("restyle", |d| {
                 d.restyle_selected(&Restyle {
-                    color: Some([0, 0, 255, 255]),
+                    rgb: Some([0, 0, 255]),
                     width: Some(8.0),
                     filled: Some(true),
                     ..Default::default()
@@ -1229,7 +1235,7 @@ mod tests {
         d.resize(a, Handle::SE, pos2(90.0, 90.0), false, &m);
         bumped(&d, "resize");
         d.restyle_selected(&Restyle {
-            color: Some([0, 0, 255, 255]),
+            rgb: Some([0, 0, 255]),
             ..Default::default()
         });
         bumped(&d, "restyle");
@@ -1413,7 +1419,8 @@ mod tests {
         check(&d, "translate with nothing selected");
         d.select(Some(a), false);
         d.restyle_selected(&Restyle {
-            color: Some([255, 0, 0, 255]),
+            rgb: Some([255, 0, 0]),
+            alpha: Some(255),
             width: Some(4.0),
             filled: Some(false),
             ..Default::default()

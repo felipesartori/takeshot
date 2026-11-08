@@ -568,6 +568,10 @@ impl Editor {
         let area = ui.max_rect();
         self.canvas_area = area;
         self.view = None;
+        // A slider that stopped being drawn mid-drag never reports its release.
+        if !ui.input(|i| i.pointer.any_down()) {
+            self.an.doc.end_gesture();
+        }
         ui.painter().rect_filled(area, 0.0, t.canvas);
         let room = area.shrink(28.0);
         let avail = room.size();

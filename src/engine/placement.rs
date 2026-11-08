@@ -47,7 +47,8 @@ pub fn capture_bars(
 }
 
 /// The object bar's rect, `size` big: centred over `object` and `GAP` above it; below it when the
-/// canvas has no room above; at the canvas's top when neither fits. Always inside `canvas`.
+/// canvas has no room above; at the canvas's top when neither fits. Always inside `canvas`, even
+/// for an object scrolled off it.
 pub fn object_bar(object: Rect, size: Vec2, canvas: Rect) -> Rect {
     let x = (object.center().x - size.x / 2.0)
         .min(canvas.right() - size.x)
@@ -61,6 +62,7 @@ pub fn object_bar(object: Rect, size: Vec2, canvas: Rect) -> Rect {
     } else {
         canvas.top()
     };
+    let y = y.min(canvas.bottom() - size.y).max(canvas.top());
     Rect::from_min_size(pos2(x, y), size)
 }
 
@@ -152,6 +154,14 @@ mod tests {
         assert_eq!(bar(o).right(), canvas.right());
         let o = Rect::from_min_max(pos2(2.0, 400.0), pos2(30.0, 450.0));
         assert_eq!(bar(o).left(), canvas.left());
+
+        // An object scrolled past the canvas's bottom or top: the bar stays inside.
+        for o in [
+            Rect::from_min_max(pos2(300.0, 800.0), pos2(500.0, 850.0)),
+            Rect::from_min_max(pos2(300.0, -200.0), pos2(500.0, 20.0)),
+        ] {
+            assert!(canvas.contains_rect(bar(o)), "{o:?}: {:?}", bar(o));
+        }
 
         // An object filling the canvas: still inside it.
         for o in [canvas, canvas.expand(50.0)] {

@@ -520,8 +520,10 @@ impl Annotator {
         fn changed<T: PartialEq + Copy>(a: T, b: T) -> Option<T> {
             (a != b).then_some(b)
         }
+        let rgb = |c: [u8; 4]| [c[0], c[1], c[2]];
         let r = Restyle {
-            color: changed(before.color, after.color),
+            rgb: changed(rgb(before.color), rgb(after.color)),
+            alpha: changed(before.color[3], after.color[3]),
             width: changed(before.width, after.width),
             filled: changed(before.filled, after.filled),
             font: changed(before.font, after.font),

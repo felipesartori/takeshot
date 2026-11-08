@@ -397,15 +397,18 @@ fn status_bar(ui: &mut Ui, t: &Tokens, ed: &Editor) {
     });
 }
 
-/// The bar over the selected object (its colour, Duplicate, Bring to front, Delete), as in
-/// "Editor · escuro": above it, or below when there is no room, inside the canvas; hidden while
-/// something is drawn or dragged.
+/// The bar over the selected object (its colour, Duplicate, Bring to front, Send to back, Delete),
+/// as in "Editor · escuro": above it, or below when there is no room, inside the canvas; hidden
+/// while something is drawn or dragged, or while the selection is out of view.
 fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Vec<EditorAction>) {
-    let Some(sel) = ed.selection_on_screen(shared) else {
+    let Some(sel) = ed
+        .selection_on_screen(shared)
+        .filter(|s| s.intersects(ed.canvas_area()))
+    else {
         return;
     };
-    // 4 x 28 px buttons 2 apart, 4 px inside.
-    let size = vec2(4.0 + 4.0 * 28.0 + 3.0 * 2.0 + 4.0, 36.0);
+    // 5 x 28 px buttons 2 apart, 4 px inside.
+    let size = vec2(4.0 + 5.0 * 28.0 + 4.0 * 2.0 + 4.0, 36.0);
     // The handles stand up to 6 px outside the object.
     let at =
         crate::engine::placement::object_bar(sel.expand(6.0), size, ed.canvas_area().shrink(8.0));
@@ -446,6 +449,7 @@ fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut 
                                 tr(Msg::BringToFront),
                                 EditorAction::ToFront,
                             ),
+                            (Ico::SendBack, tr(Msg::SendToBack), EditorAction::ToBack),
                             (
                                 Ico::Trash,
                                 &format!("{} (Del)", tr(Msg::Delete)),
@@ -1158,10 +1162,133 @@ mod tests {
         assert_eq!(ed.an.doc.selected(), &[rect], "the selection stays");
 
         let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let back = on_canvas(&painted, Ico::SendBack).expect("Send to back");
+        run_editor(&mut ed, &mut shared, SIZE, true, click(back));
+        assert_eq!(ed.an.doc.objs().first().map(|o| o.id), Some(rect));
+
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
         let del = on_canvas(&painted, Ico::Trash).expect("Delete");
         run_editor(&mut ed, &mut shared, SIZE, true, click(del));
         assert_eq!(ed.an.doc.objs().len(), 3);
         assert!(ed.an.doc.objs().iter().all(|o| o.id != rect));
+    }
+
+    #[test]
+    fn no_object_bar_for_a_selection_out_of_view() {
+        // At 400 % the view shows the picture's middle; the rectangle (100,100)-(300,200) is off it.
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(EditorAction::Select(rect, false), &ctx, None, &mut shared);
+        ed.apply(
+            EditorAction::Zoom(Zoom::Percent(400)),
+            &ctx,
+            None,
+            &mut shared,
+        );
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        assert!(on_canvas(&painted, Ico::CopyPlus).is_none());
+    }
+
+    /// Two objects of their own colour and opacity, both selected.
+    fn two_selected() -> (Editor, Shared, [crate::engine::doc::ObjId; 2]) {
+        let shared = Shared::for_tests();
+        let base = image::RgbaImage::from_pixel(1200, 740, image::Rgba([240, 240, 240, 255]));
+        let ann = |shape, color| Ann {
+            shape,
+            color,
+            width: 3.0,
+            filled: false,
+        };
+        let doc = Doc::from_anns(vec![
+            ann(
+                Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0)),
+                [255, 0, 0, 255],
+            ),
+            ann(
+                Shape::Rect(pos2(400.0, 100.0), pos2(600.0, 200.0)),
+                [0, 0, 255, 128],
+            ),
+        ]);
+        let mut ed = Editor::new(&egui::Context::default(), base, doc, &shared);
+        let mut shared = shared;
+        let ids = [ed.an.doc.objs()[0].id, ed.an.doc.objs()[1].id];
+        let ctx = egui::Context::default();
+        ed.apply(EditorAction::Select(ids[0], false), &ctx, None, &mut shared);
+        ed.apply(EditorAction::Select(ids[1], true), &ctx, None, &mut shared);
+        (ed, shared, ids)
+    }
+
+    #[test]
+    fn opacity_and_colour_keep_what_each_object_does_not_change() {
+        let ctx = egui::Context::default();
+        let colours = |ed: &Editor| -> Vec<[u8; 4]> {
+            ed.an.doc.objs().iter().map(|o| o.ann.color).collect()
+        };
+        let (mut ed, mut shared, _) = two_selected();
+        ed.apply(EditorAction::SetOpacity(191), &ctx, None, &mut shared);
+        assert_eq!(colours(&ed), vec![[255, 0, 0, 191], [0, 0, 255, 191]]);
+        let (mut ed, mut shared, _) = two_selected();
+        ed.apply(
+            EditorAction::SetColor([0, 200, 0, 255]),
+            &ctx,
+            None,
+            &mut shared,
+        );
+        assert_eq!(colours(&ed), vec![[0, 200, 0, 255], [0, 200, 0, 128]]);
+    }
+
+    #[test]
+    fn a_gesture_ends_when_the_pointer_is_up() {
+        // A slider that stops being drawn mid-drag never reports its release: the next frame
+        // with no button down closes the gesture, so later changes are steps of their own.
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(EditorAction::Select(rect, false), &ctx, None, &mut shared);
+        ed.apply(EditorAction::Gesture(true), &ctx, None, &mut shared);
+        ed.apply(EditorAction::SetOpacity(100), &ctx, None, &mut shared);
+        run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        ed.apply(EditorAction::SetOpacity(50), &ctx, None, &mut shared);
+        assert!(ed.an.doc.undo());
+        assert_eq!(ed.an.doc.objs()[0].ann.color[3], 100);
+    }
+
+    #[test]
+    fn a_slider_release_ends_its_step() {
+        // After a drag on the opacity slider, a colour change is its own undo step.
+        let _lang = crate::ui::i18n::lang_lock();
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(EditorAction::Select(rect, false), &ctx, None, &mut shared);
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let label = panel_text(&painted, tr(Msg::Opacity));
+        let at = |x: f32| pos2(label.left() + 96.0 + x, label.center().y);
+        let (_, p) = crate::skins::takeui::testing::drive_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![
+                vec![Event::PointerMoved(at(60.0))],
+                vec![press(at(60.0), true)],
+                vec![Event::PointerMoved(at(40.0))],
+                vec![Event::PointerMoved(at(20.0))],
+                vec![press(at(20.0), false)],
+            ],
+        );
+        let _ = p;
+        let alpha = ed.an.doc.objs()[0].ann.color[3];
+        assert!(alpha < 255, "the drag changed the opacity");
+        ed.apply(
+            EditorAction::SetColor([0, 200, 0, 255]),
+            &ctx,
+            None,
+            &mut shared,
+        );
+        assert!(ed.an.doc.undo());
+        assert_eq!(ed.an.doc.objs()[0].ann.color, [255, 0, 0, alpha]);
     }
 
     #[test]
