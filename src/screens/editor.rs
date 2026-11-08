@@ -63,12 +63,16 @@ pub enum Zoom {
 /// The zoom steps, as scales.
 const ZOOM_STEPS: [f32; 8] = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0];
 
+/// The smallest zoom: a large capture can fit below the first step.
+const ZOOM_MIN: f32 = 0.1;
+
 /// The scale a zoom request leads to from `current`; `fit` is the scale that shows it all.
+/// Zooming out below the first step keeps the zoom (it never enlarges).
 pub fn zoom_scale(z: Zoom, current: f32, fit: f32) -> f32 {
-    let (lo, hi) = (ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.len() - 1]);
+    let hi = ZOOM_STEPS[ZOOM_STEPS.len() - 1];
     match z {
         Zoom::Fit => fit,
-        Zoom::Percent(p) => (p as f32 / 100.0).clamp(lo, hi),
+        Zoom::Percent(p) => (p as f32 / 100.0).clamp(ZOOM_MIN, hi),
         Zoom::In => ZOOM_STEPS
             .iter()
             .copied()
@@ -79,7 +83,7 @@ pub fn zoom_scale(z: Zoom, current: f32, fit: f32) -> f32 {
             .rev()
             .copied()
             .find(|s| *s < current - 1e-3)
-            .unwrap_or(lo),
+            .unwrap_or(current.max(ZOOM_MIN)),
     }
 }
 
@@ -293,14 +297,7 @@ impl Editor {
             EditorAction::SetBlurMode(m) => restyle(self, shared, &|o| o.blur_mode = m),
             EditorAction::Gesture(true) => self.an.doc.begin_gesture(),
             EditorAction::Gesture(false) => self.an.doc.end_gesture(),
-            EditorAction::Zoom(z) => {
-                self.zoom = match z {
-                    Zoom::Fit => None,
-                    _ => Some(zoom_scale(z, self.zoom.unwrap_or(self.fit), self.fit)),
-                };
-                self.pan = egui::Vec2::ZERO;
-                self.preview_dirty = true;
-            }
+            EditorAction::Zoom(z) => self.zoom_to(z, egui::Vec2::ZERO),
             EditorAction::Select(id, add) => {
                 self.an.pick(id, add, &mut shared.settings.draw);
                 shared.settings_dirty = true;
@@ -331,6 +328,23 @@ impl Editor {
             EditorAction::Window(c) => crate::ui::chrome::act(ctx, c),
         }
         Switch::None
+    }
+
+    /// Zooms keeping the picture's point at `anchor` (from the canvas centre) where it is on
+    /// screen: the pointer for Ctrl+wheel, the centre for the keys and the zoom menu. Fit centres.
+    fn zoom_to(&mut self, z: Zoom, anchor: egui::Vec2) {
+        let old = self.shown_scale();
+        self.zoom = match z {
+            Zoom::Fit => None,
+            _ => Some(zoom_scale(z, old, self.fit)),
+        };
+        let ratio = self.shown_scale() / old;
+        self.pan = if self.zoom.is_none() {
+            egui::Vec2::ZERO
+        } else {
+            anchor - (anchor - self.pan) * ratio
+        };
+        self.preview_dirty = true;
     }
 
     /// Lets the next close through without asking (the screenshot self-check closes on its own).
@@ -581,25 +595,19 @@ impl Editor {
         let space = !typing && self.an.draft.is_none() && ui.input(|i| i.key_down(Key::Space));
         let middle = resp.dragged_by(egui::PointerButton::Middle);
         let panning = space || middle;
-        if panning {
-            if resp.dragged() {
-                self.pan += resp.drag_delta();
-            }
-            if resp.hovered() || resp.dragged() {
-                ctx.set_cursor_icon(if resp.dragged() {
-                    egui::CursorIcon::Grabbing
-                } else {
-                    egui::CursorIcon::Grab
-                });
-            }
+        if panning && resp.dragged() {
+            self.pan += resp.drag_delta();
         }
-        // Ctrl+wheel zooms one step per notch.
-        if resp.hovered() {
+        // Ctrl+wheel zooms one step per notch, around the pointer.
+        if resp.hovered()
+            && let Some(p) = ui.input(|i| i.pointer.hover_pos())
+        {
             let z = ui.input(|i| i.zoom_delta());
+            let anchor = p - room.center();
             if z > 1.001 {
-                acts.push(EditorAction::Zoom(Zoom::In));
+                self.zoom_to(Zoom::In, anchor);
             } else if z < 0.999 {
-                acts.push(EditorAction::Zoom(Zoom::Out));
+                self.zoom_to(Zoom::Out, anchor);
             }
         }
         let clip = ui.painter_at(img_rect.expand(40.0).intersect(area));
@@ -609,27 +617,32 @@ impl Editor {
             if !panning {
                 self.an
                     .handle_canvas(ui, &resp, &view, &measure, &mut shared.settings.draw);
-                if (resp.hovered() || self.an.dragging.is_some())
-                    && let Some(p) = ui.input(|i| i.pointer.hover_pos())
-                {
-                    // While a new shape is drawn, handles and objects underneath keep the pointer.
-                    let (handle, over_object) = if self.an.live.is_some() {
-                        (None, false)
+            }
+            if (resp.hovered() || resp.dragged() || self.an.dragging.is_some())
+                && let Some(p) = ui.input(|i| i.pointer.hover_pos())
+            {
+                // While a new shape is drawn or the picture panned, handles and objects underneath
+                // keep the pointer.
+                let (handle, over_object) = if self.an.live.is_some() || panning {
+                    (None, false)
+                } else {
+                    self.an.hover(view.to_img(p), &view, &measure)
+                };
+                ctx.set_cursor_icon(cursor::pick(&CursorCtx {
+                    tool: self.an.tool,
+                    over_image: resp.rect.contains(p),
+                    over_chrome: false,
+                    handle,
+                    over_object,
+                    typing: self.an.draft.is_some(),
+                    dragging: if panning {
+                        resp.dragged()
                     } else {
-                        self.an.hover(view.to_img(p), &view, &measure)
-                    };
-                    ctx.set_cursor_icon(cursor::pick(&CursorCtx {
-                        tool: self.an.tool,
-                        over_image: resp.rect.contains(p),
-                        over_chrome: false,
-                        handle,
-                        over_object,
-                        typing: self.an.draft.is_some(),
-                        dragging: self.an.dragging.is_some(),
-                        space_pan: false,
-                        area: Area::NotApplicable,
-                    }));
-                }
+                        self.an.dragging.is_some()
+                    },
+                    space_pan: panning,
+                    area: Area::NotApplicable,
+                }));
             }
             self.an
                 .paint_selection(&clip, &view, t, &shared.fonts, &measure);
@@ -790,6 +803,20 @@ mod tests {
         assert_eq!(zoom_scale(Zoom::Out, 0.6, fit), 0.5, "to the step below");
         assert_eq!(zoom_scale(Zoom::Out, 0.25, fit), 0.25, "the smallest step");
         assert_eq!(zoom_scale(Zoom::In, 4.0, fit), 4.0, "the largest step");
+    }
+
+    #[test]
+    fn zooming_out_never_enlarges() {
+        // A 4K capture fits a small window at 20 %: the step "below" must not jump up to 25 %.
+        assert_eq!(zoom_scale(Zoom::Out, 0.2, 0.2), 0.2);
+        assert_eq!(
+            zoom_scale(Zoom::Out, 1.0, 0.5),
+            0.75,
+            "from a step, the one below"
+        );
+        assert_eq!(zoom_scale(Zoom::Percent(10), 1.0, 0.5), 0.1, "down to 10 %");
+        assert_eq!(zoom_scale(Zoom::Percent(5), 1.0, 0.5), 0.1);
+        assert_eq!(zoom_scale(Zoom::In, 0.2, 0.2), 0.25);
     }
 
     fn editor() -> (Editor, crate::Shared) {

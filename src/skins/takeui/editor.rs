@@ -282,6 +282,11 @@ fn tool_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Ve
     ui.painter()
         .hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, t.border));
     let opts = &shared.settings.draw;
+    // The width every part needs, measured the last time all of them were drawn; narrower, the
+    // width dots go (the panel's Width slider stays).
+    let full_id = egui::Id::unique("takeui-editor-tool-bar");
+    let full_w = ui.ctx().data(|d| d.get_temp::<f32>(full_id));
+    let compact = full_w.is_some_and(|w| r.width() < w);
     ui.horizontal_centered(|ui| {
         ui.add_space(12.0);
         ui.spacing_mut().item_spacing.x = 2.0;
@@ -296,17 +301,20 @@ fn tool_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Ve
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing.x = 6.0;
         palette(ui, t, opts.color, acts);
-        ui.add_space(4.0);
-        divider(ui, t);
-        ui.add_space(4.0);
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for w in WIDTHS {
-            let tip = format!("{w} px");
-            if kit::width_dot(ui, t, w, (opts.width - w).abs() < 0.01, &tip).clicked() {
-                acts.push(EditorAction::SetWidth(w));
+        if !compact {
+            ui.add_space(4.0);
+            divider(ui, t);
+            ui.add_space(4.0);
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for w in WIDTHS {
+                let tip = format!("{w} px");
+                if kit::width_dot(ui, t, w, (opts.width - w).abs() < 0.01, &tip).clicked() {
+                    acts.push(EditorAction::SetWidth(w));
+                }
             }
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let left_end = ui.cursor().left();
+        let right = ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(12.0);
             ui.spacing_mut().item_spacing.x = 4.0;
             if kit::icon_button(ui, t, Ico::Maximize, ed.zoom().is_none(), tr(Msg::ZoomFit))
@@ -337,6 +345,11 @@ fn tool_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Ve
                 },
             );
         });
+        if !compact {
+            // The parts, 16 px apart at the least.
+            let need = (left_end - r.left()) + 16.0 + (r.right() - right.response.rect.left());
+            ui.ctx().data_mut(|d| d.insert_temp(full_id, need));
+        }
     });
 }
 
@@ -834,6 +847,29 @@ mod tests {
                 .map(|(_, r)| *r)
                 .expect("the file name");
             assert!(name.width() >= 120.0, "{name:?} at {size:?}: {bars:?}");
+            // The tools, colours and widths stay left of the zoom box, with a gap.
+            let t = shared.tokens(None);
+            let (_, _, blocks) = run_editor(&mut ed, &mut shared, size, true, vec![]);
+            let in_tools = |r: &Rect| r.top() >= BAR_HEIGHT && r.bottom() <= BAR_HEIGHT + TOOL_BAR;
+            let zoom_text = painted
+                .iter()
+                .find(|(s, r)| s.ends_with(" %") && in_tools(r))
+                .map(|(_, r)| *r)
+                .expect("the zoom");
+            let zoom_box = blocks
+                .iter()
+                .filter(|(r, c)| *c == t.input && r.contains(zoom_text.center()))
+                .map(|(r, _)| *r)
+                .min_by(|a, b| a.area().total_cmp(&b.area()))
+                .expect("the zoom box");
+            for (r, _) in blocks.iter().filter(|(r, _)| {
+                in_tools(r) && r.width() <= 34.0 && r.center().x < zoom_box.center().x
+            }) {
+                assert!(
+                    r.right() <= zoom_box.left() - 4.0,
+                    "{r:?} runs into the zoom box {zoom_box:?} at {size:?}"
+                );
+            }
             for (i, (a, ra)) in bars.iter().enumerate() {
                 assert!(
                     ra.right() <= size.0 + 0.5,
@@ -952,6 +988,79 @@ mod tests {
             before,
             "nothing drawn while panning"
         );
+    }
+
+    #[test]
+    fn ctrl_wheel_zooms_at_the_pointer() {
+        let (mut ed, mut shared) = editor();
+        // The styled picture is the largest mesh (it may run past the canvas once zoomed).
+        let picture = |blocks: &[crate::skins::takeui::testing::Block]| {
+            blocks
+                .iter()
+                .filter(|(_, c)| *c == crate::skins::takeui::testing::MESH)
+                .map(|(r, _)| *r)
+                .max_by(|a, b| a.area().total_cmp(&b.area()))
+                .expect("the picture")
+        };
+        let (_, _, blocks) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let before = picture(&blocks);
+        let p = pos2(580.0, 505.0);
+        let zoom = || vec![Event::Zoom(1.1)];
+        let (_, _, blocks) = run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![vec![Event::PointerMoved(p)], zoom(), zoom(), zoom()],
+        );
+        let after = picture(&blocks);
+        assert!(
+            after.width() > before.width() * 1.5,
+            "{before:?} → {after:?}"
+        );
+        // The point of the picture under the pointer stays under it.
+        let at = |r: Rect| (p - r.min) / r.size();
+        assert!(
+            (at(before) - at(after)).length() < 0.01,
+            "{:?} → {:?}",
+            at(before),
+            at(after)
+        );
+    }
+
+    #[test]
+    fn space_pans_with_the_hand() {
+        let (mut ed, mut shared) = editor();
+        let space = |pressed| Event::Key {
+            key: Key::Space,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let at = pos2(480.0, 450.0);
+        let (_, p) = crate::skins::takeui::testing::drive_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![vec![Event::PointerMoved(at)], vec![space(true)], vec![]],
+        );
+        assert_eq!(p.cursor, egui::CursorIcon::Grab, "Space over the picture");
+        let (_, p) = crate::skins::takeui::testing::drive_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![
+                vec![Event::PointerMoved(at)],
+                vec![space(true)],
+                vec![press(at, true)],
+                vec![Event::PointerMoved(at + vec2(-40.0, -20.0))],
+                vec![Event::PointerMoved(at + vec2(-80.0, -40.0))],
+            ],
+        );
+        assert_eq!(p.cursor, egui::CursorIcon::Grabbing, "while it drags");
     }
 
     #[test]
