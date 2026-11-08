@@ -577,17 +577,18 @@ impl Annotator {
             .reduce(|a, b| a.union(b))
     }
 
-    /// The tool whose options the bar shows: the active drawing tool, or with Select the picked object.
+    /// The kind whose options the bar and the panel show: the selected object's, whatever the
+    /// tool (any tool picks objects); with nothing selected, the drawing tool's; with Select and
+    /// nothing selected, none.
     pub fn bar_tool(&self) -> Option<Tool> {
-        if self.tool != Tool::Select {
-            return Some(self.tool);
-        }
-        let id = self.doc.selected().first()?;
-        self.doc
-            .objs()
-            .iter()
-            .find(|o| o.id == *id)
-            .map(|o| o.ann.shape.tool())
+        let picked = self.doc.selected().first().and_then(|id| {
+            self.doc
+                .objs()
+                .iter()
+                .find(|o| o.id == *id)
+                .map(|o| o.ann.shape.tool())
+        });
+        picked.or((self.tool != Tool::Select).then_some(self.tool))
     }
 
     /// Applies to the selection what the options bar changed between `before` and `after`.
@@ -1545,7 +1546,8 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_shows_the_drawing_tool_or_the_picked_object() {
+    fn the_bar_shows_the_picked_object_or_the_drawing_tool() {
+        // With something selected, its own controls whatever the tool; else the tool's.
         let (mut an, ids) = with(
             Tool::Select,
             vec![rect_ann((0.0, 0.0), (100.0, 100.0), false)],
@@ -1554,6 +1556,12 @@ mod tests {
         an.doc.select(Some(ids[0]), false);
         assert_eq!(an.bar_tool(), Some(Tool::Rect));
         an.tool = Tool::Arrow;
+        assert_eq!(
+            an.bar_tool(),
+            Some(Tool::Rect),
+            "a rectangle picked with the Arrow"
+        );
+        an.doc.select(None, false);
         assert_eq!(an.bar_tool(), Some(Tool::Arrow));
     }
 
