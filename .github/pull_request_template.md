@@ -13,7 +13,7 @@
 
 ## Parity
 
-Missing in the other theme: <!-- write "none", or list each function the other theme still needs -->
+Looks right in all four: <!-- write "yes", or list what still looks off and in which theme and mode -->
 
 
 ## Translations

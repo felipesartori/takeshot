@@ -1,6 +1,6 @@
 //! Capture overlay: the frozen screen, area selection, drawing tools and quick actions. The state,
 //! what the user asks for (`CaptureAction`, `Overlay::apply`), the area and the canvas live here
-//! for both skins; a skin draws the bars and the hint.
+//! for both themes; `views::capture` draws the bars and the hint.
 
 use crate::engine::annotator::{Annotator, SelectOutcome, View, text_measure};
 use crate::engine::cursor::{self, Area, CursorCtx};
@@ -17,7 +17,7 @@ use crate::{Shared, Switch};
 use egui::{Align2, Color32, Key, Modifiers, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use image::RgbaImage;
 
-/// What the user asked for on the capture's bars; a skin returns these and `Overlay::apply`
+/// What the user asked for on the capture's bars; the capture view returns these and `Overlay::apply`
 /// carries them out.
 #[derive(Clone, PartialEq, Debug)]
 pub enum CaptureAction {
@@ -294,7 +294,7 @@ impl Overlay {
         let pointer = ui.input(|i| i.pointer.hover_pos());
         // The text field is placed after the picture is painted, so it shows over it.
         let typing = self.an.draft.is_some();
-        // A menu open at the start of the frame takes Esc (it closes while the skin draws).
+        // A menu open at the start of the frame takes Esc (it closes while the view draws).
         let menu_open = egui::Popup::is_any_open(&ctx);
 
         let drawing_tool = self.sel.is_some() && self.an.tool != Tool::Select;
@@ -376,9 +376,9 @@ impl Overlay {
             painter.line_segment([pos2(cx, screen.min.y), pos2(cx, screen.max.y)], guide);
         }
 
-        // ---------------- bars and hint, drawn by the skin
+        // ---------------- bars and hint, drawn by the view
         let mut switch = Switch::None;
-        for a in crate::skins::capture(ui, t, self, shared, screen) {
+        for a in crate::views::capture(ui, t, self, shared, screen) {
             let s = self.apply(a, &ctx, frame, shared);
             if !matches!(s, Switch::None) {
                 switch = s;
@@ -1192,7 +1192,7 @@ mod tests {
         ui_frames_with(o, sh, events, None)
     }
 
-    /// `ui_frames` with the popup `menu` open before every frame, as a skin's menu is.
+    /// `ui_frames` with the popup `menu` open before every frame, as a view's menu is.
     fn ui_frames_with(
         o: &mut Overlay,
         sh: &mut Shared,

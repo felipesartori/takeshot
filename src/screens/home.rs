@@ -1,6 +1,6 @@
 //! Main window state and behaviour, shared by both themes: the page on screen, the captures
 //! library (filter, search, selection, thumbnails), what the user asked for (`MainAction`) and
-//! carrying it out. The skins draw it.
+//! carrying it out. `views` draws it.
 
 use crate::Shared;
 use crate::engine::render;
@@ -404,7 +404,7 @@ impl Home {
         }
     }
 
-    /// Once per frame, before the skin draws: the folder's new listing, finished thumbnails,
+    /// Once per frame, before the view draws: the folder's new listing, finished thumbnails,
     /// dropped files, pasted pictures and Ctrl+O.
     pub fn begin(&mut self, ui: &Ui, shared: &mut Shared) -> Vec<MainAction> {
         let ctx = ui.ctx().clone();

@@ -16,9 +16,9 @@
 
 mod engine;
 mod screens;
-mod skins;
 mod system;
 mod ui;
+mod views;
 
 use engine::{model, render};
 use screens::{editor, home, notice, overlay, pin, widgets};
@@ -361,8 +361,8 @@ impl eframe::App for App {
         let sw = match &mut self.mode {
             Mode::Home(h) => {
                 let t = self.shared.tokens(ctx.system_theme());
-                skins::begin_frame(&ctx, &t);
-                for a in skins::main_window(ui, &t, h, &mut self.shared) {
+                views::begin_frame(&ctx, &t);
+                for a in views::main_window(ui, &t, h, &mut self.shared) {
                     h.apply(a, &ctx, &mut self.shared);
                 }
                 Switch::None
@@ -377,18 +377,18 @@ impl eframe::App for App {
             }
             Mode::Overlay(o) => {
                 let t = self.shared.tokens(ctx.system_theme());
-                skins::begin_frame(&ctx, &t);
+                views::begin_frame(&ctx, &t);
                 o.ui(ui, Some(frame), &t, &mut self.shared)
             }
             Mode::Editor(e) => {
                 let t = self.shared.tokens(ctx.system_theme());
-                skins::begin_frame(&ctx, &t);
+                views::begin_frame(&ctx, &t);
                 e.ui(ui, frame, &t, &mut self.shared)
             }
             Mode::Pin(p) => p.ui(ui, frame, &mut self.shared),
             Mode::Notice(n) => {
                 let t = self.shared.tokens(ctx.system_theme());
-                skins::begin_frame(&ctx, &t);
+                views::begin_frame(&ctx, &t);
                 n.ui(ui, &t)
             }
             Mode::Gallery(g) => {

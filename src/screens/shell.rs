@@ -385,8 +385,8 @@ impl Shell {
             }
         }
         let t = shared.tokens(ctx.system_theme());
-        crate::skins::begin_frame(&ctx, &t);
-        for a in crate::skins::main_window(ui, &t, home, shared) {
+        crate::views::begin_frame(&ctx, &t);
+        for a in crate::views::main_window(ui, &t, home, shared) {
             home.apply(a, &ctx, shared);
         }
         let req = std::mem::take(&mut home.requests);

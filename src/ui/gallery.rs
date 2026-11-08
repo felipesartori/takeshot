@@ -54,7 +54,7 @@ impl Gallery {
     fn reapply(&mut self, ctx: &egui::Context) {
         let dark = tokens::effective_dark(self.ui_mode, ctx.system_theme());
         self.tokens = tokens::tokens(self.theme, dark);
-        crate::skins::begin_frame(ctx, &self.tokens);
+        crate::views::begin_frame(ctx, &self.tokens);
         i18n::set_lang(i18n::resolve(self.lang, i18n::system_locale().as_deref()));
         ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
             brand::window_icon(self.theme),

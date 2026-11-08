@@ -1,4 +1,4 @@
-//! TakeUI's Ajustes: the sections on the left and their grouped rows on the right, as in "Ajustes ·
+//! Ajustes: the sections on the left and their grouped rows on the right, as in "Ajustes ·
 //! escuro" of the design. Values bind to the settings; dialogs and system changes go through
 //! `MainAction`.
 
@@ -526,10 +526,10 @@ fn about(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
 #[cfg(test)]
 mod tests {
     use crate::screens::home::{Home, MainAction, SettingsSection};
-    use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::ui::i18n::{Lang, LangPref, Msg, apply_language, every, lang, set_lang};
     use crate::ui::tokens::{ThemeId, UiMode};
+    use crate::views::testing::{click, content_box, painted_at, run, run_painted};
     use egui::vec2;
 
     #[test]

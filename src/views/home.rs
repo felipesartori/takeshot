@@ -1,4 +1,4 @@
-//! TakeUI's Início: the capture buttons, the gallery filters, search and folder, and the grid of
+//! Início: the capture buttons, the gallery filters, search and folder, and the grid of
 //! captures from the save folder, as in "Início · escuro" and "Início · claro" of the design.
 
 use crate::Shared;
@@ -393,11 +393,9 @@ fn empty(
 #[cfg(test)]
 mod tests {
     use crate::screens::home::{Home, MainAction};
-    use crate::skins::takeui::testing::{
-        click, content_box, double_click, painted_at, run, run_painted,
-    };
     use crate::system::library::{Entry, Period};
     use crate::ui::i18n::{Msg, every};
+    use crate::views::testing::{click, content_box, double_click, painted_at, run, run_painted};
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
 

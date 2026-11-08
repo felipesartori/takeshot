@@ -1,4 +1,7 @@
-//! The TakeUI skin (option A of the prototypes): the TakeFlow family look.
+//! How the screens draw, in both themes: the main window, the editor and the capture's bars,
+//! from the state in `screens` (which carries out the actions they return). One layout serves
+//! TakeUI and Coral UI; a theme changes the tokens, the mark and name, and the look of a few kit
+//! components, never where a function is.
 
 pub mod capture;
 pub mod editor;
@@ -7,11 +10,61 @@ pub mod settings;
 pub mod shell;
 pub mod style;
 
+use crate::Shared;
 use crate::engine::model::{PALETTE, Tool};
+use crate::screens::home::{Home, MainAction};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, Ico};
-use crate::ui::tokens::Tokens;
+use crate::ui::tokens::{ThemeId, Tokens};
 use egui::{Color32, Ui, vec2};
+
+/// The main window. Returns what the user asked for; `Home::apply` does it.
+pub fn main_window(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    home: &mut Home,
+    shared: &mut Shared,
+) -> Vec<MainAction> {
+    let mut acts = home.begin(ui, shared);
+    crate::ui::chrome::adopt_window("Takeshot");
+    acts.extend(shell::main_window(ui, t, home, shared));
+    acts
+}
+
+/// The editor. Returns what the user asked for; `Editor::apply` does it.
+pub fn editor(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    ed: &mut crate::screens::editor::Editor,
+    shared: &mut Shared,
+) -> Vec<crate::screens::editor::EditorAction> {
+    editor::editor(ui, t, ed, shared)
+}
+
+/// The capture's bars and hint over `screen`. Returns what the user asked for; `Overlay::apply`
+/// does it.
+pub fn capture(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    ov: &crate::screens::overlay::Overlay,
+    shared: &Shared,
+    screen: egui::Rect,
+) -> Vec<crate::screens::overlay::CaptureAction> {
+    capture::capture(ui, t, ov, shared, screen)
+}
+
+/// Applies the egui style for this look when it changed since the last frame (theme or light and
+/// dark); true when it did.
+pub fn begin_frame(ctx: &egui::Context, t: &Tokens) -> bool {
+    let id = egui::Id::unique("takeshot-look");
+    let look = (t.theme, t.dark);
+    if ctx.data(|d| d.get_temp::<(ThemeId, bool)>(id)) == Some(look) {
+        return false;
+    }
+    crate::ui::style::apply(ctx, t);
+    ctx.data_mut(|d| d.insert_temp(id, look));
+    true
+}
 
 /// The icon of a tool; `None` for the numbered step, which the kit draws as a circle with "1".
 pub(crate) fn tool_icon(tool: Tool) -> Option<Ico> {
@@ -68,7 +121,7 @@ pub(crate) fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4]) -> Option<[u8; 4]
     picked
 }
 
-/// Headless frames over the main window, for the skin's tests.
+/// Headless frames over the main window, for the views' tests.
 #[cfg(test)]
 pub(crate) mod testing {
     use crate::Shared;
@@ -120,7 +173,7 @@ pub(crate) mod testing {
             };
             let mut full = ctx.run_ui(input, |ui| {
                 let t = shared.tokens(None);
-                crate::skins::begin_frame(ui.ctx(), &t);
+                crate::views::begin_frame(ui.ctx(), &t);
                 draw(ui, &t, shared);
             });
             full.textures_delta.clear();
@@ -157,7 +210,7 @@ pub(crate) mod testing {
     ) -> (Vec<MainAction>, Vec<(String, Rect)>, Vec<Block>) {
         let mut acts = Vec::new();
         let p = run_frames(shared, size, dark, frames, |ui, t, shared| {
-            acts.extend(crate::skins::main_window(ui, t, home, shared))
+            acts.extend(crate::views::main_window(ui, t, home, shared))
         });
         (acts, p.texts, p.blocks)
     }
@@ -173,7 +226,7 @@ pub(crate) mod testing {
     ) -> (Vec<crate::screens::editor::EditorAction>, Painted) {
         let mut acts = Vec::new();
         let p = run_frames(shared, size, dark, frames, |ui, t, shared| {
-            let frame = crate::skins::editor(ui, t, ed, shared);
+            let frame = crate::views::editor(ui, t, ed, shared);
             for a in &frame {
                 ed.apply(a.clone(), ui.ctx(), None, shared);
             }
@@ -192,7 +245,7 @@ pub(crate) mod testing {
         let mut acts = Vec::new();
         let p = run_frames(shared, (1600.0, 900.0), true, frames, |ui, t, shared| {
             let screen = ui.max_rect();
-            acts.extend(crate::skins::capture(ui, t, ov, shared, screen));
+            acts.extend(crate::views::capture(ui, t, ov, shared, screen));
         });
         (acts, p)
     }
@@ -283,5 +336,32 @@ pub(crate) mod testing {
             vec![button(p, true)],
             vec![button(p, false)],
         ]
+    }
+}
+
+#[cfg(test)]
+mod look_tests {
+    use super::*;
+    use crate::ui::tokens::{ThemeId, tokens};
+
+    #[test]
+    fn style_is_applied_once_per_look() {
+        let ctx = egui::Context::default();
+        assert!(
+            begin_frame(&ctx, &tokens(ThemeId::TakeUi, true)),
+            "first frame"
+        );
+        assert!(
+            !begin_frame(&ctx, &tokens(ThemeId::TakeUi, true)),
+            "same look"
+        );
+        assert!(
+            begin_frame(&ctx, &tokens(ThemeId::TakeUi, false)),
+            "light now"
+        );
+        assert!(
+            begin_frame(&ctx, &tokens(ThemeId::Coral, false)),
+            "other theme"
+        );
     }
 }

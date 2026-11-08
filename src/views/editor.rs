@@ -1,4 +1,4 @@
-//! TakeUI's editor: the title bar (file and size, undo and redo, pin, save as, save, copy, window
+//! The editor: the title bar (file and size, undo and redo, pin, save as, save, copy, window
 //! buttons), the tool bar (tools, colours, widths, zoom), the canvas, the right panel and the
 //! status bar, as in "Editor · escuro" of the design. Behaviour is in `screens::editor`.
 
@@ -868,8 +868,8 @@ mod tests {
     use crate::engine::doc::Doc;
     use crate::engine::model::{Ann, Shape};
     use crate::screens::editor::PanelTab;
-    use crate::skins::takeui::testing::{click, painted_at, run_editor};
     use crate::ui::i18n::every;
+    use crate::views::testing::{click, painted_at, run_editor};
     use egui::{Event, Key, Modifiers, Pos2};
 
     fn editor() -> (Editor, Shared) {
@@ -1091,7 +1091,7 @@ mod tests {
         let view = ed.view().expect("the canvas view");
         // Just left of the text: on its dashed frame, outside the letters.
         let at = view.to_screen(pos2(500.0, 500.0)) + vec2(-6.0, 6.0);
-        let (_, p) = crate::skins::takeui::testing::drive_editor(
+        let (_, p) = crate::views::testing::drive_editor(
             &mut ed,
             &mut shared,
             SIZE,
@@ -1238,10 +1238,10 @@ x"),
         // Three notches, each one frame of zoom and a frame without.
         let (mut ed, mut shared) = editor();
         // The styled picture is the largest mesh (it may run past the canvas once zoomed).
-        let picture = |blocks: &[crate::skins::takeui::testing::Block]| {
+        let picture = |blocks: &[crate::views::testing::Block]| {
             blocks
                 .iter()
-                .filter(|(_, c)| *c == crate::skins::takeui::testing::MESH)
+                .filter(|(_, c)| *c == crate::views::testing::MESH)
                 .map(|(r, _)| *r)
                 .max_by(|a, b| a.area().total_cmp(&b.area()))
                 .expect("the picture")
@@ -1291,7 +1291,7 @@ x"),
             modifiers: Modifiers::NONE,
         };
         let at = pos2(480.0, 450.0);
-        let (_, p) = crate::skins::takeui::testing::drive_editor(
+        let (_, p) = crate::views::testing::drive_editor(
             &mut ed,
             &mut shared,
             SIZE,
@@ -1299,7 +1299,7 @@ x"),
             vec![vec![Event::PointerMoved(at)], vec![space(true)], vec![]],
         );
         assert_eq!(p.cursor, egui::CursorIcon::Grab, "Space over the picture");
-        let (_, p) = crate::skins::takeui::testing::drive_editor(
+        let (_, p) = crate::views::testing::drive_editor(
             &mut ed,
             &mut shared,
             SIZE,
@@ -1447,7 +1447,7 @@ x"),
         let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
         let label = panel_text(&painted, tr(Msg::Opacity));
         let at = |x: f32| pos2(label.left() + 96.0 + x, label.center().y);
-        let (_, p) = crate::skins::takeui::testing::drive_editor(
+        let (_, p) = crate::views::testing::drive_editor(
             &mut ed,
             &mut shared,
             SIZE,

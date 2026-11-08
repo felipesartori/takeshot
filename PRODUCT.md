@@ -37,7 +37,7 @@ Instant capture with in-place annotation combined with a presentation editor (ba
 ## Brand Commitments
 
 - Product name: Takeshot. Needs a logo and app icon in every format (Windows .ico, macOS .icns, Linux PNG set, tray icons for light and dark).
-- Design system based on TakeFlow's frontend: shadcn/ui neutral tokens, Roboto, 8px radius. Two complete, switchable themes, each with light, dark and system modes: **TakeUI** (TakeFlow family: purple `#8D43B1` actions, green `#3FCC59` for active, pill top navigation, own title bar) and **Coral UI** (own identity: coral `#FF6B47` actions with dark text, sidebar, its own slim title bar). A theme changes palette, brand mark and layout; every feature must exist in both.
+- Design system based on TakeFlow's frontend: shadcn/ui neutral tokens, Roboto, 8px radius. Two switchable themes over one layout (pill top navigation, own title bar), each with light, dark and system modes: **TakeUI** (TakeFlow family: purple `#8D43B1` actions, green `#3FCC59` for active, selection ring) and **Coral UI** (own identity: coral `#FF6B47` actions with dark text, crop-tick selection marks, the active tool filled in coral, its own mark and lowercase "takeshot"). A theme changes palette, brand mark and name and the look of a few components; every function stays in the same place in both.
 - The executable carries the TakeUI icon; window, taskbar and tray icons follow the active theme.
 - Public repository `takeflow-oficial/takeshot`, AGPL-3.0-or-later, copyright Takeflow Sistemas. No "inspired by" credits in the app or README.
 - Professional and modern, smooth controls without stutter, very little animation. Hover changes color only, never size.

@@ -1,4 +1,4 @@
-//! Component kit shared by both skins: every widget keeps a fixed size and only changes colour on hover.
+//! Component kit shared by both themes: every widget keeps a fixed size and only changes colour on hover.
 
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::icon;

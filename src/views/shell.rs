@@ -1,4 +1,4 @@
-//! TakeUI's main window: the title bar (mark, page pills, PrtSc status, light and dark, About and
+//! The main window: the title bar (mark, page pills, PrtSc status, light and dark, About and
 //! the window buttons) over a rounded content panel, as in "A · Janela principal" of the design.
 
 use crate::Shared;
@@ -116,12 +116,12 @@ fn title_bar(
 #[cfg(test)]
 mod tests {
     use crate::screens::home::{Home, MainAction};
-    use crate::skins::takeui::testing::{click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::ui::chrome::BAR_HEIGHT;
     use crate::ui::i18n::{Msg, every};
     use crate::ui::icon::{Ico, glyph};
     use crate::ui::tokens::UiMode;
+    use crate::views::testing::{click, content_box, painted_at, run, run_painted};
 
     #[test]
     fn the_title_bar_matches_the_design() {

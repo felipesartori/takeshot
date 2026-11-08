@@ -1,4 +1,4 @@
-//! TakeUI's capture: the main bar under the area (tools, undo, redo, pin, save, copy, Edit,
+//! The capture's bars: the main bar under the area (tools, undo, redo, pin, save, copy, Edit,
 //! close), the options bar under it for a drawing tool or a selected object, and the hint before
 //! an area is chosen, as in "Captura (PrtSc) · escuro". Behaviour is in `screens::overlay`.
 
@@ -309,8 +309,8 @@ mod tests {
     use crate::engine::model::{Ann, Shape, Tool};
     use crate::screens::editor::tool_name;
     use crate::screens::overlay::{CaptureAction, Overlay};
-    use crate::skins::takeui::testing::{click, run_capture};
     use crate::ui::i18n::{Lang, Msg, lang, set_lang, t as tr};
+    use crate::views::testing::{click, run_capture};
     use egui::{Rect, pos2};
 
     /// The 1600 x 900 sample with the area (100,100)-(900,700) and a filled rectangle in it.

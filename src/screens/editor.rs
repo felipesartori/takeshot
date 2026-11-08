@@ -1,6 +1,6 @@
 //! Editor: the captured picture on a styled background, with drawing tools and export. The state,
 //! what the user asks for (`EditorAction`, `Editor::apply`) and the canvas (zoom, pan, drawing,
-//! keys) live here for both skins; a skin draws the bars and panels.
+//! keys) live here; `views::editor` draws the bars and panels in either theme.
 
 use crate::engine::annotator::{Annotator, View, text_measure};
 use crate::engine::cursor::{self, Area, CursorCtx};
@@ -110,7 +110,7 @@ pub enum PanelTab {
     Style,
 }
 
-/// What the user asked for in the editor; a skin returns these and `Editor::apply` carries them out.
+/// What the user asked for in the editor; the editor view returns these and `Editor::apply` carries them out.
 #[derive(Clone, PartialEq, Debug)]
 pub enum EditorAction {
     Undo,
@@ -531,7 +531,7 @@ impl Editor {
         ))
     }
 
-    /// One frame of the editor: the skin draws the bars and panels and calls `canvas` for the
+    /// One frame of the editor: the view draws the bars and panels and calls `canvas` for the
     /// picture; what the user asked for is carried out here, and the discard question shows when
     /// a close waits on it.
     pub fn ui(
@@ -558,7 +558,7 @@ impl Editor {
         }
         shared.logo.sync(&ctx, &shared.settings.watermark);
         crate::ui::chrome::adopt_window(EDITOR_TITLE);
-        let acts = crate::skins::editor(ui, t, self, shared);
+        let acts = crate::views::editor(ui, t, self, shared);
         let mut switch = Switch::None;
         for a in acts {
             if let s @ Switch::Close = self.apply(a, &ctx, Some(frame), shared) {
@@ -597,7 +597,7 @@ impl Editor {
 
     /// The picture on its canvas, filling `ui`'s rect: zoom (Ctrl+wheel, Ctrl+0 fits, Ctrl+1 is
     /// 100 %), pan (Space+drag or the middle button), drawing and selecting, the pointer, and the
-    /// editor's keys. Shared by both skins; returns what the keys asked for.
+    /// editor's keys. Returns what the keys asked for.
     pub fn canvas(&mut self, ui: &mut Ui, t: &Tokens, shared: &mut Shared) -> Vec<EditorAction> {
         let ctx = ui.ctx().clone();
         let mut acts = Vec::new();

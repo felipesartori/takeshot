@@ -1,4 +1,4 @@
-//! TakeUI's Estilo: the live preview with the direct-copy choice under it, and the style controls
+//! Estilo: the live preview with the direct-copy choice under it, and the style controls
 //! in collapsible sections on the right, as in "Estilo · escuro" of the design. `controls` is meant
 //! for the editor's Style tab too (plan 5b); the current editor still draws its own panel.
 
@@ -474,10 +474,10 @@ pub fn controls(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<Mai
 #[cfg(test)]
 mod tests {
     use crate::screens::home::Home;
-    use crate::skins::takeui::testing::{MESH, click, content_box, painted_at, run, run_painted};
     use crate::system::instance::Page;
     use crate::system::settings::QuickStyle;
     use crate::ui::i18n::{Lang, Msg, every, lang, set_lang};
+    use crate::views::testing::{MESH, click, content_box, painted_at, run, run_painted};
     use egui::vec2;
 
     #[test]

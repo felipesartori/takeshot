@@ -1,4 +1,4 @@
-//! Design system shared by both skins: embedded assets, tokens, translations, icons, style and components.
+//! Design system shared by both themes: embedded assets, tokens, translations, icons, style and components.
 
 pub mod assets;
 
