@@ -249,10 +249,11 @@ impl Overlay {
         Switch::ToEditor(Box::new(Editor::new(ctx, base, doc, shared)))
     }
 
+    /// One frame of the capture. `frame` parents the save dialog when there is one.
     pub fn ui(
         &mut self,
         ui: &mut Ui,
-        frame: &eframe::Frame,
+        frame: Option<&eframe::Frame>,
         t: &Tokens,
         shared: &mut Shared,
     ) -> Switch {
@@ -366,7 +367,7 @@ impl Overlay {
         // ---------------- bars and hint, drawn by the skin
         let mut switch = Switch::None;
         for a in crate::skins::capture(ui, t, self, shared, screen) {
-            let s = self.apply(a, &ctx, Some(frame), shared);
+            let s = self.apply(a, &ctx, frame, shared);
             if !matches!(s, Switch::None) {
                 switch = s;
             }
@@ -661,12 +662,17 @@ impl Overlay {
         &mut self,
         ui: &mut Ui,
         ctx: &egui::Context,
-        frame: &eframe::Frame,
+        frame: Option<&eframe::Frame>,
         shared: &mut Shared,
         pointer: Option<Pos2>,
         view: &View,
     ) -> Option<Switch> {
         let cmd = Modifiers::COMMAND;
+        // One Esc closes the capture at any stage; a text being typed takes it first, to end
+        // the text.
+        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            return Some(Switch::Close);
+        }
         if self.an.handle_history_keys(ui) {
             self.an.sync_options(&mut shared.settings.draw);
         }
@@ -680,7 +686,7 @@ impl Overlay {
                 return Some(self.act_copy(shared));
             }
             if ui.input_mut(|i| i.consume_key(cmd, Key::S)) {
-                return Some(self.act_save(Some(frame), shared));
+                return Some(self.act_save(frame, shared));
             }
             if ui.input_mut(|i| i.consume_key(cmd, Key::T)) {
                 return Some(self.act_pin(shared));
@@ -693,13 +699,6 @@ impl Overlay {
         }
         if ui.input_mut(|i| i.consume_key(cmd, Key::X)) {
             return Some(Switch::Close);
-        }
-        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-            if self.an.tool != Tool::Select && self.sel.is_some() {
-                self.an.set_tool(Tool::Select, &mut shared.settings.draw);
-            } else {
-                return Some(Switch::Close);
-            }
         }
         if self.sel.is_none() && ui.input(|i| i.key_pressed(Key::C) && !i.modifiers.any()) {
             if let Some(p) = pointer {
@@ -1165,6 +1164,88 @@ mod tests {
         assert!(!o.bars_shown());
         o.drag = Drag::NewSel(pos2(10.0, 10.0));
         assert!(!o.bars_shown());
+    }
+
+    /// Full frames of the capture (its own canvas, bars and keys) on the 1600 x 900 sample;
+    /// returns the last switch that was not `None`.
+    fn ui_frames(o: &mut Overlay, sh: &mut Shared, events: Vec<Vec<egui::Event>>) -> Switch {
+        let ctx = egui::Context::default();
+        sh.fonts.install(&ctx);
+        let t = crate::ui::tokens::tokens(crate::ui::tokens::ThemeId::TakeUi, true);
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 900.0));
+        let mut last = Switch::None;
+        for (i, ev) in [vec![], vec![]].into_iter().chain(events).enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(0.05 * i as f64),
+                events: ev,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                let s = o.ui(ui, None, &t, sh);
+                if !matches!(s, Switch::None) {
+                    last = s;
+                }
+            })
+            .textures_delta
+            .clear();
+        }
+        last
+    }
+
+    fn esc() -> egui::Event {
+        egui::Event::Key {
+            key: Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn one_esc_closes_the_capture_at_any_stage() {
+        let ctx = egui::Context::default();
+        // A drawing tool in hand.
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Rect);
+        assert!(matches!(
+            ui_frames(&mut o, &mut sh, vec![vec![esc()]]),
+            Switch::Close
+        ));
+        // An object selected with Select.
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Select);
+        let id = o.an.doc.objs()[0].id;
+        o.an.doc.select(Some(id), false);
+        assert!(matches!(
+            ui_frames(&mut o, &mut sh, vec![vec![esc()]]),
+            Switch::Close
+        ));
+        // No area yet.
+        let mut sh = shared();
+        let mut o = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh);
+        assert!(matches!(
+            ui_frames(&mut o, &mut sh, vec![vec![esc()]]),
+            Switch::Close
+        ));
+    }
+
+    #[test]
+    fn esc_while_typing_only_ends_the_text() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Text);
+        o.an.draft = Some(crate::engine::annotator::TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: "Pico".into(),
+            started: 0.0,
+        });
+        let n = o.an.doc.objs().len();
+        let s = ui_frames(&mut o, &mut sh, vec![vec![esc()]]);
+        assert!(matches!(s, Switch::None), "the capture stays");
+        assert!(o.an.draft.is_none());
+        assert_eq!(o.an.doc.objs().len(), n + 1, "the text is kept");
     }
 
     #[test]

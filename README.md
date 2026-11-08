@@ -77,7 +77,7 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 | `Enter` ou `Ctrl+E` | Abrir no editor |
 | `Ctrl+T` | Fixar na tela |
 | `Ctrl+Z` / `Ctrl+Y` ou `Ctrl+Shift+Z` | Desfazer / refazer |
-| `Esc` | Limpar a seleção de objetos, depois voltar para Selecionar, depois fechar a captura |
+| `Esc` | Fechar a captura (digitando um texto, só encerra o texto); no editor, limpar a seleção de objetos |
 | `Ctrl+W` | Fechar o editor (pergunta se há mudanças não exportadas) |
 | `Ctrl+0` / `Ctrl+1` / `Ctrl+=` / `Ctrl+-` | Editor: ajustar à janela / 100 % / aproximar / afastar |
 | espaço + arrastar | Editor: mover a imagem ampliada |

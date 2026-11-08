@@ -370,7 +370,7 @@ impl eframe::App for App {
             Mode::Overlay(o) => {
                 let t = self.shared.tokens(ctx.system_theme());
                 skins::begin_frame(&ctx, &t);
-                o.ui(ui, frame, &t, &mut self.shared)
+                o.ui(ui, Some(frame), &t, &mut self.shared)
             }
             Mode::Editor(e) => {
                 let t = self.shared.tokens(ctx.system_theme());
