@@ -67,6 +67,7 @@ Editor and capture share one behaviour:
 ## Tools
 
 - `scripts/dev.sh [takeshot arguments]`: live preview. Rebuilds into `target/dev-watch` and reopens the window whenever `src/`, `assets/` or `Cargo.toml` change (default `--page componentes`).
+- Installers: `cargo-packager` 0.11.8 (`cargo install cargo-packager --version 0.11.8 --locked`) reads `[package.metadata.packager]` in `Cargo.toml`. On Windows, `cargo build --release` then `cargo packager --release --formats nsis,wix`; the NSIS template is `packaging/windows/installer.nsi` (cargo-packager's, installing per user under `%LOCALAPPDATA%\Programs` and removing the login entry on uninstall). `scripts/linux-packages.sh` builds the deb, AppImage and tar.gz in the CI image and prints the libraries the binary needs; `scripts/linux-smoke.sh` opens them in clean Ubuntu containers (X11 and Wayland) and saves what they drew. CI builds every installer on each tag (`.github/workflows/build.yml`); `docs/testing-macos.md` is the manual check for the Mac.
 - `cargo run --example brand`: renders `assets/brand/*.svg` into the PNGs, `takeshot.ico` and `Takeshot.icns`. Run it after changing an SVG and commit the outputs; `build.rs` embeds `takeshot.ico` in the Windows executable.
 
 ## Git

@@ -57,6 +57,32 @@ template = "packaging/windows/installer.nsi"
 languages = ["English", "PortugueseBR"]
 appdata-paths = ["$APPDATA/takeshot", "$LOCALAPPDATA/takeshot"]
 
+# What `dpkg-shlibdeps` finds (scripts/linux-packages.sh), plus what is loaded at run time: EGL and GL
+# (glow), xkbcommon, X11 and Wayland (winit), and the tray's AppIndicator.
+[package.metadata.packager.deb]
+section = "graphics"
+depends = [
+  "libc6 (>= 2.39)",
+  "libgcc-s1",
+  "libgtk-3-0t64 | libgtk-3-0",
+  "libglib2.0-0t64 | libglib2.0-0",
+  "libgdk-pixbuf-2.0-0",
+  "libgbm1",
+  "libxcb1",
+  "libegl1",
+  "libgl1",
+  "libxkbcommon0",
+  "libxkbcommon-x11-0",
+  "libx11-6",
+  "libxcursor1",
+  "libxrandr2",
+  "libxi6",
+  "libwayland-client0",
+  "libwayland-cursor0",
+  "libwayland-egl1",
+  "libayatana-appindicator3-1 | libappindicator3-1",
+]
+
 [package.metadata.packager.macos]
 minimum-system-version = "11.0"
 info-plist-path = "packaging/macos/Info.plist"
