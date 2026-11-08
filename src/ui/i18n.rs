@@ -225,6 +225,7 @@ pub enum Msg {
     KeyInUsePriority,
     KeyInvalid,
     KeyRefused,
+    ShowWatermark,
     MinimizeWindow,
     MaximizeWindow,
     RestoreWindow,
@@ -503,6 +504,7 @@ fn en(m: Msg) -> &'static str {
         }
         Msg::KeyInvalid => "{0} can't be a shortcut. Pick another combination.",
         Msg::KeyRefused => "{0} couldn't be set: the system refused it.",
+        Msg::ShowWatermark => "Show watermark",
         Msg::MinimizeWindow => "Minimize",
         Msg::MaximizeWindow => "Maximize",
         Msg::RestoreWindow => "Restore",
@@ -764,6 +766,7 @@ fn pt(m: Msg) -> &'static str {
         }
         Msg::KeyInvalid => "{0} não pode ser um atalho. Escolha outra combinação.",
         Msg::KeyRefused => "{0} não pôde ser usado: o sistema recusou.",
+        Msg::ShowWatermark => "Mostrar marca d'água",
         Msg::MinimizeWindow => "Minimizar",
         Msg::MaximizeWindow => "Maximizar",
         Msg::RestoreWindow => "Restaurar",

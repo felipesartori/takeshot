@@ -280,41 +280,6 @@ pub fn swatch(ui: &mut Ui, t: &Tokens, fill: Swatch, selected: bool) -> Response
     resp
 }
 
-/// A collapsible section's header, a 20 px text row over the full width: a 15 px chevron and the
-/// title (14) 23 px in, as in "Estilo · escuro". A click toggles `open`.
-pub fn section_header(ui: &mut Ui, t: &Tokens, title: &str, open: &mut bool) -> Response {
-    let w = ui.available_width().max(120.0);
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
-    if resp.clicked() {
-        *open = !*open;
-    }
-    let h = hover_mix(ui, &resp);
-    let p = ui.painter();
-    let fg = mix(t.text, t.accent, h * 0.5);
-    let chevron = if *open {
-        Ico::ChevronDown
-    } else {
-        Ico::ChevronRight
-    };
-    draw_icon(
-        p,
-        pos2(rect.left() + 7.5, rect.center().y),
-        chevron,
-        15.0,
-        t.muted,
-    );
-    draw_text(
-        p,
-        pos2(rect.left() + 23.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        title,
-        14.0,
-        Weight::Medium,
-        dim(fg, ui),
-    );
-    resp
-}
-
 /// Nine 28 × 20 cells, three by three, each with a dot at its anchor; returns the cell clicked.
 pub fn anchor_grid(ui: &mut Ui, t: &Tokens, selected: Option<usize>) -> Option<usize> {
     let (rect, _) = ui.allocate_exact_size(
@@ -720,23 +685,26 @@ pub fn step_glyph(p: &Painter, center: egui::Pos2, size: f32, fg: Color32) {
     );
 }
 
-/// The editor panel's tabs: full width, 29 px on `raised`, split in equal parts 2 px inside;
-/// the open one sits on `seg_sel`.
-pub fn tab_bar<T: PartialEq + Copy>(
+/// Underlined tabs across the full width, 40 px: the labels in equal parts, the open one in the
+/// text colour over a 2 px line in the accent, the others muted; a 1 px line runs under them all.
+pub fn underline_tabs<T: PartialEq + Copy>(
     ui: &mut Ui,
     t: &Tokens,
     value: &mut T,
     items: &[(T, &str)],
 ) -> Response {
     let w = ui.available_width();
-    let (rect, mut resp) = ui.allocate_exact_size(vec2(w, 29.0), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(8), t.raised);
-    let part = (w - 4.0) / items.len().max(1) as f32;
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
+    ui.painter().rect_filled(
+        Rect::from_min_max(pos2(rect.left(), rect.bottom() - 1.0), rect.max),
+        0.0,
+        t.border,
+    );
+    let part = w / items.len().max(1) as f32;
     for (i, (v, s)) in items.iter().enumerate() {
         let r = Rect::from_min_size(
-            pos2(rect.left() + 2.0 + i as f32 * part, rect.top() + 2.0),
-            vec2(part, 25.0),
+            pos2(rect.left() + i as f32 * part, rect.top()),
+            vec2(part, 40.0),
         );
         let item = ui.interact(r, resp.id.with(i), Sense::click());
         let h = hover_mix(ui, &item);
@@ -749,12 +717,16 @@ pub fn tab_bar<T: PartialEq + Copy>(
         let sel = *value == *v;
         let p = ui.painter();
         if sel {
-            p.rect_filled(r, CornerRadius::same(6), t.seg_sel);
+            p.rect_filled(
+                Rect::from_min_max(pos2(r.left(), r.bottom() - 2.0), r.max),
+                0.0,
+                t.accent,
+            );
         }
         let fg = if sel { t.text } else { mix(t.muted, t.text, h) };
         draw_text(
             p,
-            r.center(),
+            pos2(r.center().x, r.center().y - 1.0),
             Align2::CENTER_CENTER,
             s,
             13.0,
@@ -1570,6 +1542,49 @@ mod tests {
     }
 
     #[test]
+    fn the_open_tab_is_underlined_in_the_accent() {
+        for theme in [ThemeId::TakeUi, ThemeId::Coral] {
+            let t = tokens(theme, true);
+            let mut blocks = Vec::new();
+            let ctx = egui::Context::default();
+            crate::system::fonts::FontLib::load().install(&ctx);
+            crate::ui::style::apply(&ctx, &t);
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 200.0))),
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                let mut tab = 1;
+                underline_tabs(ui, &t, &mut tab, &[(0, "A"), (1, "B"), (2, "C")]);
+            });
+            full.textures_delta.clear();
+            fn walk(s: &egui::Shape, out: &mut Vec<(Rect, Color32)>) {
+                match s {
+                    egui::Shape::Rect(r) => out.push((r.rect, r.fill)),
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                    _ => {}
+                }
+            }
+            full.shapes.iter().for_each(|c| walk(&c.shape, &mut blocks));
+            let line = blocks
+                .iter()
+                .find(|(r, c)| *c == t.accent && r.height() == 2.0)
+                .map(|(r, _)| *r)
+                .expect("the underline");
+            let third = blocks
+                .iter()
+                .filter(|(r, _)| r.height() == 1.0)
+                .map(|(r, _)| r.width())
+                .fold(0.0, f32::max)
+                / 3.0;
+            assert!(
+                (line.center().x - 1.5 * third).abs() <= 1.0,
+                "{theme:?}: under the middle tab: {line:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_toast_follows_the_theme() {
         for theme in [ThemeId::TakeUi, ThemeId::Coral] {
             for dark in [true, false] {
@@ -1888,12 +1903,12 @@ mod tests {
                 34.0,
             ),
             (
-                "tab_bar",
+                "underline_tabs",
                 Box::new(|ui| {
                     let mut tab = 0;
-                    tab_bar(ui, &t, &mut tab, &[(0, "Object"), (1, "Style")])
+                    underline_tabs(ui, &t, &mut tab, &[(0, "Object"), (1, "Style")])
                 }),
-                29.0,
+                40.0,
             ),
             (
                 "bar_button icon",
@@ -1922,17 +1937,10 @@ mod tests {
     }
 
     #[test]
-    fn sections_and_swatches_keep_their_size_on_hover() {
+    fn swatches_keep_their_size_on_hover() {
         let t = tokens(ThemeId::TakeUi, true);
         let stops = crate::engine::presets::PRESETS[0].stops;
         let cases: Vec<(&str, Widget)> = vec![
-            (
-                "section_header",
-                Box::new(|ui| {
-                    let mut open = true;
-                    section_header(ui, &t, "Frame", &mut open)
-                }),
-            ),
             (
                 "swatch",
                 Box::new(|ui| swatch(ui, &t, Swatch::Gradient(stops, 135.0), false)),

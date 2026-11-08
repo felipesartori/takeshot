@@ -483,14 +483,14 @@ fn panel(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &mut Shared, acts: &mut V
     let r = ui.max_rect();
     ui.painter()
         .vline(r.left() + 0.5, r.y_range(), Stroke::new(1.0, t.border));
-    let tabs = Rect::from_min_size(r.min + vec2(12.0, 12.0), vec2(r.width() - 24.0, 29.0));
+    let tabs = Rect::from_min_size(r.min + vec2(12.0, 8.0), vec2(r.width() - 24.0, 40.0));
     let mut tab = ed.tab();
     ui.scope_builder(UiBuilder::new().max_rect(tabs), |ui| {
         let items = [
             (PanelTab::Object, tr(Msg::ObjectTab)),
             (PanelTab::Style, tr(Msg::Style)),
         ];
-        if kit::tab_bar(ui, t, &mut tab, &items).changed() {
+        if kit::underline_tabs(ui, t, &mut tab, &items).changed() {
             acts.push(EditorAction::Tab(tab));
         }
     });
@@ -521,7 +521,9 @@ fn panel(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &mut Shared, acts: &mut V
 
 fn style_page(ui: &mut Ui, t: &Tokens, shared: &mut Shared, acts: &mut Vec<EditorAction>) {
     let mut main = Vec::new();
-    if super::style::controls(ui, t, shared, &mut main) {
+    let tab = super::style::tabs(ui, t);
+    ui.add_space(4.0);
+    if super::style::controls(ui, t, shared, &mut main, tab) {
         acts.push(EditorAction::StyleChanged);
     }
     for a in main {
