@@ -6,7 +6,7 @@ Takeshot is a screenshot tool written in Rust with egui: capture with PrtSc, ann
 
 Takeshot ships two themes, **TakeUI** and **Coral UI**, each with light, dark and system modes, over one layout. A theme changes the colours (`Tokens`), the brand mark and name (`ui::brand`) and the look of a few kit components (selection marks, the active tool, the switch knob, the slider line); it never moves a function. Parity means a visible change looks right in all four looks: TakeUI and Coral UI, light and dark. Use the `implementar-nos-dois-temas` skill for any change a user can see.
 
-In `design/takeshot-ui.fig`, page A holds the layout and TakeUI's look; Coral UI's colours and components are in the "B · Design system" frame of page B (page B's screens explore a layout the app does not use).
+In `design/takeshot-ui.fig`, page A holds the layout and TakeUI's look, and page "C · Propostas (2026-11-08)" the approved changes to that layout; Coral UI's colours and components are in the "B · Design system" frame of page B (page B's screens explore a layout the app does not use).
 
 ## Layout
 
