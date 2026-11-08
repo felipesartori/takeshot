@@ -235,8 +235,8 @@ pub struct Editor {
     asking_close: bool,
     /// The resident's Quit waits for this editor's answer.
     quit_reply: Option<std::sync::mpsc::Sender<bool>>,
-    /// The Quit's question is open (the window came to the front for it once).
-    asking_quit: Option<bool>,
+    /// The Quit's question is open.
+    asking_quit: bool,
     /// Set once the user chose to close, so the window's own close request goes through.
     closing: bool,
 }
@@ -273,7 +273,7 @@ impl Editor {
             saved_rev,
             asking_close: false,
             quit_reply: None,
-            asking_quit: None,
+            asking_quit: false,
             closing: false,
         }
     }
@@ -407,28 +407,33 @@ impl Editor {
 
     /// The resident's Quit reached this editor: with no unsaved edits it answers yes and closes;
     /// otherwise it asks its user (Discard, Cancel, Save and close) and answers then.
-    pub fn quit_requested(&mut self, reply: std::sync::mpsc::Sender<bool>) -> Switch {
+    pub fn quit_requested(&mut self, reply: std::sync::mpsc::Sender<bool>) -> bool {
         if self.unsaved() {
             self.quit_reply = Some(reply);
-            self.asking_quit = Some(false);
-            Switch::None
+            self.asking_quit = true;
+            true
         } else {
             let _ = reply.send(true);
-            self.closing = true;
-            Switch::Close
+            false
         }
     }
 
-    /// Carries out the answer to the Quit's question: Cancel keeps the editor (and everything
-    /// else) open; Save and close closes once the picture is saved.
+    /// Every window agreed to the Quit: the next close goes through, changes and all.
+    pub fn close_for_quit(&mut self) {
+        self.closing = true;
+    }
+
+    /// Answers the Quit's question: Cancel keeps the editor (and everything else) open; Discard
+    /// agrees; Save and close agrees once the picture is saved. The editor closes only when every
+    /// window has agreed (`close_for_quit`).
     pub fn answer_quit(
         &mut self,
         choice: QuitChoice,
         frame: Option<&eframe::Frame>,
         shared: &mut Shared,
-    ) -> Switch {
-        self.asking_quit = None;
-        let closes = match choice {
+    ) {
+        self.asking_quit = false;
+        let agrees = match choice {
             QuitChoice::Cancel => false,
             QuitChoice::Discard => true,
             QuitChoice::SaveAndClose => {
@@ -437,13 +442,7 @@ impl Editor {
             }
         };
         if let Some(tx) = self.quit_reply.take() {
-            let _ = tx.send(closes);
-        }
-        if closes {
-            self.closing = true;
-            Switch::Close
-        } else {
-            Switch::None
+            let _ = tx.send(agrees);
         }
     }
 
@@ -651,12 +650,7 @@ impl Editor {
                 }
             }
         }
-        if let Some(shown) = self.asking_quit {
-            if !shown {
-                // The question waits behind other windows otherwise.
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                self.asking_quit = Some(true);
-            }
+        if self.asking_quit {
             let answer = kit::confirm_dialog(
                 &ctx,
                 t,
@@ -675,10 +669,8 @@ impl Editor {
                 ],
                 QuitChoice::Cancel,
             );
-            if let Some(choice) = answer
-                && let s @ Switch::Close = self.answer_quit(choice, Some(frame), shared)
-            {
-                switch = s;
+            if let Some(choice) = answer {
+                self.answer_quit(choice, Some(frame), shared);
             }
         }
         switch
@@ -1149,13 +1141,14 @@ mod tests {
     }
 
     #[test]
-    fn a_quit_request_closes_a_clean_editor_at_once() {
+    fn a_clean_editor_agrees_to_quit_without_asking() {
         let (mut ed, _shared) = editor();
         // Saved: a picture never saved counts as unsaved, as for the window's X.
         ed.saved_rev = Some(ed.an.doc.revision());
         let (tx, rx) = std::sync::mpsc::channel();
-        assert!(matches!(ed.quit_requested(tx), Switch::Close));
+        assert!(!ed.quit_requested(tx), "nothing to ask");
         assert_eq!(rx.try_recv(), Ok(true));
+        assert!(!ed.closing, "it closes only when the resident says so");
     }
 
     #[test]
@@ -1172,14 +1165,13 @@ mod tests {
                 filled: false,
             });
             let (tx, rx) = std::sync::mpsc::channel();
-            assert!(
-                matches!(ed.quit_requested(tx), Switch::None),
-                "it asks first"
-            );
+            assert!(ed.quit_requested(tx), "it asks first");
             assert!(rx.try_recv().is_err(), "no answer before the user's");
-            let sw = ed.answer_quit(choice, None, &mut shared);
+            ed.answer_quit(choice, None, &mut shared);
             assert_eq!(rx.try_recv(), Ok(closes), "{choice:?}");
-            assert_eq!(matches!(sw, Switch::Close), closes, "{choice:?}");
+            assert!(!ed.closing, "{choice:?}: it waits for the others' answers");
+            ed.close_for_quit();
+            assert!(ed.closing, "then closes, changes and all");
         }
     }
 

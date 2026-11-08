@@ -1,8 +1,8 @@
 //! Single instance: the first Takeshot process owns a local socket; a second launch asks it to show a page and exits.
 //! Captures are one at a time too: a capture whose selection is on screen holds a file lock.
 //! Quit: the editors, pinned pictures and the capture register with the resident and listen on a
-//! socket of their own, so the tray's Quit can ask each to close (an editor with changes asks its
-//! user first, and a Cancel keeps everything open).
+//! socket of their own, so the tray's Quit can ask each whether it may close (an editor with
+//! changes asks its user first) and then tell all to close, or to stay after a Cancel.
 
 #[cfg(target_os = "macos")]
 use interprocess::local_socket::GenericFilePath;
@@ -224,58 +224,102 @@ pub fn register_child(base: &str, pid: u32) {
 /// How a child answered the resident's Quit.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum QuitAnswer {
-    /// It closed (or was gone already).
-    Closed,
+    /// It may close (or was gone already).
+    Agreed,
     /// Its user chose Cancel: everything stays open.
     Cancelled,
 }
 
-/// Listens on `name` for the resident's Quit, on a background thread: `on_quit` gets a sender for
-/// the answer (`true` closes, `false` cancels), which goes back once the user has chosen.
+/// Listens on `name` for the resident's Quit, on a background thread. A Quit comes in two steps:
+/// the question, where `on_ask` gets a sender for the answer (`true` agrees, `false` cancels) that
+/// goes back once the user has chosen; then, once every window has answered, the outcome, where
+/// `on_close` runs only if all agreed. Nothing closes on the question alone, so one Cancel keeps
+/// every window open.
 pub fn listen_for_quit(
     name: &str,
-    on_quit: impl Fn(std::sync::mpsc::Sender<bool>) + Send + Sync + 'static,
+    on_ask: impl Fn(std::sync::mpsc::Sender<bool>) + Send + Sync + 'static,
+    on_close: impl Fn() + Send + Sync + 'static,
 ) -> io::Result<()> {
     let listener = create(name, true)?;
-    let on_quit = Arc::new(on_quit);
+    let on_ask = Arc::new(on_ask);
+    let on_close = Arc::new(on_close);
     std::thread::Builder::new()
         .name("takeshot-quit".into())
         .spawn(move || {
             for conn in listener.incoming() {
-                let Ok(mut conn) = conn else {
+                let Ok(conn) = conn else {
+                    std::thread::sleep(Duration::from_millis(50));
                     continue;
                 };
-                let on_quit = on_quit.clone();
+                let (on_ask, on_close) = (on_ask.clone(), on_close.clone());
                 std::thread::spawn(move || {
+                    let mut reader = BufReader::new(conn);
                     let mut line = String::new();
-                    let mut reader = BufReader::new((&mut conn).take(16));
-                    if reader.read_line(&mut line).is_err() || line.trim() != "quit" {
+                    if (&mut reader).take(16).read_line(&mut line).is_err() || line.trim() != "quit"
+                    {
                         return;
                     }
                     let (tx, rx) = std::sync::mpsc::channel();
-                    on_quit(tx);
-                    let closes = rx.recv().unwrap_or(true);
-                    let _ = conn.write_all(if closes { b"closed\n" } else { b"cancel\n" });
-                    let _ = conn.flush();
+                    on_ask(tx);
+                    // An answer that never comes keeps the window open.
+                    let agrees = rx.recv().unwrap_or(false);
+                    let conn = reader.get_mut();
+                    let said = conn
+                        .write_all(if agrees { b"yes\n" } else { b"no\n" })
+                        .and_then(|_| conn.flush());
+                    if said.is_err() || !agrees {
+                        return;
+                    }
+                    line.clear();
+                    if (&mut reader).take(16).read_line(&mut line).is_ok() && line.trim() == "close"
+                    {
+                        on_close();
+                    }
                 });
             }
         })?;
     Ok(())
 }
 
-/// Asks the child listening on `name` to close and waits for its answer (its user may be
-/// choosing); a child that is gone, or goes while closing, counts as closed.
-pub fn ask_to_quit(name: &str) -> QuitAnswer {
+/// The resident's side of one child's Quit: its answer, and the line to tell it the outcome.
+pub struct QuitAsk {
+    pub answer: QuitAnswer,
+    conn: Option<Stream>,
+}
+
+impl QuitAsk {
+    /// Tells the child to close (`true`) or to stay.
+    pub fn finish(self, close: bool) {
+        if let Some(mut c) = self.conn {
+            let _ = c.write_all(if close { b"close\n" } else { b"stay\n" });
+            let _ = c.flush();
+        }
+    }
+}
+
+/// Asks the child listening on `name` whether it may close and waits for its answer (its user may
+/// be choosing); a child that is gone, or goes meanwhile, counts as agreeing.
+pub fn ask_to_quit(name: &str) -> QuitAsk {
+    let gone = QuitAsk {
+        answer: QuitAnswer::Agreed,
+        conn: None,
+    };
     let Ok(mut s) = connect(name) else {
-        return QuitAnswer::Closed;
+        return gone;
     };
     if s.write_all(b"quit\n").and_then(|_| s.flush()).is_err() {
-        return QuitAnswer::Closed;
+        return gone;
     }
+    let mut reader = BufReader::new(s);
     let mut line = String::new();
-    match BufReader::new(s).read_line(&mut line) {
-        Ok(_) if line.trim() == "cancel" => QuitAnswer::Cancelled,
-        _ => QuitAnswer::Closed,
+    let answer = match reader.read_line(&mut line) {
+        Ok(_) if line.trim() == "yes" => QuitAnswer::Agreed,
+        Ok(_) if line.trim() == "no" => QuitAnswer::Cancelled,
+        _ => return gone,
+    };
+    QuitAsk {
+        answer,
+        conn: Some(reader.into_inner()),
     }
 }
 
@@ -284,7 +328,7 @@ pub fn ask_to_quit(name: &str) -> QuitAnswer {
 pub enum QuitOutcome {
     /// A child has not answered yet.
     Waiting,
-    /// Every child closed: the resident quits.
+    /// Every child agreed: they close and the resident quits.
     Quit,
     /// A child's user chose Cancel: the resident stays.
     Stay,
@@ -316,6 +360,49 @@ impl QuitRound {
             (0, true) => QuitOutcome::Stay,
             _ => QuitOutcome::Waiting,
         }
+    }
+}
+
+/// A Quit under way: every child is asked at once, and only once all have answered is each told
+/// to close (all agreed) or to stay (one cancelled).
+pub struct QuitRun {
+    round: QuitRound,
+    answers: std::sync::mpsc::Receiver<QuitAsk>,
+    asks: Vec<QuitAsk>,
+}
+
+impl QuitRun {
+    /// Asks the children listening on `names`; `wake` runs as each answer comes in.
+    pub fn start(names: Vec<String>, wake: impl Fn() + Send + Sync + 'static) -> Self {
+        let (tx, answers) = std::sync::mpsc::channel();
+        let wake = Arc::new(wake);
+        for name in &names {
+            let (tx, name, wake) = (tx.clone(), name.clone(), wake.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(ask_to_quit(&name));
+                wake();
+            });
+        }
+        Self {
+            round: QuitRound::new(names.len()),
+            answers,
+            asks: Vec::new(),
+        }
+    }
+
+    /// Takes the answers that came in; once the outcome is known, tells every child.
+    pub fn poll(&mut self) -> QuitOutcome {
+        while let Ok(a) = self.answers.try_recv() {
+            self.round.answer(a.answer);
+            self.asks.push(a);
+        }
+        let out = self.round.outcome();
+        if out != QuitOutcome::Waiting {
+            for a in self.asks.drain(..) {
+                a.finish(out == QuitOutcome::Quit);
+            }
+        }
+        out
     }
 }
 
@@ -484,39 +571,122 @@ mod tests {
     }
 
     #[test]
-    fn a_child_answers_a_quit_request() {
-        for (closes, want) in [(true, QuitAnswer::Closed), (false, QuitAnswer::Cancelled)] {
-            let name = unique(if closes {
-                "child-closes"
-            } else {
-                "child-cancels"
-            });
-            listen_for_quit(&name, move |reply| {
-                let _ = reply.send(closes);
-            })
+    fn a_child_answers_then_closes_only_when_told() {
+        for (n, (agrees, close, closes)) in [
+            (true, true, true),
+            (true, false, false),
+            (false, false, false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = unique(&format!("child-{n}"));
+            let (closed, was_closed) = channel();
+            listen_for_quit(
+                &name,
+                move |reply| {
+                    let _ = reply.send(agrees);
+                },
+                move || {
+                    let _ = closed.send(());
+                },
+            )
             .unwrap();
-            assert_eq!(ask_to_quit(&name), want);
+            let ask = ask_to_quit(&name);
+            let want = if agrees {
+                QuitAnswer::Agreed
+            } else {
+                QuitAnswer::Cancelled
+            };
+            assert_eq!(ask.answer, want);
+            assert!(
+                was_closed.recv_timeout(Duration::from_millis(100)).is_err(),
+                "{n}: nothing closes on the question alone"
+            );
+            ask.finish(close);
+            assert_eq!(
+                was_closed.recv_timeout(Duration::from_millis(500)).is_ok(),
+                closes,
+                "{n}"
+            );
         }
-        // A child that is gone counts as closed.
-        assert_eq!(ask_to_quit(&unique("nobody")), QuitAnswer::Closed);
+        // A child that is gone counts as agreeing.
+        assert_eq!(ask_to_quit(&unique("nobody")).answer, QuitAnswer::Agreed);
+    }
+
+    /// A child listening as `name` that answers `agrees` after `wait`, and reports a close.
+    fn child(name: &str, agrees: bool, wait: Duration) -> std::sync::mpsc::Receiver<()> {
+        let (closed, was_closed) = channel();
+        listen_for_quit(
+            name,
+            move |reply| {
+                std::thread::spawn(move || {
+                    std::thread::sleep(wait);
+                    let _ = reply.send(agrees);
+                });
+            },
+            move || {
+                let _ = closed.send(());
+            },
+        )
+        .unwrap();
+        was_closed
+    }
+
+    fn settle(run: &mut QuitRun) -> QuitOutcome {
+        for _ in 0..200 {
+            match run.poll() {
+                QuitOutcome::Waiting => std::thread::sleep(Duration::from_millis(10)),
+                done => return done,
+            }
+        }
+        panic!("the quit never settled")
+    }
+
+    #[test]
+    fn a_cancel_keeps_every_window_open() {
+        // A clean child agrees at once; another asks its user, who cancels.
+        let (clean, asking) = (unique("run-clean"), unique("run-asking"));
+        let clean_closed = child(&clean, true, Duration::ZERO);
+        let asking_closed = child(&asking, false, Duration::from_millis(150));
+        let mut run = QuitRun::start(vec![clean, asking], || {});
+        assert_eq!(settle(&mut run), QuitOutcome::Stay);
+        assert!(
+            clean_closed
+                .recv_timeout(Duration::from_millis(300))
+                .is_err(),
+            "the clean window stays open too"
+        );
+        assert!(asking_closed.try_recv().is_err());
+    }
+
+    #[test]
+    fn when_all_agree_every_window_closes() {
+        let (a, b) = (unique("run-a"), unique("run-b"));
+        let a_closed = child(&a, true, Duration::ZERO);
+        let b_closed = child(&b, true, Duration::from_millis(100));
+        let mut run = QuitRun::start(vec![a, b, unique("run-gone")], || {});
+        assert_eq!(settle(&mut run), QuitOutcome::Quit);
+        assert!(a_closed.recv_timeout(Duration::from_millis(500)).is_ok());
+        assert!(b_closed.recv_timeout(Duration::from_millis(500)).is_ok());
     }
 
     #[test]
     fn a_quit_round_waits_for_every_child_and_any_cancel_keeps_all() {
         let mut round = QuitRound::new(3);
         assert_eq!(round.outcome(), QuitOutcome::Waiting);
-        round.answer(QuitAnswer::Closed);
+        round.answer(QuitAnswer::Agreed);
         round.answer(QuitAnswer::Cancelled);
         assert_eq!(
             round.outcome(),
             QuitOutcome::Waiting,
             "one still asking its user"
         );
-        round.answer(QuitAnswer::Closed);
+        round.answer(QuitAnswer::Agreed);
         assert_eq!(round.outcome(), QuitOutcome::Stay);
         let mut round = QuitRound::new(2);
-        round.answer(QuitAnswer::Closed);
-        round.answer(QuitAnswer::Closed);
+        round.answer(QuitAnswer::Agreed);
+        round.answer(QuitAnswer::Agreed);
         assert_eq!(round.outcome(), QuitOutcome::Quit);
         assert_eq!(
             QuitRound::new(0).outcome(),

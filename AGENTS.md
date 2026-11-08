@@ -53,7 +53,7 @@ Editor and capture share one behaviour:
 
 - Event sources (hotkeys, the PrtSc hook, the tray, a second launch) only send a `ResidentEvent` and request a repaint; `App::logic` drains them, so they act while no window is shown. On Windows and macOS the root viewport is an invisible host and the main window a child viewport; on Linux the root is the main window.
 - A capture whose selection is on screen holds `instance::CaptureSlot`; another `--capture` exits before grabbing the screen.
-- Editors, pinned pictures and the capture register with the resident (`instance::register_child`) and listen on a socket of their own (`listen_for_quit`). The tray's Quit asks each to close (`ask_to_quit`, `QuitRound`): an editor with unsaved edits asks its user, and one Cancel keeps everything open, the resident included.
+- Editors, pinned pictures and the capture register with the resident (`instance::register_child`) and listen on a socket of their own (`listen_for_quit`). The tray's Quit goes in two steps (`QuitRun`): it asks each whether it may close (an editor with unsaved edits asks its user), and only once all have answered tells them to close, or to stay when one cancelled, so one Cancel keeps everything open, the resident included. A child answers in `App::logic`, which runs while its window is minimized or hidden.
 - A borderless, rounded, transparent window on Windows needs `borderless::flatten_borderless`: egui-winit always asks winit for the undecorated shadow, which shows as a 1 px line across the top and a square shadow around the corners.
 
 ## Verify before calling work done

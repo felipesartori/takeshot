@@ -309,6 +309,8 @@ struct App {
     notice_area: egui::Rect,
     /// The resident's Quit, waiting for this window's answer (editors, pinned pictures, capture).
     quit_request: Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>,
+    /// Every window agreed to the Quit: this one closes.
+    quit_close: Arc<AtomicBool>,
 }
 
 impl App {
@@ -328,6 +330,39 @@ impl App {
         self.mode = Mode::Editor(e);
     }
 
+    /// The resident's Quit, answered here so a minimized or hidden window answers too (only
+    /// `logic` runs for those): an editor with changes comes to the front to ask its user; the
+    /// rest agree at once. Every window closes only once all have agreed.
+    fn answer_quit(&mut self, ctx: &egui::Context) {
+        use egui::ViewportCommand as C;
+        let root = egui::ViewportId::ROOT;
+        if let Some(reply) = self.quit_request.lock().ok().and_then(|mut q| q.take()) {
+            let asks = match &mut self.mode {
+                Mode::Editor(e) => e.quit_requested(reply),
+                _ => {
+                    let _ = reply.send(true);
+                    false
+                }
+            };
+            if asks {
+                ctx.send_viewport_cmd_to(root, C::Minimized(false));
+                ctx.send_viewport_cmd_to(root, C::Focus);
+                ctx.send_viewport_cmd_to(
+                    root,
+                    C::RequestUserAttention(egui::UserAttentionType::Informational),
+                );
+                ctx.request_repaint();
+            }
+        }
+        if self.quit_close.swap(false, Ordering::SeqCst) {
+            if let Mode::Editor(e) = &mut self.mode {
+                e.close_for_quit();
+            }
+            self.shared.settings.save();
+            ctx.send_viewport_cmd_to(root, C::Close);
+        }
+    }
+
     fn switch_to_notice(&mut self, ctx: &egui::Context, n: Box<notice::Notice>) {
         use egui::ViewportCommand as C;
         if !cfg!(target_os = "macos") {
@@ -343,6 +378,7 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.answer_quit(ctx);
         if let Mode::Resident {
             home,
             shell,
@@ -372,21 +408,6 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        // The resident's Quit: an editor with changes asks its user; the rest close.
-        let quit = self.quit_request.lock().ok().and_then(|mut q| q.take());
-        if let Some(reply) = quit {
-            let closes = match &mut self.mode {
-                Mode::Editor(e) => matches!(e.quit_requested(reply), Switch::Close),
-                _ => {
-                    let _ = reply.send(true);
-                    true
-                }
-            };
-            if closes {
-                self.shared.settings.save();
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        }
         let sw = match &mut self.mode {
             Mode::Home(h) => {
                 let t = self.shared.tokens(ctx.system_theme());
@@ -804,19 +825,25 @@ fn main() -> eframe::Result {
             };
             // A window of its own answers the resident's Quit.
             let quit_request = Arc::new(std::sync::Mutex::new(None));
+            let quit_close = Arc::new(AtomicBool::new(false));
             if screenshot.is_none()
                 && matches!(mode, Mode::Editor(_) | Mode::Pin(_) | Mode::Overlay(_))
             {
                 let base = system::instance::endpoint();
                 let pid = std::process::id();
-                let (slot, ctx) = (quit_request.clone(), ctx.clone());
+                let (slot, ask_ctx) = (quit_request.clone(), ctx.clone());
+                let (close, close_ctx) = (quit_close.clone(), ctx.clone());
                 let listening = system::instance::listen_for_quit(
                     &system::instance::child_endpoint(&base, pid),
                     move |reply| {
                         if let Ok(mut q) = slot.lock() {
                             *q = Some(reply);
                         }
-                        ctx.request_repaint();
+                        ask_ctx.request_repaint();
+                    },
+                    move || {
+                        close.store(true, Ordering::SeqCst);
+                        close_ctx.request_repaint();
                     },
                 );
                 if listening.is_ok() {
@@ -833,6 +860,7 @@ fn main() -> eframe::Result {
                 editor_window,
                 notice_area,
                 quit_request,
+                quit_close,
             }))
         }),
     );
