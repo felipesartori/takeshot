@@ -10,10 +10,7 @@ fn main() {
             .set("ProductName", "Takeshot")
             .set("FileDescription", "Takeshot")
             .set("CompanyName", "Takeflow Sistemas")
-            .set(
-                "LegalCopyright",
-                "Copyright (c) 2026-present Takeflow Sistemas",
-            );
+            .set("LegalCopyright", "Copyright (c) 2026 Takeflow Sistemas");
         res.compile().expect("embed Windows resources");
     }
 }

@@ -202,7 +202,7 @@ Contributions are welcome, by people and by AI agents alike: [AGENTS.md](AGENTS.
 
 ## License
 
-Copyright (c) 2026-present Takeflow Sistemas
+Copyright (c) 2026 Takeflow Sistemas
 
 Licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). Third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -348,6 +348,6 @@ Contribuições são bem-vindas, de pessoas e de agentes de IA: as regras para o
 
 ## Licença
 
-Copyright (c) 2026-present Takeflow Sistemas
+Copyright (c) 2026 Takeflow Sistemas
 
 Licenciado sob a [GNU Affero General Public License v3.0 ou posterior](LICENSE). Avisos de terceiros em [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
