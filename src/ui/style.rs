@@ -72,6 +72,11 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
         w.noninteractive.bg_stroke = Stroke::new(1.0, t.border);
 
         s.animation_time = 0.08;
+        // The spacing every window was measured with (egui's own is tighter).
+        s.spacing.item_spacing = egui::vec2(8.0, 8.0);
+        s.spacing.button_padding = egui::vec2(10.0, 5.0);
+        s.spacing.interact_size.y = 26.0;
+        s.spacing.slider_width = 150.0;
         // A solid bar keeps its own room beside the content, and hover only colours it.
         s.spacing.scroll = egui::style::ScrollStyle {
             bar_width: 6.0,
@@ -94,6 +99,18 @@ mod tests {
     use super::*;
     use crate::ui::tokens::{ThemeId, tokens};
     use egui::Color32;
+
+    #[test]
+    fn the_style_keeps_the_app_s_spacing() {
+        // The spacing the windows were measured with; tests and the app share it.
+        let ctx = egui::Context::default();
+        apply(&ctx, &tokens(ThemeId::TakeUi, true));
+        let s = ctx.global_style().spacing.clone();
+        assert_eq!(s.item_spacing, egui::vec2(8.0, 8.0));
+        assert_eq!(s.button_padding, egui::vec2(10.0, 5.0));
+        assert_eq!(s.interact_size.y, 26.0);
+        assert_eq!(s.slider_width, 150.0);
+    }
 
     #[test]
     fn hover_never_expands() {

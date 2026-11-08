@@ -108,10 +108,12 @@ impl Pin {
             egui::StrokeKind::Inside,
         );
         let mut acts = Vec::new();
+        // A menu open at the start of the frame takes Esc (it closes while this frame draws).
+        let menu_open = egui::Popup::is_any_open(&ctx);
         if resp.drag_started() {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        if resp.double_clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if resp.double_clicked() || (!menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
             acts.push(PinAction::Close);
         }
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
@@ -272,6 +274,62 @@ mod tests {
             assert_eq!(acts, vec![PinAction::Copy], "{lang:?}");
         }
         set_lang(Lang::En);
+    }
+
+    #[test]
+    fn the_pin_title_is_in_the_user_s_language() {
+        use crate::ui::i18n::{Lang, Msg, set_lang, t as tr};
+        use crate::ui::tokens::{ThemeId, tokens};
+        set_lang(Lang::Pt);
+        let t = tokens(ThemeId::TakeUi, true);
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        let mut p = pin();
+        let mut full = ctx.run_ui(egui::RawInput::default(), |ui| {
+            p.draw(ui, &t);
+        });
+        full.textures_delta.clear();
+        let titles: Vec<_> = full
+            .viewport_output
+            .values()
+            .flat_map(|v| v.commands.iter())
+            .filter_map(|c| match c {
+                egui::ViewportCommand::Title(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(titles, vec![tr(Msg::PinnedTitle).to_string()]);
+        set_lang(Lang::En);
+    }
+
+    #[test]
+    fn esc_over_the_menu_closes_only_the_menu() {
+        use crate::ui::tokens::{ThemeId, tokens};
+        let at = egui::pos2(200.0, 150.0);
+        let right = egui::PointerButton::Secondary;
+        let esc = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let t = tokens(ThemeId::TakeUi, true);
+        let mut p = pin();
+        let mut acts = Vec::new();
+        frames(
+            &t,
+            vec![
+                vec![egui::Event::PointerMoved(at)],
+                vec![mouse(at, right, true)],
+                vec![mouse(at, right, false)],
+                vec![],
+                vec![esc],
+                vec![],
+            ],
+            |ui| acts.extend(p.draw(ui, &t)),
+        );
+        assert!(!acts.contains(&PinAction::Close), "{acts:?}");
     }
 
     #[test]

@@ -2164,6 +2164,23 @@ mod tests {
             });
             let bg = if want { t.primary } else { t.tint };
             assert!(painted.contains(&bg), "{theme:?}: {painted:?}");
+            let ctx = egui::Context::default();
+            crate::system::fonts::FontLib::load().install(&ctx);
+            crate::ui::style::apply(&ctx, &t);
+            let mut full = ctx.run_ui(egui::RawInput::default(), |ui| {
+                tool_button(ui, &t, Some(Ico::Rect), true, "Rect");
+            });
+            full.textures_delta.clear();
+            let icon = full
+                .shapes
+                .iter()
+                .find_map(|c| match &c.shape {
+                    egui::Shape::Text(s) => s.galley.job.sections.first().map(|x| x.format.color),
+                    _ => None,
+                })
+                .expect("the icon");
+            let fg = if want { t.on_primary } else { t.accent };
+            assert_eq!(icon, fg, "{theme:?}: the icon reads on its fill");
         }
     }
 }

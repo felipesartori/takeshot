@@ -52,6 +52,12 @@ fn rebind_error(e: &global_hotkey::Error) -> RebindError {
     }
 }
 
+/// Whether a shortcut another app holds still works through Takeshot's PrtSc priority: the hook
+/// sees PrtSc and Shift+PrtSc, so with it on such keys are kept without registering them.
+pub(crate) fn kept_by_hook(e: &RebindError, keys: &str, hook_on: bool) -> bool {
+    hook_on && *e == RebindError::InUse && matches!(label(keys).as_str(), "PrtSc" | "Shift+PrtSc")
+}
+
 /// The shortcut each capture starts with, in the form `HotKey::from_str` reads.
 pub fn default_keys(s: Shot) -> &'static str {
     match (s, cfg!(target_os = "macos")) {
@@ -302,8 +308,9 @@ impl Hotkeys {
     }
 
     /// Swaps the shortcut of a capture; on failure the old one stays registered. While the
-    /// shortcuts are off the new keys are only kept.
-    pub fn rebind(&mut self, s: Shot, keys: &str) -> Result<(), RebindError> {
+    /// shortcuts are off the new keys are only kept, and so are keys another app holds that the
+    /// PrtSc priority hook (`hook_on`) catches anyway.
+    pub fn rebind(&mut self, s: Shot, keys: &str, hook_on: bool) -> Result<(), RebindError> {
         HotKey::from_str(keys).map_err(|_| RebindError::Invalid)?;
         if !self.enabled {
             self.keys[slot(s)] = keys.to_string();
@@ -313,7 +320,13 @@ impl Hotkeys {
         if let (Some(m), Some(hk)) = (&self.manager, self.registered[slot(s)].take()) {
             let _ = m.unregister(hk);
         }
-        let result = self.register(s, keys);
+        let result = match self.register(s, keys) {
+            Err(e) if kept_by_hook(&e, keys, hook_on) => {
+                self.keys[slot(s)] = keys.to_string();
+                Ok(())
+            }
+            r => r,
+        };
         if result.is_err() {
             let _ = self.register(s, &old);
         }
@@ -352,6 +365,19 @@ impl Hotkeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_prtsc_key_the_hook_covers_is_kept_unregistered() {
+        let in_use = RebindError::InUse;
+        assert!(kept_by_hook(&in_use, "PrintScreen", true));
+        assert!(kept_by_hook(&in_use, "shift+PrintScreen", true));
+        assert!(!kept_by_hook(&in_use, "PrintScreen", false), "hook off");
+        assert!(
+            !kept_by_hook(&in_use, "F8", true),
+            "a key the hook does not see"
+        );
+        assert!(!kept_by_hook(&RebindError::Invalid, "PrintScreen", true));
+    }
 
     #[test]
     fn a_taken_key_is_reported_as_in_use() {
@@ -395,7 +421,7 @@ mod tests {
         assert!(!h.enabled());
         assert_eq!(h.status(), &Status::Off);
         // A shortcut changed while they are off is kept for when they come back.
-        assert_eq!(h.rebind(Shot::Area, "F9"), Ok(()));
+        assert_eq!(h.rebind(Shot::Area, "F9", false), Ok(()));
         h.set_enabled(true);
         assert_eq!(h.status(), &Status::Unavailable("no display".into()));
     }

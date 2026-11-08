@@ -9,7 +9,7 @@ use crate::screens::about::{self, AboutAnswer, AboutInfo};
 use crate::screens::home::Home;
 use crate::screens::tray_menu::{MenuOutcome, TrayMenu};
 use crate::system::actions;
-use crate::system::hotkeys::{Shot, effective_status, label, should_offer_priority};
+use crate::system::hotkeys::{Shot, effective_status, should_offer_priority};
 use crate::system::instance::Page;
 use crate::system::resident::{
     Resident, ResidentEvent, XAction, hide_command, left_click, on_wayland, on_x, remembered,
@@ -396,22 +396,19 @@ impl Shell {
             self.quit(&ctx);
         }
         if let Some((shot, keys)) = req.rebind {
-            match resident.hotkeys.rebind(shot, &keys) {
-                Ok(()) => {
-                    match shot {
-                        Shot::Area => shared.settings.hotkey_area = keys,
-                        Shot::Full => shared.settings.hotkey_full = keys,
-                    }
-                    shared.settings_dirty = true;
-                }
-                Err(e) => {
-                    let shown = label(&keys);
-                    if let crate::system::hotkeys::RebindError::Refused(why) = &e {
-                        eprintln!("shortcut {keys}: {why}");
-                    }
-                    let priority = cfg!(windows) && shown == "PrtSc";
-                    shared.toast(crate::screens::home::rebind_notice(&shown, &e, priority));
-                }
+            let hook_on = resident.priority_on();
+            let result = resident.hotkeys.rebind(shot, &keys, hook_on);
+            let saved = result.is_ok();
+            match crate::screens::home::apply_rebind(
+                &mut shared.settings,
+                shot,
+                &keys,
+                result,
+                hook_on,
+            ) {
+                Some(notice) => shared.toast(notice),
+                None if saved => shared.settings_dirty = true,
+                None => {}
             }
         }
         if req.open_windows_settings {

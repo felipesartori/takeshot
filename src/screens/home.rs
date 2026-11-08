@@ -673,6 +673,37 @@ pub(crate) fn chip(
     }
 }
 
+/// Carries out a shortcut change's result: the new keys go to the settings, or the notice for the
+/// user comes back (the system's own text only reaches the log). `hook_on`: Takeshot's PrtSc
+/// priority is running, so it is not offered again.
+pub(crate) fn apply_rebind(
+    settings: &mut crate::system::settings::Settings,
+    shot: crate::system::hotkeys::Shot,
+    keys: &str,
+    result: Result<(), crate::system::hotkeys::RebindError>,
+    hook_on: bool,
+) -> Option<String> {
+    use crate::system::hotkeys::{RebindError, Shot, label};
+    match result {
+        Ok(()) => {
+            match shot {
+                Shot::Area => settings.hotkey_area = keys.to_string(),
+                Shot::Full => settings.hotkey_full = keys.to_string(),
+            }
+            None
+        }
+        Err(e) => {
+            if let RebindError::Refused(why) = &e {
+                eprintln!("takeshot: shortcut {keys}: {why}");
+            }
+            let shown = label(keys);
+            let priority =
+                cfg!(windows) && !hook_on && matches!(shown.as_str(), "PrtSc" | "Shift+PrtSc");
+            Some(rebind_notice(&shown, &e, priority))
+        }
+    }
+}
+
 /// The notice for a shortcut that could not be set, in the user's language. `priority` offers
 /// Takeshot's PrtSc priority (Windows, PrtSc alone).
 pub(crate) fn rebind_notice(
@@ -711,6 +742,40 @@ pub(crate) fn hotkey_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rebind_saves_the_keys_or_explains_in_the_user_s_words() {
+        use crate::system::hotkeys::{RebindError, Shot};
+        use crate::ui::i18n::{Lang, set_lang};
+        set_lang(Lang::Pt);
+        let mut s = crate::system::settings::Settings::default();
+        assert_eq!(apply_rebind(&mut s, Shot::Area, "F9", Ok(()), false), None);
+        assert_eq!(s.hotkey_area, "F9");
+        let before = s.hotkey_full.clone();
+        let refused = RebindError::Refused("HotKey { mods: Modifiers(0x0) }".into());
+        let n = apply_rebind(&mut s, Shot::Full, "shift+PrintScreen", Err(refused), false).unwrap();
+        assert!(n.starts_with("Shift+PrtSc") && !n.contains("HotKey"), "{n}");
+        assert_eq!(s.hotkey_full, before, "a failed rebind keeps the old keys");
+        let off = apply_rebind(
+            &mut s,
+            Shot::Full,
+            "shift+PrintScreen",
+            Err(RebindError::InUse),
+            false,
+        )
+        .unwrap();
+        let on = apply_rebind(
+            &mut s,
+            Shot::Full,
+            "shift+PrintScreen",
+            Err(RebindError::InUse),
+            true,
+        )
+        .unwrap();
+        assert_eq!(off.contains("prioridade"), cfg!(windows), "{off}");
+        assert!(!on.contains("prioridade"), "already on: {on}");
+        set_lang(Lang::En);
+    }
 
     #[test]
     fn the_rebind_notice_is_translated() {
