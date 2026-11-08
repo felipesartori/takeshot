@@ -482,6 +482,14 @@ impl Annotator {
         }
     }
 
+    /// Shows the first selected object's style in the options, as after undo or redo, which can
+    /// bring back another style.
+    pub fn sync_options(&self, opts: &mut DrawOpts) {
+        if let Some(id) = self.doc.selected().first() {
+            self.copy_style(*id, opts);
+        }
+    }
+
     /// Picks `id` from the object list: switches to Select, selects it (`additive` adds it) and
     /// shows its style in the options.
     pub fn pick(&mut self, id: ObjId, additive: bool, opts: &mut DrawOpts) {

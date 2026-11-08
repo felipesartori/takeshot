@@ -2,8 +2,9 @@
 //! close), the options bar under it for a drawing tool or a selected object, and the hint before
 //! an area is chosen, as in "Captura (PrtSc) · escuro". Behaviour is in `screens::overlay`.
 
+use super::{divider, tool_icon};
 use crate::Shared;
-use crate::engine::model::{BlurMode, PALETTE, Tool, WIDTHS};
+use crate::engine::model::{BlurMode, Tool, WIDTHS};
 use crate::engine::placement::capture_bars;
 use crate::screens::editor::{object_label, tool_name};
 use crate::screens::overlay::{CaptureAction, Overlay};
@@ -25,12 +26,6 @@ fn bar_frame(t: &Tokens) -> Frame {
             spread: 0,
             color: Color32::from_black_alpha(102),
         })
-}
-
-/// A 1 px line between groups, in the border colour.
-fn divider(ui: &mut Ui, t: &Tokens, height: f32) {
-    let (r, _) = ui.allocate_exact_size(vec2(1.0, height), egui::Sense::hover());
-    ui.painter().rect_filled(r, 0.0, t.border);
 }
 
 /// The bars once an area is chosen, the hint before. Returns what the user asked for.
@@ -84,21 +79,6 @@ fn hint(ctx: &egui::Context, t: &Tokens) {
                     });
                 });
         });
-}
-
-fn tool_icon(tool: Tool) -> Option<Ico> {
-    Some(match tool {
-        Tool::Select => Ico::Select,
-        Tool::Pen => Ico::Pen,
-        Tool::Line => Ico::Line,
-        Tool::Arrow => Ico::Arrow,
-        Tool::Rect => Ico::Rect,
-        Tool::Ellipse => Ico::Ellipse,
-        Tool::Marker => Ico::Marker,
-        Tool::Text => Ico::Text,
-        Tool::Blur => Ico::Blur,
-        Tool::Counter => return None,
-    })
 }
 
 /// The main bar and, with a drawing tool or a selected object, the options bar, placed by
@@ -228,15 +208,10 @@ fn options_bar(
         job.wrap = egui::text::TextWrapping::truncate_at_width(160.0);
         ui.label(job);
         ui.add_space(4.0);
-        if tool != Tool::Blur {
-            for c in PALETTE {
-                let on = opts.color[..3] == c[..3];
-                let col = Color32::from_rgb(c[0], c[1], c[2]);
-                let tip = format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
-                if kit::color_dot(ui, t, col, on, &tip).clicked() {
-                    acts.push(CaptureAction::SetColor(c));
-                }
-            }
+        if tool != Tool::Blur
+            && let Some(c) = super::palette(ui, t, opts.color)
+        {
+            acts.push(CaptureAction::SetColor(c));
         }
         match tool {
             Tool::Text => {
@@ -387,6 +362,21 @@ mod tests {
         assert!(p.texts.iter().any(|(s, _)| s == tr(Msg::ToolRect)));
         let dup = crate::ui::icon::glyph(crate::ui::kit::Ico::CopyPlus).to_string();
         assert!(p.texts.iter().any(|(s, _)| *s == dup));
+    }
+
+    #[test]
+    fn the_options_bar_offers_a_custom_colour_and_no_object_buttons_without_a_selection() {
+        let (mut ov, mut shared) = capture(Tool::Pen);
+        let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
+        let glyph = |i| crate::ui::icon::glyph(i).to_string();
+        assert!(
+            p.texts
+                .iter()
+                .any(|(s, _)| *s == glyph(crate::ui::kit::Ico::Plus))
+        );
+        for i in [crate::ui::kit::Ico::CopyPlus, crate::ui::kit::Ico::Trash] {
+            assert!(!p.texts.iter().any(|(s, _)| *s == glyph(i)), "{i:?}");
+        }
     }
 
     #[test]

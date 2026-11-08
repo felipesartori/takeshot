@@ -175,8 +175,14 @@ impl Overlay {
                 self.an.set_tool(tool, &mut shared.settings.draw);
                 shared.settings_dirty = true;
             }
-            CaptureAction::Undo => self.an.undo(),
-            CaptureAction::Redo => self.an.redo(),
+            CaptureAction::Undo => {
+                self.an.undo();
+                self.an.sync_options(&mut shared.settings.draw);
+            }
+            CaptureAction::Redo => {
+                self.an.redo();
+                self.an.sync_options(&mut shared.settings.draw);
+            }
             CaptureAction::Pin => return self.act_pin(shared),
             CaptureAction::Save => return self.act_save(frame, shared),
             CaptureAction::Copy => return self.act_copy(shared),
@@ -358,9 +364,8 @@ impl Overlay {
         // ---------------- bars and hint, drawn by the skin
         let mut switch = Switch::None;
         for a in crate::skins::capture(ui, t, self, shared, screen) {
-            if let s @ (Switch::Close | Switch::ToEditor(_) | Switch::ToNotice(_)) =
-                self.apply(a, &ctx, Some(frame), shared)
-            {
+            let s = self.apply(a, &ctx, Some(frame), shared);
+            if !matches!(s, Switch::None) {
                 switch = s;
             }
         }
@@ -660,7 +665,9 @@ impl Overlay {
         view: &View,
     ) -> Option<Switch> {
         let cmd = Modifiers::COMMAND;
-        self.an.handle_history_keys(ui);
+        if self.an.handle_history_keys(ui) {
+            self.an.sync_options(&mut shared.settings.draw);
+        }
         // With objects selected, Delete, Ctrl+D, arrows and Esc act on them; otherwise on the area.
         self.an.handle_object_keys(ui);
         if ui.input_mut(|i| i.consume_key(cmd, Key::A)) {
@@ -1096,6 +1103,66 @@ mod tests {
         frames(&ctx, right(), |ui, _| keys(&mut o, ui));
         assert_eq!(o.sel, Some(AREA.translate(vec2(1.0, 0.0))));
         assert!(rect_min(&o).distance(pos2(301.0, 300.0)) < 0.01);
+    }
+
+    #[test]
+    fn apply_restyles_the_selection_and_commits_the_text() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Select);
+        let id = o.an.doc.objs()[0].id;
+        o.an.pick(id, false, &mut sh.settings.draw);
+        o.apply(CaptureAction::SetFill(false), &ctx, None, &mut sh);
+        assert!(!o.an.doc.objs()[0].ann.filled);
+        // A colour keeps the object's opacity.
+        o.apply(CaptureAction::Undo, &ctx, None, &mut sh);
+        o.an.doc.select(Some(id), false);
+        sh.settings.draw.color[3] = 128;
+        o.an.doc.begin_change();
+        o.an.restyle_from_opts(
+            &DrawOpts {
+                color: [255, 0, 0, 255],
+                ..sh.settings.draw.clone()
+            },
+            &sh.settings.draw,
+        );
+        o.apply(
+            CaptureAction::SetColor([0, 200, 0, 255]),
+            &ctx,
+            None,
+            &mut sh,
+        );
+        assert_eq!(o.an.doc.objs()[0].ann.color, [0, 200, 0, 128]);
+        // Undo shows the style it brings back.
+        o.apply(CaptureAction::Undo, &ctx, None, &mut sh);
+        assert_eq!(sh.settings.draw.color, o.an.doc.objs()[0].ann.color);
+        // Changing the tool keeps the text being typed.
+        o.an.tool = Tool::Text;
+        o.an.draft = Some(crate::engine::annotator::TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: "Pico".into(),
+            started: 0.0,
+        });
+        let n = o.an.doc.objs().len();
+        o.apply(CaptureAction::SetTool(Tool::Rect), &ctx, None, &mut sh);
+        assert_eq!(o.an.doc.objs().len(), n + 1);
+        assert!(o.an.draft.is_none());
+    }
+
+    #[test]
+    fn the_bars_hide_while_the_area_is_resized() {
+        let ctx = egui::Context::default();
+        let sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Select);
+        assert!(o.bars_shown());
+        o.drag = Drag::Adjust {
+            handle: Handle::SE,
+            start_ptr: pos2(900.0, 700.0),
+            orig: AREA,
+        };
+        assert!(!o.bars_shown());
+        o.drag = Drag::NewSel(pos2(10.0, 10.0));
+        assert!(!o.bars_shown());
     }
 
     #[test]

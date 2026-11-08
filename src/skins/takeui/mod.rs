@@ -7,6 +7,61 @@ pub mod settings;
 pub mod shell;
 pub mod style;
 
+use crate::engine::model::{PALETTE, Tool};
+use crate::ui::i18n::{Msg, t as tr};
+use crate::ui::kit::{self, Ico};
+use crate::ui::tokens::Tokens;
+use egui::{Color32, Ui, vec2};
+
+/// The icon of a tool; `None` for the numbered step, which the kit draws as a circle with "1".
+pub(crate) fn tool_icon(tool: Tool) -> Option<Ico> {
+    Some(match tool {
+        Tool::Select => Ico::Select,
+        Tool::Pen => Ico::Pen,
+        Tool::Line => Ico::Line,
+        Tool::Arrow => Ico::Arrow,
+        Tool::Rect => Ico::Rect,
+        Tool::Ellipse => Ico::Ellipse,
+        Tool::Marker => Ico::Marker,
+        Tool::Text => Ico::Text,
+        Tool::Blur => Ico::Blur,
+        Tool::Counter => return None,
+    })
+}
+
+/// A 1 px line `height` tall between groups of a bar, in the border colour.
+pub(crate) fn divider(ui: &mut Ui, t: &Tokens, height: f32) {
+    let (r, _) = ui.allocate_exact_size(vec2(1.0, height), egui::Sense::hover());
+    ui.painter().rect_filled(r, 0.0, t.border);
+}
+
+/// The palette's colours and the custom colour (a picker in a popup); returns the colour picked.
+pub(crate) fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4]) -> Option<[u8; 4]> {
+    let mut picked = None;
+    for c in PALETTE {
+        let on = color[..3] == c[..3];
+        let col = Color32::from_rgb(c[0], c[1], c[2]);
+        let tip = format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
+        if kit::color_dot(ui, t, col, on, &tip).clicked() {
+            picked = Some(c);
+        }
+    }
+    let add = kit::color_add(ui, t, tr(Msg::CustomColor));
+    egui::Popup::from_toggle_button_response(&add)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let mut col = Color32::from_rgb(color[0], color[1], color[2]);
+            if egui::color_picker::color_picker_color32(
+                ui,
+                &mut col,
+                egui::color_picker::Alpha::Opaque,
+            ) {
+                picked = Some(col.to_array());
+            }
+        });
+    picked
+}
+
 /// Headless frames over the main window, for the skin's tests.
 #[cfg(test)]
 pub(crate) mod testing {

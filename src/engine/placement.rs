@@ -102,13 +102,18 @@ mod tests {
         assert_eq!(m.bottom(), area.top() - CAPTURE_GAP);
         assert_eq!(o.unwrap().bottom(), m.top() - BAR_SPACING);
 
+        // Room for the main bar under the area but not for both: the pair goes above.
+        let area = Rect::from_min_max(pos2(260.0, 300.0), pos2(1020.0, 810.0));
+        let (m, _) = bars(area, true);
+        assert_eq!(m.bottom(), area.top() - CAPTURE_GAP);
+
         // Touching the right edge: pulled inside.
         let area = Rect::from_min_max(pos2(1000.0, 100.0), pos2(1600.0, 400.0));
         assert_eq!(bars(area, true).0.right(), screen.right() - MARGIN);
 
         // A small area near the left edge: the wider bar stays on screen.
         let area = Rect::from_min_max(pos2(20.0, 300.0), pos2(60.0, 330.0));
-        let (m, o) = bars(area, true);
+        let (m, _) = bars(area, true);
         assert_eq!(m.left(), screen.left() + MARGIN);
 
         // Never over the area while there is room outside it.
@@ -126,7 +131,6 @@ mod tests {
             let (m, _) = bars(area, false);
             assert!(!m.intersects(area), "{area:?}");
         }
-        let _ = o;
 
         // An area as big as the screen: the bars still fit on the screen, over it.
         bars(screen, true);

@@ -2,9 +2,10 @@
 //! buttons), the tool bar (tools, colours, widths, zoom), the canvas, the right panel and the
 //! status bar, as in "Editor · escuro" of the design. Behaviour is in `screens::editor`.
 
+use super::tool_icon;
 use crate::Shared;
 use crate::engine::doc::ObjId;
-use crate::engine::model::{BlurMode, PALETTE, Tool, WIDTHS};
+use crate::engine::model::{BlurMode, Tool, WIDTHS};
 use crate::screens::editor::{
     Editor, EditorAction, PanelTab, Zoom, object_label, tool_hint, tool_name,
 };
@@ -258,24 +259,15 @@ fn actions(ui: &mut Ui, t: &Tokens, compact: bool, acts: &mut Vec<EditorAction>)
     }
 }
 
-fn tool_icon(tool: Tool) -> Option<Ico> {
-    Some(match tool {
-        Tool::Select => Ico::Select,
-        Tool::Pen => Ico::Pen,
-        Tool::Line => Ico::Line,
-        Tool::Arrow => Ico::Arrow,
-        Tool::Rect => Ico::Rect,
-        Tool::Ellipse => Ico::Ellipse,
-        Tool::Marker => Ico::Marker,
-        Tool::Text => Ico::Text,
-        Tool::Blur => Ico::Blur,
-        Tool::Counter => return None,
-    })
+/// The palette as editor actions.
+fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4], acts: &mut Vec<EditorAction>) {
+    if let Some(c) = super::palette(ui, t, color) {
+        acts.push(EditorAction::SetColor(c));
+    }
 }
 
 fn divider(ui: &mut Ui, t: &Tokens) {
-    let (r, _) = ui.allocate_exact_size(vec2(1.0, 22.0), egui::Sense::hover());
-    ui.painter().rect_filled(r, 0.0, t.border);
+    super::divider(ui, t, 22.0);
 }
 
 fn tool_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Vec<EditorAction>) {
@@ -465,31 +457,6 @@ fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut 
         });
 }
 
-/// The palette's colours and the custom colour, for the tool bar and the panel.
-fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4], acts: &mut Vec<EditorAction>) {
-    for c in PALETTE {
-        let on = color[..3] == c[..3];
-        let col = Color32::from_rgb(c[0], c[1], c[2]);
-        let tip = format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]);
-        if kit::color_dot(ui, t, col, on, &tip).clicked() {
-            acts.push(EditorAction::SetColor(c));
-        }
-    }
-    let add = kit::color_add(ui, t, tr(Msg::CustomColor));
-    egui::Popup::from_toggle_button_response(&add)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            let mut col = Color32::from_rgb(color[0], color[1], color[2]);
-            if egui::color_picker::color_picker_color32(
-                ui,
-                &mut col,
-                egui::color_picker::Alpha::Opaque,
-            ) {
-                acts.push(EditorAction::SetColor(col.to_array()));
-            }
-        });
-}
-
 /// The right panel, as in "Editor · escuro": the Object and Style tabs 12 px in, then the open
 /// tab's page, 20 px in, which scrolls.
 fn panel(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &mut Shared, acts: &mut Vec<EditorAction>) {
@@ -559,16 +526,19 @@ fn object_page(
         tool_options(ui, t, tool, &shared.settings.draw, &shared.fonts, acts);
     }
     if !ed.an.doc.selected().is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+        // One row, as in the design; with their key badges the two run past the 280 px column,
+        // so the keys go in the tooltips.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
             if kit::button(
                 ui,
                 t,
                 BtnKind::Secondary,
                 Some(Ico::CopyPlus),
                 tr(Msg::Duplicate),
-                Some(&cmd("D")),
+                None,
             )
+            .on_hover_text(format!("{} ({})", tr(Msg::Duplicate), cmd("D")))
             .clicked()
             {
                 acts.push(EditorAction::Duplicate);
@@ -579,8 +549,9 @@ fn object_page(
                 BtnKind::Secondary,
                 Some(Ico::Trash),
                 tr(Msg::Delete),
-                Some("Del"),
+                None,
             )
+            .on_hover_text(format!("{} (Del)", tr(Msg::Delete)))
             .clicked()
             {
                 acts.push(EditorAction::Delete);
@@ -1061,6 +1032,7 @@ mod tests {
 
     #[test]
     fn ctrl_wheel_zooms_at_the_pointer() {
+        // Three notches, each one frame of zoom and a frame without.
         let (mut ed, mut shared) = editor();
         // The styled picture is the largest mesh (it may run past the canvas once zoomed).
         let picture = |blocks: &[crate::skins::takeui::testing::Block]| {
@@ -1074,13 +1046,21 @@ mod tests {
         let (_, _, blocks) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
         let before = picture(&blocks);
         let p = pos2(580.0, 505.0);
-        let zoom = || vec![Event::Zoom(1.1)];
+        let zoom = || vec![Event::Zoom(1.25)];
         let (_, _, blocks) = run_editor(
             &mut ed,
             &mut shared,
             SIZE,
             true,
-            vec![vec![Event::PointerMoved(p)], zoom(), zoom(), zoom()],
+            vec![
+                vec![Event::PointerMoved(p)],
+                zoom(),
+                vec![],
+                zoom(),
+                vec![],
+                zoom(),
+                vec![],
+            ],
         );
         let after = picture(&blocks);
         assert!(
@@ -1289,6 +1269,60 @@ mod tests {
         );
         assert!(ed.an.doc.undo());
         assert_eq!(ed.an.doc.objs()[0].ann.color, [255, 0, 0, alpha]);
+    }
+
+    #[test]
+    fn undo_and_redo_show_the_style_they_restore() {
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        let arrow = ed.an.doc.objs()[1].id;
+        ed.apply(EditorAction::Select(arrow, false), &ctx, None, &mut shared);
+        ed.apply(EditorAction::SetOpacity(128), &ctx, None, &mut shared);
+        ed.apply(EditorAction::Undo, &ctx, None, &mut shared);
+        assert_eq!(ed.an.doc.objs()[1].ann.color[3], 255);
+        assert_eq!(
+            shared.settings.draw.color[3], 255,
+            "the panel shows the restored opacity"
+        );
+        ed.apply(EditorAction::Redo, &ctx, None, &mut shared);
+        assert_eq!(shared.settings.draw.color[3], 128);
+        // Ctrl+Z on the canvas too.
+        let ctrl_z = Event::Key {
+            key: Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        };
+        run_editor(&mut ed, &mut shared, SIZE, true, vec![vec![ctrl_z]]);
+        assert_eq!(ed.an.doc.objs()[1].ann.color[3], 255);
+        assert_eq!(shared.settings.draw.color[3], 255);
+    }
+
+    #[test]
+    fn duplicate_and_delete_share_a_row() {
+        let _lang = crate::ui::i18n::lang_lock();
+        let before = crate::ui::i18n::lang();
+        for l in [crate::ui::i18n::Lang::Pt, crate::ui::i18n::Lang::En] {
+            crate::ui::i18n::set_lang(l);
+            let (mut ed, mut shared) = editor();
+            let rect = ed.an.doc.objs()[0].id;
+            ed.apply(
+                EditorAction::Select(rect, false),
+                &egui::Context::default(),
+                None,
+                &mut shared,
+            );
+            let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+            let dup = panel_text(&painted, tr(Msg::Duplicate));
+            let del = panel_text(&painted, tr(Msg::Delete));
+            crate::ui::i18n::set_lang(before);
+            assert!(
+                (dup.center().y - del.center().y).abs() < 1.0,
+                "{l:?}: {dup:?} and {del:?}"
+            );
+        }
+        crate::ui::i18n::set_lang(before);
     }
 
     #[test]

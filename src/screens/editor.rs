@@ -87,6 +87,33 @@ pub fn zoom_scale(z: Zoom, current: f32, fit: f32) -> f32 {
     }
 }
 
+/// Zoom steps from this frame's Ctrl+wheel factor `z`: one per notch, though egui spreads a
+/// notch over several frames. `acc` gathers the factors (as logarithms) and gives a step each
+/// time it passes a notch's worth; a frame with no zoom, or a turn of the wheel the other way,
+/// starts over.
+pub fn wheel_zoom_steps(acc: &mut f32, z: f32) -> i32 {
+    // ln 1.15: a mouse notch (about ln 1.22) is one step, a touchpad pinch steps as it goes.
+    const NOTCH: f32 = 0.14;
+    if (z - 1.0).abs() < 1e-4 {
+        *acc = 0.0;
+        return 0;
+    }
+    let d = z.ln();
+    if *acc != 0.0 && d.signum() != acc.signum() {
+        *acc = 0.0;
+    }
+    *acc += d;
+    if *acc >= NOTCH {
+        *acc -= NOTCH;
+        1
+    } else if *acc <= -NOTCH {
+        *acc += NOTCH;
+        -1
+    } else {
+        0
+    }
+}
+
 /// The tabs of the editor's right panel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum PanelTab {
@@ -186,6 +213,8 @@ pub struct Editor {
     fit: f32,
     /// How far the picture is moved from the centre when it is larger than the canvas.
     pan: egui::Vec2,
+    /// Ctrl+wheel gathered toward the next zoom step (`wheel_zoom_steps`).
+    zoom_acc: f32,
     tab: PanelTab,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
@@ -221,6 +250,7 @@ impl Editor {
             zoom: None,
             fit: 1.0,
             pan: egui::Vec2::ZERO,
+            zoom_acc: 0.0,
             tab: PanelTab::Object,
             preview: None,
             preview_dirty: true,
@@ -269,8 +299,14 @@ impl Editor {
             shared.settings_dirty = true;
         };
         match a {
-            EditorAction::Undo => self.an.undo(),
-            EditorAction::Redo => self.an.redo(),
+            EditorAction::Undo => {
+                self.an.undo();
+                self.an.sync_options(&mut shared.settings.draw);
+            }
+            EditorAction::Redo => {
+                self.an.redo();
+                self.an.sync_options(&mut shared.settings.draw);
+            }
             EditorAction::Copy => {
                 self.copy(shared);
             }
@@ -637,12 +673,11 @@ impl Editor {
         if resp.hovered()
             && let Some(p) = ui.input(|i| i.pointer.hover_pos())
         {
-            let z = ui.input(|i| i.zoom_delta());
             let anchor = p - room.center();
-            if z > 1.001 {
-                self.zoom_to(Zoom::In, anchor);
-            } else if z < 0.999 {
-                self.zoom_to(Zoom::Out, anchor);
+            match wheel_zoom_steps(&mut self.zoom_acc, ui.input(|i| i.zoom_delta())) {
+                1 => self.zoom_to(Zoom::In, anchor),
+                -1 => self.zoom_to(Zoom::Out, anchor),
+                _ => {}
             }
         }
         let clip = ui.painter_at(img_rect.expand(40.0).intersect(area));
@@ -691,7 +726,9 @@ impl Editor {
         );
         if !typing && !self.asking_close && !ctx.egui_wants_keyboard_input() {
             self.an.handle_object_keys(ui);
-            self.an.handle_history_keys(ui);
+            if self.an.handle_history_keys(ui) {
+                self.an.sync_options(&mut shared.settings.draw);
+            }
             acts.extend(keys(ui, self.an.tool));
         }
         acts
@@ -852,6 +889,34 @@ mod tests {
         assert_eq!(zoom_scale(Zoom::Percent(10), 1.0, 0.5), 0.1, "down to 10 %");
         assert_eq!(zoom_scale(Zoom::Percent(5), 1.0, 0.5), 0.1);
         assert_eq!(zoom_scale(Zoom::In, 0.2, 0.2), 0.25);
+    }
+
+    #[test]
+    fn a_wheel_notch_is_one_zoom_step() {
+        // egui smooths a notch of Ctrl+wheel over a few frames (here e^0.2 in all, as on
+        // Windows); a frame with no zoom ends the notch.
+        let mut acc = 0.0;
+        let mut run = |frames: &[f32]| -> Vec<i32> {
+            frames
+                .iter()
+                .map(|z| wheel_zoom_steps(&mut acc, *z))
+                .filter(|s| *s != 0)
+                .collect()
+        };
+        assert_eq!(run(&[1.07, 1.07, 1.05, 1.016, 1.0]), vec![1]);
+        assert_eq!(
+            run(&[1.07, 1.07, 1.05, 1.016, 1.0]),
+            vec![1],
+            "the next notch"
+        );
+        assert_eq!(
+            run(&[0.935, 0.935, 0.952, 0.984, 1.0]),
+            vec![-1],
+            "a notch back"
+        );
+        // A touchpad pinch: small steady factors still step, once per notch's worth.
+        let pinch = vec![1.02; 30];
+        assert_eq!(run(&pinch), vec![1, 1, 1, 1]);
     }
 
     fn editor() -> (Editor, crate::Shared) {
