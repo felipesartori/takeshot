@@ -28,7 +28,8 @@ pub struct CaptureBars {
 
 /// Places the capture's parts around `area` (page C of the design): the tools in a column to the
 /// area's right (its left without room), from the area's top and down past its bottom only when
-/// the column is taller than the area; the options beside the tools, from the same top; the
+/// the column is taller than the area, in a place that never depends on the options; the options
+/// beside the tools, else on the area's other side, from the same top; the
 /// actions in a row under the area (over it without room) ending at its right edge, past its left
 /// edge only when the row is wider than the area. Nothing leaves `screen` (`MARGIN` inside) or
 /// covers another part; the area is covered only when no room is left outside it.
@@ -42,45 +43,50 @@ pub fn capture_bars(
     let inside = screen.shrink(MARGIN);
     let right_room = inside.right() - area.right() - CAPTURE_GAP;
     let left_room = area.left() - CAPTURE_GAP - inside.left();
-    // The options alone may use the screen's margin when that keeps them off the area.
-    let (left_edge, right_edge) = (left_room + MARGIN, right_room + MARGIN);
-    let opts_w = options.map_or(0.0, |o| o.x);
-    let both = tools.x + options.map_or(0.0, |o| BAR_SPACING + o.x);
-    // Where the tools and the options go: both to the right, both to the left, the tools on one
-    // side and the options on the other, or (no room) the side with more room, over the area.
     #[derive(PartialEq)]
     enum Side {
         Right,
         Left,
     }
-    let (tools_side, opts_side, room) = if right_room >= both {
-        (Side::Right, Side::Right, true)
-    } else if left_room >= both {
-        (Side::Left, Side::Left, true)
-    } else if right_room >= tools.x && left_edge >= opts_w {
-        (Side::Right, Side::Left, true)
-    } else if left_room >= tools.x && right_edge >= opts_w {
-        (Side::Left, Side::Right, true)
+    // The tools' side depends on the tools alone, so they stay put while the options come and go:
+    // the area's right, else its left, else (no room) over the area at the roomier screen edge.
+    let (side, outside) = if right_room >= tools.x {
+        (Side::Right, true)
+    } else if left_room >= tools.x {
+        (Side::Left, true)
     } else if right_room >= left_room {
-        (Side::Right, Side::Right, false)
+        (Side::Right, false)
     } else {
-        (Side::Left, Side::Left, false)
+        (Side::Left, false)
     };
     let fit_top = |top: f32, h: f32| top.min(inside.bottom() - h).max(inside.top());
-    let tools_x = match (&tools_side, room) {
+    let tools_x = match (&side, outside) {
         (Side::Right, true) => area.right() + CAPTURE_GAP,
         (Side::Left, true) => area.left() - CAPTURE_GAP - tools.x,
-        // No room: the column at the screen's edge, over the area.
-        (Side::Right, false) => inside.right() - both,
-        (Side::Left, false) => inside.left() + both - tools.x,
+        (Side::Right, false) => inside.right() - tools.x,
+        (Side::Left, false) => inside.left(),
     };
     let tools_r = Rect::from_min_size(pos2(tools_x, fit_top(area.top(), tools.y)), tools);
+    // The options: beside the tools away from the area, else on the area's other side (either
+    // may use the screen's margin to keep off the area), else beside the tools over the area.
     let options_r = options.map(|o| {
-        let x = match (&opts_side, opts_side == tools_side) {
-            (Side::Right, true) => tools_r.right() + BAR_SPACING,
-            (Side::Left, true) => tools_r.left() - BAR_SPACING - o.x,
-            (Side::Right, false) => area.right() + CAPTURE_GAP,
-            (Side::Left, false) => area.left() - CAPTURE_GAP - o.x,
+        let (away, other) = match side {
+            Side::Right => (
+                screen.right() - tools_r.right() - BAR_SPACING,
+                area.left() - CAPTURE_GAP - screen.left(),
+            ),
+            Side::Left => (
+                tools_r.left() - BAR_SPACING - screen.left(),
+                screen.right() - area.right() - CAPTURE_GAP,
+            ),
+        };
+        let x = match side {
+            Side::Right if outside && away >= o.x => tools_r.right() + BAR_SPACING,
+            Side::Left if outside && away >= o.x => tools_r.left() - BAR_SPACING - o.x,
+            Side::Right if outside && other >= o.x => area.left() - CAPTURE_GAP - o.x,
+            Side::Left if outside && other >= o.x => area.right() + CAPTURE_GAP,
+            Side::Right => tools_r.left() - BAR_SPACING - o.x,
+            Side::Left => tools_r.right() + BAR_SPACING,
         };
         Rect::from_min_size(pos2(x, fit_top(area.top(), o.y)), o)
     });
@@ -259,6 +265,38 @@ mod tests {
             Rect::from_min_max(pos2(1560.0, 4.0), pos2(1596.0, 40.0)),
             true,
         );
+    }
+
+    #[test]
+    fn the_tools_stay_put_when_the_options_appear() {
+        let (tools, opts, actions) = (vec2(44.0, 450.0), vec2(226.0, 260.0), vec2(380.0, 42.0));
+        let check = |area: Rect, screen: Rect| {
+            let without = capture_bars(area, tools, None, actions, screen).tools;
+            let with = capture_bars(area, tools, Some(opts), actions, screen).tools;
+            assert_eq!(with, without, "the tools moved for {area:?} on {screen:?}");
+        };
+        // The case that showed it: 6 px short of room for both on the right.
+        let big = Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 900.0));
+        check(
+            Rect::from_min_max(pos2(100.0, 200.0), pos2(1310.0, 600.0)),
+            big,
+        );
+        for size in [
+            vec2(1280.0, 720.0),
+            vec2(1600.0, 900.0),
+            vec2(1920.0, 1080.0),
+        ] {
+            let screen = Rect::from_min_size(pos2(0.0, 0.0), size);
+            for left in (0..size.x as i32 - 40).step_by(37) {
+                for right in (left + 40..=size.x as i32).step_by(53) {
+                    for (top, bottom) in [(100.0, 650.0), (20.0, size.y - 20.0), (300.0, 400.0)] {
+                        let area =
+                            Rect::from_min_max(pos2(left as f32, top), pos2(right as f32, bottom));
+                        check(area, screen);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

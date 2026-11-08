@@ -1096,7 +1096,7 @@ mod tests {
                 let t = shared.tokens(None);
                 crate::views::begin_frame(ui.ctx(), &t);
                 acts.extend(crate::views::main_window(ui, &t, &mut home, &mut shared));
-                egui::Modal::new(egui::Id::new("a-dialog")).show(ui.ctx(), |ui| {
+                egui::Modal::new(egui::Id::unique("a-dialog")).show(ui.ctx(), |ui| {
                     ui.label("About");
                 });
             });

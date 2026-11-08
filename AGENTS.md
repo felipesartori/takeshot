@@ -45,7 +45,7 @@ Editor and capture share one behaviour:
 
 ## The capture's bars
 
-`engine::placement::capture_bars` places them, tested on its own: the tools in one column beside the area (right, else left) from its top, past its bottom only when the area is lower; the options panel next to them; the actions in a row under the area (over it without room) ending at its right edge. When tools and options do not fit on one side they take one side each; only with no room left do they cover the area. The view hands it the frames' drawn sizes from the frame before.
+`engine::placement::capture_bars` places them, tested on its own: the tools in one column beside the area (right, else left) from its top, past its bottom only when the area is lower; the options panel next to them; the actions in a row under the area (over it without room) ending at its right edge. The tools' side depends on their own width alone, so they stay put while the options come and go; the options go beside them away from the area, else on the area's other side, and only with no room left do they cover the area. The view hands it the frames' drawn sizes from the frame before.
 
 ## The resident
 
