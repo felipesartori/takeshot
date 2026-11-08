@@ -73,7 +73,7 @@ pub fn edge_at(window: Rect, p: Pos2, maximized: bool) -> Option<ResizeDirection
     })
 }
 
-fn cursor_for(d: ResizeDirection) -> CursorIcon {
+pub(crate) fn cursor_for(d: ResizeDirection) -> CursorIcon {
     use ResizeDirection as D;
     match d {
         D::North => CursorIcon::ResizeNorth,

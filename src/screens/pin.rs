@@ -1,12 +1,14 @@
-//! A capture pinned on top of other windows, in the theme: drag to move, wheel to zoom, double
-//! click or Esc to close, and a menu (copy, save as, open in the editor, original size, close).
+//! A capture pinned on top of other windows, in the theme: drag the middle to move, an edge or a
+//! corner to resize (the picture keeps its proportions, the opposite side stays), wheel to zoom,
+//! double click or Esc to close, and a menu (copy, save as, open in the editor, original size,
+//! close).
 
 use crate::screens::overlay::color_image;
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, Ico};
 use crate::ui::tokens::Tokens;
 use crate::{Shared, Switch};
-use egui::{Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Rect, ResizeDirection, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use image::RgbaImage;
 
 /// What the user asked for on a pinned picture.
@@ -26,6 +28,48 @@ pub struct Pin {
     base_size: egui::Vec2,
     /// The window title went out in the user's language.
     titled: bool,
+    /// An edge or corner being dragged: its direction, the window and the pointer (on the screen)
+    /// when the drag began.
+    resizing: Option<(ResizeDirection, Rect, egui::Pos2)>,
+}
+
+/// The pinned window resized from `start` by dragging `dir`'s edge or corner `delta` on the
+/// screen: the picture keeps its proportions, the opposite side or corner stays (an edge keeps the
+/// other axis centred), between 15 % and 400 % of `base`, the picture's size at 100 %.
+pub fn resize_window(start: Rect, dir: ResizeDirection, delta: Vec2, base: Vec2) -> Rect {
+    use ResizeDirection as D;
+    let (sx, sy): (f32, f32) = match dir {
+        D::East => (1.0, 0.0),
+        D::West => (-1.0, 0.0),
+        D::South => (0.0, 1.0),
+        D::North => (0.0, -1.0),
+        D::SouthEast => (1.0, 1.0),
+        D::SouthWest => (-1.0, 1.0),
+        D::NorthEast => (1.0, -1.0),
+        D::NorthWest => (-1.0, -1.0),
+    };
+    let (w, h) = (start.width().max(1.0), start.height().max(1.0));
+    // Along the drag's axis; a corner projects the drag on the diagonal.
+    let k = if sx != 0.0 && sy != 0.0 {
+        1.0 + (sx * delta.x * w + sy * delta.y * h) / (w * w + h * h)
+    } else if sx != 0.0 {
+        1.0 + sx * delta.x / w
+    } else {
+        1.0 + sy * delta.y / h
+    };
+    let width = (w * k).clamp(base.x * 0.15, base.x * 4.0);
+    let size = vec2(width, width * h / w);
+    let x = match sx {
+        s if s > 0.0 => start.left(),
+        s if s < 0.0 => start.right() - size.x,
+        _ => start.center().x - size.x / 2.0,
+    };
+    let y = match sy {
+        s if s > 0.0 => start.top(),
+        s if s < 0.0 => start.bottom() - size.y,
+        _ => start.center().y - size.y / 2.0,
+    };
+    Rect::from_min_size(pos2(x, y), size)
 }
 
 impl Pin {
@@ -36,6 +80,7 @@ impl Pin {
             zoom: 1.0,
             base_size,
             titled: false,
+            resizing: None,
         }
     }
 
@@ -100,7 +145,11 @@ impl Pin {
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
-        let border = if resp.hovered() { t.primary } else { t.border };
+        let border = if resp.hovered() || self.resizing.is_some() {
+            t.primary
+        } else {
+            t.border
+        };
         ui.painter().rect_stroke(
             rect,
             0.0,
@@ -110,8 +159,60 @@ impl Pin {
         let mut acts = Vec::new();
         // A menu open at the start of the frame takes Esc (it closes while this frame draws).
         let menu_open = egui::Popup::is_any_open(&ctx);
+        // Edges and corners resize, the middle moves.
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let zone = pointer.and_then(|p| crate::ui::chrome::edge_at(rect, p, false));
+        let outer = ctx
+            .input(|i| i.viewport().outer_rect)
+            .unwrap_or(Rect::from_min_size(pos2(0.0, 0.0), rect.size()));
         if resp.drag_started() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            // Where the button went down decides: the pointer has moved on by the time a drag starts.
+            let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
+            match origin.and_then(|o| crate::ui::chrome::edge_at(rect, o, false).map(|d| (d, o))) {
+                Some((dir, o)) => self.resizing = Some((dir, outer, outer.min + o.to_vec2())),
+                None => ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag),
+            }
+        }
+        if !ui.input(|i| i.pointer.primary_down()) {
+            self.resizing = None;
+        }
+        if let (Some((dir, start, from)), Some(p)) = (self.resizing, pointer) {
+            let to = outer.min + p.to_vec2();
+            let r = resize_window(start, dir, to - from, self.base_size);
+            self.zoom = r.width() / self.base_size.x.max(1.0);
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(r.min));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(r.size()));
+        }
+        if let Some(dir) = self.resizing.map(|(d, ..)| d).or(zone) {
+            ctx.set_cursor_icon(crate::ui::chrome::cursor_for(dir));
+        }
+        // The corners' handles show where to grab, and the size while it changes.
+        if resp.hovered() || self.resizing.is_some() {
+            let p = ui.painter();
+            for c in [
+                rect.left_top(),
+                rect.right_top(),
+                rect.left_bottom(),
+                rect.right_bottom(),
+            ] {
+                let at = pos2(
+                    c.x.clamp(rect.left() + 4.0, rect.right() - 4.0),
+                    c.y.clamp(rect.top() + 4.0, rect.bottom() - 4.0),
+                );
+                p.rect_filled(Rect::from_center_size(at, vec2(8.0, 8.0)), 2.0, t.primary);
+            }
+        }
+        if self.resizing.is_some() {
+            let label = format!("{} %", (self.zoom * 100.0).round());
+            let p = ui.painter();
+            let g = p.layout_no_wrap(
+                label,
+                crate::ui::style::font(12.0, crate::ui::style::Weight::Medium),
+                t.tip_text,
+            );
+            let pill = Rect::from_center_size(rect.center(), g.size() + vec2(16.0, 8.0));
+            p.rect_filled(pill, 6.0, t.tip_bg);
+            p.galley(pill.center() - g.size() / 2.0, g, t.tip_text);
         }
         if resp.double_clicked() || (!menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
             acts.push(PinAction::Close);
@@ -136,7 +237,7 @@ impl Pin {
             }
             let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
             ui.painter()
-                .hline(line.x_range(), line.center().y, Stroke::new(1.0, t.border));
+                .hline(line.x_range(), line.center().y, Stroke::new(1.0, t.line));
             if kit::menu_item(ui, t, Some(Ico::Close), tr(Msg::CloseWord), None, false).clicked() {
                 acts.push(PinAction::Close);
                 ui.close();
@@ -222,6 +323,101 @@ mod tests {
             pressed: down,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    #[test]
+    fn a_corner_drag_keeps_the_aspect_and_the_opposite_corner() {
+        use egui::ResizeDirection as D;
+        let base = egui::vec2(400.0, 300.0);
+        let start = Rect::from_min_size(pos2(100.0, 100.0), base);
+        // The bottom right corner out by 100 x 100: the top left stays, the ratio stays 4:3.
+        let r = resize_window(start, D::SouthEast, egui::vec2(100.0, 100.0), base);
+        assert_eq!(r.min, start.min);
+        assert!((r.width() / r.height() - 4.0 / 3.0).abs() < 1e-3, "{r:?}");
+        assert!(r.width() > start.width());
+        // The top left corner in: the bottom right stays.
+        let r = resize_window(start, D::NorthWest, egui::vec2(80.0, 60.0), base);
+        assert_eq!(r.max, start.max);
+        assert!((r.width() / r.height() - 4.0 / 3.0).abs() < 1e-3);
+        assert!((r.width() - 320.0).abs() < 0.5, "{r:?}");
+        // The right edge: the left edge stays, the height follows, centred.
+        let r = resize_window(start, D::East, egui::vec2(200.0, 0.0), base);
+        assert_eq!(r.left(), start.left());
+        assert_eq!(r.width(), 600.0);
+        assert_eq!(r.height(), 450.0);
+        assert_eq!(r.center().y, start.center().y);
+        // Never below 15 % nor above 400 % of the picture.
+        let r = resize_window(start, D::SouthEast, egui::vec2(-1000.0, -1000.0), base);
+        assert!((r.width() - 60.0).abs() < 0.5, "{r:?}");
+        let r = resize_window(start, D::SouthEast, egui::vec2(9000.0, 9000.0), base);
+        assert!((r.width() - 1600.0).abs() < 0.5, "{r:?}");
+    }
+
+    #[test]
+    fn the_border_resizes_and_the_middle_moves() {
+        use crate::ui::tokens::{ThemeId, tokens};
+        let t = tokens(ThemeId::TakeUi, true);
+        let left = egui::PointerButton::Primary;
+        let run = |at: egui::Pos2| {
+            let ctx = egui::Context::default();
+            crate::system::fonts::FontLib::load().install(&ctx);
+            let mut p = pin();
+            let mut out = Vec::new();
+            for (i, ev) in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![mouse(at, left, true)],
+                vec![egui::Event::PointerMoved(at + egui::vec2(30.0, 30.0))],
+                vec![egui::Event::PointerMoved(at + egui::vec2(60.0, 60.0))],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        pos2(0.0, 0.0),
+                        egui::vec2(400.0, 300.0),
+                    )),
+                    time: Some(i as f64 * 0.05),
+                    events: ev,
+                    ..Default::default()
+                };
+                let mut full = ctx.run_ui(input, |ui| {
+                    p.draw(ui, &t);
+                });
+                full.textures_delta.clear();
+                out.push((
+                    full.platform_output.cursor_icon,
+                    full.viewport_output
+                        .values()
+                        .flat_map(|v| v.commands.clone())
+                        .collect::<Vec<_>>(),
+                ));
+            }
+            out
+        };
+        // The bottom right corner: the resize pointer, then the window grows, never moved by drag.
+        let corner = run(pos2(398.0, 298.0));
+        assert_eq!(corner[0].0, egui::CursorIcon::ResizeSouthEast);
+        let cmds: Vec<_> = corner.iter().flat_map(|(_, c)| c.clone()).collect();
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, egui::ViewportCommand::InnerSize(_))),
+            "{cmds:?}"
+        );
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::StartDrag)),
+            "{cmds:?}"
+        );
+        // The middle: the window moves.
+        let middle = run(pos2(200.0, 150.0));
+        let cmds: Vec<_> = middle.iter().flat_map(|(_, c)| c.clone()).collect();
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, egui::ViewportCommand::StartDrag)),
+            "{cmds:?}"
+        );
     }
 
     #[test]
