@@ -855,11 +855,13 @@ pub fn paint_ann(p: &Painter, v: &View, a: &Ann, fonts: &FontLib) {
             let c = v.to_screen(*center);
             let r = counter_radius(a.width) * v.k;
             p.circle_filled(c, r, col);
+            // The picture's number: a line as tall as 1.25 radii.
+            let em = fonts::em_for_height(&fonts.get(fonts.bold).font, r * 1.25);
             p.text(
                 c,
                 egui::Align2::CENTER_CENTER,
                 n.to_string(),
-                egui::FontId::new(r * 1.2, egui::FontFamily::Name("bold".into())),
+                egui::FontId::new(em, fonts.get(fonts.bold).family.clone()),
                 Color32::WHITE,
             );
         }

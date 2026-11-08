@@ -468,7 +468,7 @@ pub fn draw_ann(pm: &mut sk::Pixmap, a: &Ann, fonts: &FontLib) {
             }
             let f = &fonts.get(fonts.bold).font;
             let label = n.to_string();
-            let size = r * 1.25;
+            let size = fonts::em_for_height(f, r * 1.25);
             let (w, h) = fonts::measure(f, size, &label);
             let tc = if luminance(a.color) > 0.7 {
                 [17, 17, 17, 255]
@@ -842,7 +842,7 @@ fn draw_watermark(
             x += l.width() as f32 * k + pad * 0.7;
         }
         if !text.is_empty() {
-            let size = bh * 0.36;
+            let size = fonts::em_for_height(font, bh * 0.36);
             let (_, th) = fonts::measure(font, size, text);
             let tc = if luminance(wm.band_color) > 0.6 {
                 [20, 20, 20, 255]
@@ -874,11 +874,12 @@ fn draw_watermark(
             lh = l.height() as f32 * k;
         }
     }
-    let size = if logo.is_some() {
+    let height = if logo.is_some() {
         (lh * 0.42).max(10.0)
     } else {
         (wm.size / 100.0 * area[2] * 0.24).max(10.0)
     };
+    let size = fonts::em_for_height(font, height);
     let (tw, th) = if text.is_empty() {
         (0.0, 0.0)
     } else {

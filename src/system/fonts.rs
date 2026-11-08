@@ -309,9 +309,18 @@ const UI_MONO: &str = "ui-mono";
 const UI_ICONS: &str = "ui-icons";
 const UI_BRAND: &str = "ui-brand";
 
-/// ab_glyph scale for a font size in pixels (the font's full height, as egui sizes fonts).
-pub fn px_scale(_font: &FontArc, size: f32) -> PxScale {
-    PxScale::from(size)
+/// ab_glyph scale for a font size in pixels. The size is the em, as egui (epaint 0.37) sizes
+/// fonts; ab_glyph's own scale is the full line height, so it is converted, or the picture's text
+/// comes out smaller than the text drawn live while it is typed or dragged.
+pub fn px_scale(font: &FontArc, size: f32) -> PxScale {
+    let em = font.units_per_em().unwrap_or(1000.0);
+    PxScale::from(size * font.height_unscaled() / em)
+}
+
+/// The em size whose full line height is `height`, for text sized by its height (step numbers,
+/// the watermark), so that `px_scale` gives it that height.
+pub fn em_for_height(font: &FontArc, height: f32) -> f32 {
+    height * font.units_per_em().unwrap_or(1000.0) / font.height_unscaled()
 }
 
 /// Width and height of (possibly multi-line) text.
@@ -340,6 +349,35 @@ pub fn measure(font: &FontArc, size: f32, text: &str) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_and_final_text_have_the_same_size() {
+        // Text is painted by egui while it is typed or dragged and by ab_glyph in the picture;
+        // the two must agree, or the text jumps in size when it lands.
+        let lib = FontLib::load();
+        let ctx = egui::Context::default();
+        lib.install(&ctx);
+        for f in &lib.list {
+            let mut live = 0.0;
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(Default::default(), |ui| {
+                    let g = ui.painter().layout_no_wrap(
+                        "Pico em outubro".into(),
+                        egui::FontId::new(40.0, f.family.clone()),
+                        egui::Color32::WHITE,
+                    );
+                    live = g.size().x;
+                });
+                out.textures_delta.clear();
+            }
+            let (w, _) = measure(&f.font, 40.0, "Pico em outubro");
+            assert!(
+                (w - live).abs() / live < 0.02,
+                "{}: picture {w} vs live {live}",
+                f.name
+            );
+        }
+    }
 
     #[test]
     fn installs_ui_families() {
