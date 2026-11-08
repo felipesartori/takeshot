@@ -30,6 +30,37 @@ auto-launch = "0.6.0"
 tray-icon = "0.26.1"
 trash = "5.3.0"
 
+# Installers: `cargo build --release`, then `cargo packager --release --formats nsis,wix` (Windows),
+# `app,dmg` (macOS) or `deb,appimage` (Linux). CI builds them for each tag (.github/workflows/build.yml).
+[package.metadata.packager]
+product-name = "Takeshot"
+identifier = "br.com.takeflow.takeshot"
+publisher = "Takeflow Sistemas"
+copyright = "Copyright (c) 2026-present Takeflow Sistemas"
+category = "Utility"
+license-file = "LICENSE"
+out-dir = "target/packages"
+binaries = [{ path = "takeshot", main = true }]
+icons = [
+  "assets/brand/takeshot.ico",
+  "assets/brand/Takeshot.icns",
+  "assets/brand/png/takeui-app-32.png",
+  "assets/brand/png/takeui-app-64.png",
+  "assets/brand/png/takeui-app-128.png",
+  "assets/brand/png/takeui-app-256.png",
+  "assets/brand/png/takeui-app-512.png",
+]
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+template = "packaging/windows/installer.nsi"
+languages = ["English", "PortugueseBR"]
+appdata-paths = ["$APPDATA/takeshot", "$LOCALAPPDATA/takeshot"]
+
+[package.metadata.packager.macos]
+minimum-system-version = "11.0"
+info-plist-path = "packaging/macos/Info.plist"
+
 [profile.release]
 opt-level = 3
 lto = "thin"
