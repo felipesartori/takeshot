@@ -1,0 +1,46 @@
+# Pull requests: lint and tests on Windows, macOS and Linux, and the seven installers when the pull
+# request touches how they are made. A new push cancels the run before it.
+name: ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.paths.outputs.package }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            echo "package=true" >> "$GITHUB_OUTPUT"   # run by hand: build them
+            exit 0
+          fi
+          changed=$(git diff --name-only "$base" HEAD)
+          echo "$changed"
+          if echo "$changed" | grep -qE '^(Cargo\.toml|Cargo\.lock|build\.rs|packaging/|assets/brand/|\.github/)'; then
+            echo "package=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "package=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: changes
+    uses: ./.github/workflows/build.yml
+    with:
+      package: ${{ needs.changes.outputs.package == 'true' }}
+    secrets: inherit
