@@ -1,20 +1,19 @@
-//! Editor: the captured picture on a styled background, with drawing tools and export.
+//! Editor: the captured picture on a styled background, with drawing tools and export. The state,
+//! what the user asks for (`EditorAction`, `Editor::apply`) and the canvas (zoom, pan, drawing,
+//! keys) live here for both skins; a skin draws the bars and panels.
 
 use crate::engine::annotator::{Annotator, View, text_measure};
 use crate::engine::cursor::{self, Area, CursorCtx};
 use crate::engine::doc::{Doc, ObjId};
 use crate::engine::model::*;
 use crate::engine::render::{self, Layout};
-use crate::screens::icons::Icon;
 use crate::screens::overlay::color_image;
-use crate::screens::widgets::{self, ACCENT, BG, MUTED, TEXT};
-use crate::system::settings::Background;
-use crate::system::settings::DrawOpts;
-use crate::ui::i18n::{Msg, t};
-use crate::ui::kit::WindowControl;
-use crate::ui::kit::{self, BtnKind};
+use crate::system::settings::{Background, DrawOpts};
+use crate::ui::i18n::{Msg, t, t as tr};
+use crate::ui::kit::{self, BtnKind, WindowControl};
+use crate::ui::tokens::Tokens;
 use crate::{Shared, Switch};
-use egui::{Color32, Key, Modifiers, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Color32, Key, Modifiers, Rect, Sense, Ui, pos2, vec2};
 use image::RgbaImage;
 
 /// The answers of the "Discard changes?" dialog.
@@ -101,7 +100,6 @@ pub enum EditorAction {
     Save,
     SaveAs,
     Pin,
-    NewCapture,
     SetTool(Tool),
     SetColor([u8; 4]),
     SetWidth(f32),
@@ -122,6 +120,8 @@ pub enum EditorAction {
     Tab(PanelTab),
     /// The style (background, frame, watermark) changed in the panel.
     StyleChanged,
+    /// Pick the watermark's logo file.
+    ChooseLogo,
     Window(WindowControl),
 }
 
@@ -169,10 +169,13 @@ pub struct Editor {
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
     preview_scale: f32,
+    /// The scale the preview was last rendered for.
+    preview_target: f32,
+    /// The file name the title bar shows.
+    name: String,
     preview_src: Option<(u32, RgbaImage)>,
     lay: Option<Layout>,
     canvas_px: egui::Vec2,
-    last_avail: egui::Vec2,
     /// Document revision at the last successful copy or save; `None` until the first one when the
     /// picture arrived with objects (they were never exported either).
     saved_rev: Option<u64>,
@@ -198,10 +201,14 @@ impl Editor {
             preview: None,
             preview_dirty: true,
             preview_scale: 1.0,
+            preview_target: 0.0,
+            name: format!(
+                "Takeshot {}.png",
+                chrono::Local::now().format("%Y-%m-%d %H-%M-%S")
+            ),
             preview_src: None,
             lay: None,
             canvas_px: vec2(1.0, 1.0),
-            last_avail: vec2(0.0, 0.0),
             saved_rev,
             asking_close: false,
             closing: false,
@@ -253,10 +260,6 @@ impl Editor {
                     None => shared.toast(crate::ui::i18n::tf(Msg::CannotPin, &[""])),
                 }
             }
-            EditorAction::NewCapture => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                let _ = crate::system::actions::spawn_self(&["--capture", "--wait"]);
-            }
             EditorAction::SetTool(tool) => {
                 self.an.set_tool(tool, &mut shared.settings.draw);
                 shared.settings_dirty = true;
@@ -290,6 +293,16 @@ impl Editor {
             EditorAction::StyleChanged => {
                 self.preview_dirty = true;
                 shared.settings_dirty = true;
+            }
+            EditorAction::ChooseLogo => {
+                if let Some(p) = rfd::FileDialog::new()
+                    .add_filter("Logo", &["png", "jpg", "jpeg", "webp"])
+                    .pick_file()
+                {
+                    shared.settings.watermark.logo_path = Some(p.to_string_lossy().into_owned());
+                    shared.settings_dirty = true;
+                    self.preview_dirty = true;
+                }
             }
             EditorAction::Window(WindowControl::Close) => return self.request_close(),
             EditorAction::Window(c) => crate::ui::chrome::act(ctx, c),
@@ -325,16 +338,27 @@ impl Editor {
         .0
     }
 
-    fn rebuild_preview(&mut self, ctx: &egui::Context, avail: egui::Vec2, shared: &Shared) {
-        let ppp = ctx.pixels_per_point();
+    /// Physical pixels per picture pixel that show the whole styled picture in `avail` points.
+    fn fit_scale(&self, avail: egui::Vec2, ppp: f32, shared: &Shared) -> f32 {
+        let full = render::layout(
+            self.annotated.width() as f32,
+            self.annotated.height() as f32,
+            &shared.settings.style,
+            &shared.settings.watermark,
+        );
+        ((avail.x * ppp) / full.w)
+            .min((avail.y * ppp) / full.h)
+            .clamp(0.02, 1.0)
+    }
+
+    /// Renders the styled preview at `s` physical pixels per picture pixel (at most 1; a larger
+    /// zoom magnifies this texture).
+    fn rebuild_preview(&mut self, ctx: &egui::Context, s: f32, shared: &Shared) {
         let (iw, ih) = (
             self.annotated.width() as f32,
             self.annotated.height() as f32,
         );
-        let full = render::layout(iw, ih, &shared.settings.style, &shared.settings.watermark);
-        let s = ((avail.x * ppp) / full.w)
-            .min((avail.y * ppp) / full.h)
-            .clamp(0.02, 1.0);
+        let s = s.clamp(0.02, 1.0);
         let tw = ((iw * s).round() as u32).max(1);
         let th = ((ih * s).round() as u32).max(1);
         let need = self
@@ -368,6 +392,7 @@ impl Editor {
         self.canvas_px = vec2(img.width() as f32, img.height() as f32);
         self.lay = Some(lay);
         self.preview_scale = unit;
+        self.preview_target = s;
         match &mut self.preview {
             Some(t) => t.set(color_image(&img), egui::TextureOptions::LINEAR),
             None => {
@@ -381,7 +406,40 @@ impl Editor {
         self.preview_dirty = false;
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, frame: &eframe::Frame, shared: &mut Shared) -> Switch {
+    /// The file name the title bar shows.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn with_name(mut self, name: String) -> Self {
+        self.name = name;
+        self
+    }
+
+    /// The picture's size in pixels.
+    pub fn size(&self) -> [u32; 2] {
+        [self.base.width(), self.base.height()]
+    }
+
+    /// The scale on screen: the zoom chosen, or the one that fits.
+    pub fn shown_scale(&self) -> f32 {
+        self.zoom.unwrap_or(self.fit)
+    }
+
+    pub fn pan(&self) -> egui::Vec2 {
+        self.pan
+    }
+
+    /// One frame of the editor: the skin draws the bars and panels and calls `canvas` for the
+    /// picture; what the user asked for is carried out here, and the discard question shows when
+    /// a close waits on it.
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        frame: &eframe::Frame,
+        t: &Tokens,
+        shared: &mut Shared,
+    ) -> Switch {
         let ctx = ui.ctx().clone();
         // The window X: keep the window open and ask when there are unsaved edits.
         if hold_close(
@@ -398,258 +456,27 @@ impl Editor {
             self.preview_dirty = true;
         }
         shared.logo.sync(&ctx, &shared.settings.watermark);
-        let mut acts: Vec<EditorAction> = Vec::new();
-
-        // ------------------------------------------------ top bar
-        egui::Panel::top("editor_top")
-            .frame(
-                egui::Frame::new()
-                    .fill(widgets::PANEL)
-                    .inner_margin(egui::Margin::symmetric(12, 8))
-                    .stroke(Stroke::new(1.0, widgets::BORDER)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    widgets::tool_buttons(ui, &mut self.an, &mut shared.settings.draw, true);
-                    widgets::separator(ui);
-                    if widgets::icon_button(ui, Icon::Undo, false, t(Msg::Undo)).clicked() {
-                        acts.push(EditorAction::Undo);
-                    }
-                    if widgets::icon_button(ui, Icon::Redo, false, t(Msg::Redo)).clicked() {
-                        acts.push(EditorAction::Redo);
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        let copy = egui::Button::new(
-                            RichText::new(t(Msg::Copy)).color(Color32::WHITE).strong(),
-                        )
-                        .fill(ACCENT)
-                        .corner_radius(8)
-                        .min_size(vec2(84.0, 32.0));
-                        if ui.add(copy).clicked() {
-                            acts.push(EditorAction::Copy);
-                        }
-                        if ui
-                            .add(egui::Button::new(t(Msg::Save)).min_size(vec2(72.0, 32.0)))
-                            .clicked()
-                        {
-                            acts.push(EditorAction::Save);
-                        }
-                        if widgets::icon_button(ui, Icon::Folder, false, t(Msg::SaveAs)).clicked() {
-                            acts.push(EditorAction::SaveAs);
-                        }
-                        if widgets::icon_button(ui, Icon::Pin, false, t(Msg::PinOnScreen)).clicked()
-                        {
-                            acts.push(EditorAction::Pin);
-                        }
-                        if widgets::icon_button(ui, Icon::Full, false, t(Msg::NewCapture)).clicked()
-                        {
-                            acts.push(EditorAction::NewCapture);
-                        }
-                    });
-                });
-                // With Select the bar shows the picked object's options, and changing them restyles it.
-                if let Some(tool) = self.an.bar_tool() {
-                    ui.add_space(4.0);
-                    let before = shared.settings.draw.clone();
-                    ui.horizontal(|ui| {
-                        widgets::options_row(ui, tool, &mut shared.settings.draw, &shared.fonts)
-                    });
-                    self.an.restyle_from_opts(&before, &shared.settings.draw);
-                }
-            });
-
-        // ------------------------------------------------ style sidebar
-        egui::Panel::right("editor_style")
-            .exact_size(318.0)
-            .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(widgets::PANEL)
-                    .inner_margin(egui::Margin::symmetric(16, 12))
-                    .stroke(Stroke::new(1.0, widgets::BORDER)),
-            )
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if widgets::style_panel(
-                            ui,
-                            &mut shared.settings.style,
-                            &mut shared.settings.watermark,
-                            &mut shared.logo,
-                        ) {
-                            self.preview_dirty = true;
-                            shared.settings_dirty = true;
-                        }
-                        shared.logo.sync(&ctx, &shared.settings.watermark);
-                        widgets::section(ui, "Exportar");
-                        let (iw, ih) = (
-                            self.annotated.width() as f32,
-                            self.annotated.height() as f32,
-                        );
-                        let full = render::layout(
-                            iw,
-                            ih,
-                            &shared.settings.style,
-                            &shared.settings.watermark,
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "{} × {} px  ·  PNG sem perdas",
-                                full.w as u32, full.h as u32
-                            ))
-                            .color(TEXT),
-                        );
-                        ui.label(
-                            RichText::new("Resolução original, sem compressão com perda.")
-                                .color(MUTED)
-                                .size(12.0),
-                        );
-                        if ui.button("Restaurar estilo padrão").clicked() {
-                            shared.settings.style = Default::default();
-                            self.preview_dirty = true;
-                            shared.settings_dirty = true;
-                        }
-                    });
-            });
-
-        // ------------------------------------------------ canvas
+        crate::ui::chrome::adopt_window(EDITOR_TITLE);
+        let acts = crate::skins::editor(ui, t, self, shared);
         let mut switch = Switch::None;
-        egui::CentralPanel::no_frame()
-            .frame(egui::Frame::new().fill(BG))
-            .show(ui, |ui| {
-                let avail_rect = ui.max_rect().shrink(28.0);
-                let avail = avail_rect.size();
-                if (avail - self.last_avail).length() > 1.0 {
-                    self.last_avail = avail;
-                    self.preview_dirty = true;
-                }
-                if self.preview_dirty && avail.x > 10.0 && avail.y > 10.0 {
-                    self.rebuild_preview(&ctx, avail, shared);
-                }
-                let ppp = ctx.pixels_per_point();
-                let size = self.canvas_px / ppp;
-                let d = Rect::from_center_size(avail_rect.center(), size);
-                let painter = ui.painter_at(ui.max_rect());
-                if matches!(shared.settings.style.background, Background::None)
-                    || shared.settings.style.radius > 0.0
-                {
-                    checker(&painter, d);
-                }
-                if let Some(t) = &self.preview {
-                    painter.image(
-                        t.id(),
-                        d,
-                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
-                }
-                let Some(lay) = self.lay else { return };
-                let view = View {
-                    origin: d.min + vec2(lay.img[0], lay.img[1]) / ppp,
-                    k: self.preview_scale / ppp,
-                };
-                let img_rect = Rect::from_min_max(
-                    view.to_screen(pos2(0.0, 0.0)),
-                    view.to_screen(pos2(self.base.width() as f32, self.base.height() as f32)),
-                );
-                let resp = ui.interact(
-                    img_rect.expand(40.0),
-                    ui.scope_id().with("ed_canvas"),
-                    Sense::click_and_drag(),
-                );
-                let typing = self.an.handle_typing(ui, &shared.settings.draw);
-                let clip = ui.painter_at(img_rect.expand(40.0));
-                {
-                    // The measure borrows the fonts; the shortcuts below need `shared` mutably.
-                    let measure = text_measure(&shared.fonts);
-                    self.an
-                        .handle_canvas(ui, &resp, &view, &measure, &mut shared.settings.draw);
-                    if (resp.hovered() || self.an.dragging.is_some())
-                        && let Some(p) = ui.input(|i| i.pointer.hover_pos())
-                    {
-                        // While a new shape is drawn, handles and objects underneath keep the pointer.
-                        let (handle, over_object) = if self.an.live.is_some() {
-                            (None, false)
-                        } else {
-                            self.an.hover(view.to_img(p), &view, &measure)
-                        };
-                        ctx.set_cursor_icon(cursor::pick(&CursorCtx {
-                            tool: self.an.tool,
-                            over_image: resp.rect.contains(p),
-                            over_chrome: false,
-                            handle,
-                            over_object,
-                            typing: self.an.draft.is_some(),
-                            dragging: self.an.dragging.is_some(),
-                            space_pan: false,
-                            area: Area::NotApplicable,
-                        }));
-                    }
-                    let theme = crate::ui::tokens::tokens(
-                        shared.settings.ui_theme,
-                        crate::ui::tokens::effective_dark(
-                            shared.settings.ui_mode,
-                            ctx.system_theme(),
-                        ),
-                    );
-                    self.an
-                        .paint_selection(&clip, &view, &theme, &shared.fonts, &measure);
-                }
-                self.an.paint_live(
-                    &clip,
-                    &view,
-                    &shared.fonts,
-                    &shared.settings.draw,
-                    ui.input(|i| i.time),
-                );
-                if !typing && !self.asking_close && !ctx.egui_wants_keyboard_input() {
-                    self.an.handle_object_keys(ui);
-                    widgets::tool_shortcuts(ui, &mut self.an, &mut shared.settings.draw, true);
-                    let cmd = Modifiers::COMMAND;
-                    self.an.handle_history_keys(ui);
-                    if ui.input_mut(|i| i.consume_key(cmd, Key::C)) {
-                        acts.push(EditorAction::Copy);
-                    }
-                    if ui.input_mut(|i| i.consume_key(cmd | Modifiers::SHIFT, Key::S)) {
-                        acts.push(EditorAction::SaveAs);
-                    } else if ui.input_mut(|i| i.consume_key(cmd, Key::S)) {
-                        acts.push(EditorAction::Save);
-                    }
-                    if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
-                        && self.an.tool != Tool::Select
-                    {
-                        self.an.set_tool(Tool::Select, &mut shared.settings.draw);
-                    }
-                    if ui.input_mut(|i| i.consume_key(cmd, Key::W)) {
-                        switch = self.request_close();
-                    }
-                }
-            });
         for a in acts {
             if let s @ Switch::Close = self.apply(a, &ctx, Some(frame), shared) {
                 switch = s;
             }
         }
         if self.asking_close {
-            let theme = crate::ui::tokens::tokens(
-                shared.settings.ui_theme,
-                crate::ui::tokens::effective_dark(shared.settings.ui_mode, ctx.system_theme()),
-            );
             let answer = kit::confirm_dialog(
                 &ctx,
-                &theme,
+                t,
                 "editor-discard",
-                t(Msg::DiscardTitle),
-                t(Msg::DiscardBody),
+                tr(Msg::DiscardTitle),
+                tr(Msg::DiscardBody),
                 &mut |_| {},
                 &[
-                    (t(Msg::Discard), BtnKind::Danger, CloseChoice::Discard),
-                    (t(Msg::Cancel), BtnKind::Secondary, CloseChoice::Cancel),
+                    (tr(Msg::Discard), BtnKind::Danger, CloseChoice::Discard),
+                    (tr(Msg::Cancel), BtnKind::Secondary, CloseChoice::Cancel),
                     (
-                        t(Msg::CopyAndClose),
+                        tr(Msg::CopyAndClose),
                         BtnKind::Primary,
                         CloseChoice::CopyAndClose,
                     ),
@@ -665,6 +492,138 @@ impl Editor {
             }
         }
         switch
+    }
+
+    /// The picture on its canvas, filling `ui`'s rect: zoom (Ctrl+wheel, Ctrl+0 fits, Ctrl+1 is
+    /// 100 %), pan (Space+drag or the middle button), drawing and selecting, the pointer, and the
+    /// editor's keys. Shared by both skins; returns what the keys asked for.
+    pub fn canvas(&mut self, ui: &mut Ui, t: &Tokens, shared: &mut Shared) -> Vec<EditorAction> {
+        let ctx = ui.ctx().clone();
+        let mut acts = Vec::new();
+        let area = ui.max_rect();
+        ui.painter().rect_filled(area, 0.0, t.canvas);
+        let room = area.shrink(28.0);
+        let avail = room.size();
+        if avail.x <= 10.0 || avail.y <= 10.0 {
+            return acts;
+        }
+        let ppp = ctx.pixels_per_point();
+        let fit = self.fit_scale(avail, ppp, shared);
+        if (fit - self.fit).abs() > 1e-4 {
+            self.fit = fit;
+            if self.zoom.is_none() {
+                self.preview_dirty = true;
+            }
+        }
+        let shown = self.shown_scale();
+        if self.preview_dirty || (shown.min(1.0) - self.preview_target).abs() > 1e-4 {
+            self.rebuild_preview(&ctx, shown, shared);
+        }
+        let size = self.canvas_px * (shown / self.preview_scale) / ppp;
+        // A picture larger than the canvas moves within its edges; a smaller one stays centred.
+        let slack = ((size - avail) * 0.5).max(egui::Vec2::ZERO);
+        self.pan = self.pan.clamp(-slack, slack);
+        let d = Rect::from_center_size(room.center() + self.pan, size);
+        let painter = ui.painter_at(area);
+        if matches!(shared.settings.style.background, Background::None)
+            || shared.settings.style.radius > 0.0
+        {
+            checker(&painter, d);
+        }
+        if let Some(tex) = &self.preview {
+            painter.image(
+                tex.id(),
+                d,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        let Some(lay) = self.lay else { return acts };
+        let m = shown / self.preview_scale;
+        let view = View {
+            origin: d.min + vec2(lay.img[0], lay.img[1]) * m / ppp,
+            k: shown / ppp,
+        };
+        let img_rect = Rect::from_min_max(
+            view.to_screen(pos2(0.0, 0.0)),
+            view.to_screen(pos2(self.base.width() as f32, self.base.height() as f32)),
+        );
+        let resp = ui.interact(
+            img_rect.expand(40.0).intersect(area),
+            ui.scope_id().with("ed_canvas"),
+            Sense::click_and_drag(),
+        );
+        let typing = self.an.handle_typing(ui, &shared.settings.draw);
+        // Space (not while typing) or the middle button drags the picture instead of drawing.
+        let space = !typing && self.an.draft.is_none() && ui.input(|i| i.key_down(Key::Space));
+        let middle = resp.dragged_by(egui::PointerButton::Middle);
+        let panning = space || middle;
+        if panning {
+            if resp.dragged() {
+                self.pan += resp.drag_delta();
+            }
+            if resp.hovered() || resp.dragged() {
+                ctx.set_cursor_icon(if resp.dragged() {
+                    egui::CursorIcon::Grabbing
+                } else {
+                    egui::CursorIcon::Grab
+                });
+            }
+        }
+        // Ctrl+wheel zooms one step per notch.
+        if resp.hovered() {
+            let z = ui.input(|i| i.zoom_delta());
+            if z > 1.001 {
+                acts.push(EditorAction::Zoom(Zoom::In));
+            } else if z < 0.999 {
+                acts.push(EditorAction::Zoom(Zoom::Out));
+            }
+        }
+        let clip = ui.painter_at(img_rect.expand(40.0).intersect(area));
+        {
+            // The measure borrows the fonts; the shortcuts below need `shared` mutably.
+            let measure = text_measure(&shared.fonts);
+            if !panning {
+                self.an
+                    .handle_canvas(ui, &resp, &view, &measure, &mut shared.settings.draw);
+                if (resp.hovered() || self.an.dragging.is_some())
+                    && let Some(p) = ui.input(|i| i.pointer.hover_pos())
+                {
+                    // While a new shape is drawn, handles and objects underneath keep the pointer.
+                    let (handle, over_object) = if self.an.live.is_some() {
+                        (None, false)
+                    } else {
+                        self.an.hover(view.to_img(p), &view, &measure)
+                    };
+                    ctx.set_cursor_icon(cursor::pick(&CursorCtx {
+                        tool: self.an.tool,
+                        over_image: resp.rect.contains(p),
+                        over_chrome: false,
+                        handle,
+                        over_object,
+                        typing: self.an.draft.is_some(),
+                        dragging: self.an.dragging.is_some(),
+                        space_pan: false,
+                        area: Area::NotApplicable,
+                    }));
+                }
+            }
+            self.an
+                .paint_selection(&clip, &view, t, &shared.fonts, &measure);
+        }
+        self.an.paint_live(
+            &clip,
+            &view,
+            &shared.fonts,
+            &shared.settings.draw,
+            ui.input(|i| i.time),
+        );
+        if !typing && !self.asking_close && !ctx.egui_wants_keyboard_input() {
+            self.an.handle_object_keys(ui);
+            self.an.handle_history_keys(ui);
+            acts.extend(keys(ui, self.an.tool));
+        }
+        acts
     }
 
     /// Copies the final picture; true when it reached the clipboard.
@@ -719,6 +678,56 @@ impl Editor {
             self.preview_dirty = true;
         }
     }
+}
+
+/// The window title the editor's own bar adopts.
+pub const EDITOR_TITLE: &str = "Takeshot · editor";
+
+/// The editor's keys besides the canvas behaviour: copy, save, pin, close, zoom, Esc back to
+/// Select, and the tool letters (only without Ctrl or Alt).
+fn keys(ui: &Ui, tool: Tool) -> Vec<EditorAction> {
+    let mut acts = Vec::new();
+    let cmd = Modifiers::COMMAND;
+    ui.input_mut(|i| {
+        if i.consume_key(cmd, Key::C) {
+            acts.push(EditorAction::Copy);
+        }
+        if i.consume_key(cmd | Modifiers::SHIFT, Key::S) {
+            acts.push(EditorAction::SaveAs);
+        } else if i.consume_key(cmd, Key::S) {
+            acts.push(EditorAction::Save);
+        }
+        if i.consume_key(cmd, Key::T) {
+            acts.push(EditorAction::Pin);
+        }
+        if i.consume_key(cmd, Key::W) {
+            acts.push(EditorAction::Window(WindowControl::Close));
+        }
+        if i.consume_key(cmd, Key::Num0) {
+            acts.push(EditorAction::Zoom(Zoom::Fit));
+        }
+        if i.consume_key(cmd, Key::Num1) {
+            acts.push(EditorAction::Zoom(Zoom::Percent(100)));
+        }
+        if i.consume_key(cmd, Key::Plus) || i.consume_key(cmd, Key::Equals) {
+            acts.push(EditorAction::Zoom(Zoom::In));
+        }
+        if i.consume_key(cmd, Key::Minus) {
+            acts.push(EditorAction::Zoom(Zoom::Out));
+        }
+        if tool != Tool::Select && i.consume_key(Modifiers::NONE, Key::Escape) {
+            acts.push(EditorAction::SetTool(Tool::Select));
+        }
+        let m = i.modifiers;
+        if !(m.ctrl || m.command || m.alt) {
+            for t in [Tool::Select].into_iter().chain(Tool::DRAWING) {
+                if i.key_pressed(t.key()) {
+                    acts.push(EditorAction::SetTool(t));
+                }
+            }
+        }
+    });
+    acts
 }
 
 fn checker(p: &egui::Painter, r: Rect) {

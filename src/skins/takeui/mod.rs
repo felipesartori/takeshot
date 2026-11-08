@@ -1,5 +1,6 @@
 //! The TakeUI skin (option A of the prototypes): the TakeFlow family look.
 
+pub mod editor;
 pub mod home;
 pub mod settings;
 pub mod shell;
@@ -19,7 +20,7 @@ pub(crate) mod testing {
     /// The colour a mesh's block carries.
     pub const MESH: Color32 = Color32::PLACEHOLDER;
 
-    /// Runs a warm-up frame and then one frame per event list at `size`; returns every action and
+    /// Runs two warm-up frames (so widths remembered from a frame before settle) and then one frame per event list at `size`; returns every action and
     /// the texts painted in the last frame with their screen rects.
     pub fn run(
         home: &mut Home,
@@ -50,7 +51,7 @@ pub(crate) mod testing {
         let mut acts = Vec::new();
         let mut painted = Vec::new();
         let mut blocks = Vec::new();
-        for (i, events) in std::iter::once(vec![]).chain(frames).enumerate() {
+        for (i, events) in [vec![], vec![]].into_iter().chain(frames).enumerate() {
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(size.0, size.1))),
                 time: Some(i as f64 * 0.05),
@@ -61,6 +62,50 @@ pub(crate) mod testing {
                 let t = shared.tokens(None);
                 crate::skins::begin_frame(ui.ctx(), &t);
                 acts.extend(crate::skins::main_window(ui, &t, home, shared));
+            });
+            full.textures_delta.clear();
+            painted.clear();
+            blocks.clear();
+            for c in &full.shapes {
+                walk(&c.shape, &mut painted, &mut blocks);
+            }
+        }
+        (acts, painted, blocks)
+    }
+
+    /// `run_painted` for the editor window.
+    pub fn run_editor(
+        ed: &mut crate::screens::editor::Editor,
+        shared: &mut Shared,
+        size: (f32, f32),
+        dark: bool,
+        frames: Vec<Vec<Event>>,
+    ) -> (
+        Vec<crate::screens::editor::EditorAction>,
+        Vec<(String, Rect)>,
+        Vec<Block>,
+    ) {
+        shared.settings.ui_mode = if dark {
+            crate::ui::tokens::UiMode::Dark
+        } else {
+            crate::ui::tokens::UiMode::Light
+        };
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        let mut acts = Vec::new();
+        let mut painted = Vec::new();
+        let mut blocks = Vec::new();
+        for (i, events) in [vec![], vec![]].into_iter().chain(frames).enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(size.0, size.1))),
+                time: Some(i as f64 * 0.05),
+                events,
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                let t = shared.tokens(None);
+                crate::skins::begin_frame(ui.ctx(), &t);
+                acts.extend(crate::skins::editor(ui, &t, ed, shared));
             });
             full.textures_delta.clear();
             painted.clear();

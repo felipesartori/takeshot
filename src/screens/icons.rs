@@ -20,8 +20,6 @@ pub enum Icon {
     Save,
     Pin,
     Close,
-    Full,
-    Folder,
 }
 
 pub fn for_tool(t: crate::engine::model::Tool) -> Icon {
@@ -176,32 +174,6 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Close => {
             p.line_segment([at(5.5, 5.5), at(14.5, 14.5)], st);
             p.line_segment([at(14.5, 5.5), at(5.5, 14.5)], st);
-        }
-        Icon::Full => {
-            for (a, b, d) in [
-                ((4.0, 8.0), (4.0, 4.0), (8.0, 4.0)),
-                ((12.0, 4.0), (16.0, 4.0), (16.0, 8.0)),
-                ((16.0, 12.0), (16.0, 16.0), (12.0, 16.0)),
-                ((8.0, 16.0), (4.0, 16.0), (4.0, 12.0)),
-            ] {
-                p.add(Shape::line(
-                    vec![at(a.0, a.1), at(b.0, b.1), at(d.0, d.1)],
-                    st,
-                ));
-            }
-        }
-        Icon::Folder => {
-            p.add(Shape::closed_line(
-                vec![
-                    at(3.5, 5.0),
-                    at(8.0, 5.0),
-                    at(9.5, 6.8),
-                    at(16.5, 6.8),
-                    at(16.5, 15.0),
-                    at(3.5, 15.0),
-                ],
-                st,
-            ));
         }
     }
 }

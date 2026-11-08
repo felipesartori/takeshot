@@ -297,11 +297,12 @@ impl App {
             ctx.send_viewport_cmd(C::Fullscreen(false));
         }
         ctx.send_viewport_cmd(C::WindowLevel(egui::WindowLevel::Normal));
-        ctx.send_viewport_cmd(C::Decorations(true));
+        // The editor draws the theme's own bar; the system's only with the native fallback.
+        ctx.send_viewport_cmd(C::Decorations(ui::chrome::native()));
         ctx.send_viewport_cmd(C::Resizable(true));
         ctx.send_viewport_cmd(C::InnerSize(size));
         ctx.send_viewport_cmd(C::OuterPosition(pos));
-        ctx.send_viewport_cmd(C::Title("Takeshot · editor".into()));
+        ctx.send_viewport_cmd(C::Title(screens::editor::EDITOR_TITLE.into()));
         self.mode = Mode::Editor(e);
     }
 
@@ -367,7 +368,11 @@ impl eframe::App for App {
                 Switch::None
             }
             Mode::Overlay(o) => o.ui(ui, frame, &mut self.shared),
-            Mode::Editor(e) => e.ui(ui, frame, &mut self.shared),
+            Mode::Editor(e) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                skins::begin_frame(&ctx, &t);
+                e.ui(ui, frame, &t, &mut self.shared)
+            }
             Mode::Pin(p) => p.ui(ui, frame, &mut self.shared),
             Mode::Notice(n) => n.ui(ui, frame, &mut self.shared),
             Mode::Gallery(g) => {
@@ -578,10 +583,10 @@ fn main() -> eframe::Result {
             }
         }
         (Launch::Edit(_), _) => {
-            vp = vp
-                .with_title("Takeshot · editor")
+            vp = ui::chrome::frameless(vp)
+                .with_title(screens::editor::EDITOR_TITLE)
                 .with_inner_size([1280.0, 820.0])
-                .with_min_inner_size([900.0, 560.0]);
+                .with_min_inner_size([900.0, 600.0]);
         }
         (Launch::Pin(p), _) => {
             if let Ok(img) = image::open(p) {
@@ -639,6 +644,8 @@ fn main() -> eframe::Result {
             let fonts = Arc::new(fonts::FontLib::load());
             fonts.install(ctx);
             widgets::apply_theme(ctx);
+            // Ctrl+0, Ctrl+1 and Ctrl+plus or minus belong to the editor's zoom, not egui's UI zoom.
+            ctx.options_mut(|o| o.zoom_with_keyboard = false);
             // Theme, mode and language: command-line overrides win for this run only.
             let theme = args.theme.unwrap_or(settings.ui_theme);
             let ui_mode = args.mode.unwrap_or(settings.ui_mode);
@@ -695,18 +702,23 @@ fn main() -> eframe::Result {
                         Some(i) => (i, false),
                         None => (capture::sample_window(1200, 740), true),
                     };
-                    if let Some(p) = &file
-                        && p.starts_with(std::env::temp_dir())
-                    {
-                        let _ = std::fs::remove_file(p);
+                    // A real file keeps its name in the title bar; a temporary hand-off is removed
+                    // and shows the name a new capture would get.
+                    let mut name = None;
+                    if let Some(p) = &file {
+                        if p.starts_with(std::env::temp_dir()) {
+                            let _ = std::fs::remove_file(p);
+                        } else if !demo {
+                            name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                        }
                     }
                     let anns = if demo { demo_annotations() } else { Vec::new() };
-                    Mode::Editor(Box::new(editor::Editor::new(
-                        ctx,
-                        img,
-                        engine::doc::Doc::from_anns(anns),
-                        &shared,
-                    )))
+                    let ed =
+                        editor::Editor::new(ctx, img, engine::doc::Doc::from_anns(anns), &shared);
+                    Mode::Editor(Box::new(match name {
+                        Some(n) => ed.with_name(n),
+                        None => ed,
+                    }))
                 }
                 Launch::Pin(_) => match pin_img {
                     Some((img, size)) => Mode::Pin(Box::new(pin::Pin::new(img, size))),

@@ -714,6 +714,43 @@ pub fn tool_button(
     resp.on_hover_text(tip)
 }
 
+/// An 18 × 18 colour to pick, as in the editor's tool bar: the colour in a circle, a 1 px ring
+/// around dark colours, a 2 px ring in the text colour when chosen; hover only rings it in muted.
+pub fn color_dot(ui: &mut Ui, t: &Tokens, color: Color32, selected: bool, tip: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let c = rect.center();
+    if selected {
+        p.circle_filled(c, 9.0, t.text);
+        p.circle_filled(c, 7.0, t.surf);
+        p.circle_filled(c, 5.5, color);
+    } else {
+        p.circle_filled(c, 7.5, color);
+        let ring = mix(t.border, t.muted, h);
+        p.circle_stroke(c, 8.5, Stroke::new(1.0, ring));
+    }
+    resp.on_hover_text(tip)
+}
+
+/// A 28 × 28 stroke width to pick: a dot as wide as the stroke (2 to 12 px drawn 3 to 11 px),
+/// on the raised colour when chosen; hover only colours the background.
+pub fn width_dot(ui: &mut Ui, t: &Tokens, width: f32, selected: bool, tip: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let bg = if selected {
+        t.raised
+    } else {
+        mix(Color32::TRANSPARENT, t.hover, h)
+    };
+    p.rect_filled(rect, CornerRadius::same(t.radius), bg);
+    let r = (width * 0.5 + 1.0).clamp(1.5, 5.5);
+    let fg = if selected { t.text } else { t.muted };
+    p.circle_filled(rect.center(), r, fg);
+    resp.on_hover_text(tip)
+}
+
 /// 36 × 20 switch; the knob jumps, only colours ease.
 pub fn switch(ui: &mut Ui, t: &Tokens, on: &mut bool) -> Response {
     let (rect, mut resp) = ui.allocate_exact_size(vec2(36.0, 20.0), Sense::click());
@@ -1006,42 +1043,68 @@ pub fn select<T: PartialEq + Copy>(
         .map(|(_, s)| *s)
         .unwrap_or("");
     let mut changed = false;
-    let mut resp = ui
-        .scope(|ui| {
-            ui.spacing_mut().interact_size.y = 32.0;
-            ui.spacing_mut().button_padding = vec2(10.0, 8.0);
-            let w = &mut ui.visuals_mut().widgets;
-            for (st, stroke) in [
-                (&mut w.inactive, t.border),
-                (&mut w.hovered, t.muted),
-                (&mut w.active, t.muted),
-                (&mut w.open, t.muted),
-            ] {
-                st.weak_bg_fill = t.input;
-                st.bg_stroke = Stroke::new(1.0, stroke);
+    let mut resp = combo(ui, t, id, current, width, 32.0, |ui| {
+        for (v, s) in items {
+            if ui.selectable_label(*value == *v, *s).clicked() && *value != *v {
+                *value = *v;
+                changed = true;
             }
-            let chevron = t.muted;
-            egui::ComboBox::from_id_salt(id)
-                .selected_text(current)
-                .width(width)
-                .icon(move |ui, rect, _, _| {
-                    draw_icon(ui.painter(), rect.center(), Ico::ChevronDown, 15.0, chevron)
-                })
-                .show_ui(ui, |ui| {
-                    for (v, s) in items {
-                        if ui.selectable_label(*value == *v, *s).clicked() && *value != *v {
-                            *value = *v;
-                            changed = true;
-                        }
-                    }
-                })
-                .response
-        })
-        .inner;
+        }
+    });
     if changed {
         resp.mark_changed();
     }
     resp
+}
+
+/// A drop-down `height` px tall showing `text`, in the select's look; `contents` fills the list.
+pub fn combo(
+    ui: &mut Ui,
+    t: &Tokens,
+    id: &str,
+    text: &str,
+    width: f32,
+    height: f32,
+    contents: impl FnOnce(&mut Ui),
+) -> Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().interact_size.y = height;
+        ui.spacing_mut().button_padding = vec2(10.0, ((height - 16.0) / 2.0).max(2.0));
+        let w = &mut ui.visuals_mut().widgets;
+        for (st, stroke) in [
+            (&mut w.inactive, t.border),
+            (&mut w.hovered, t.muted),
+            (&mut w.active, t.muted),
+            (&mut w.open, t.muted),
+        ] {
+            st.weak_bg_fill = t.input;
+            st.bg_stroke = Stroke::new(1.0, stroke);
+        }
+        let chevron = t.muted;
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(text)
+            .width(width)
+            .icon(move |ui, rect, _, _| {
+                draw_icon(ui.painter(), rect.center(), Ico::ChevronDown, 15.0, chevron)
+            })
+            .show_ui(ui, contents)
+            .response
+    })
+    .inner
+}
+
+/// An 18 × 18 "+" in the colour row that opens a custom colour; hover only colours its ring.
+pub fn color_add(ui: &mut Ui, t: &Tokens, tip: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    p.circle_stroke(
+        rect.center(),
+        8.5,
+        Stroke::new(1.0, mix(t.border, t.muted, h)),
+    );
+    draw_icon(p, rect.center(), Ico::Plus, 12.0, mix(t.muted, t.text, h));
+    resp.on_hover_text(tip)
 }
 
 /// TakeUI top navigation: height 30, fully rounded.
@@ -1763,6 +1826,19 @@ mod tests {
                 "section_item",
                 Box::new(|ui| section_item(ui, &t, Ico::Sliders, "General", false)),
             ),
+            (
+                "color_dot",
+                Box::new(|ui| color_dot(ui, &t, Color32::RED, false, "Red")),
+            ),
+            (
+                "color_dot selected",
+                Box::new(|ui| color_dot(ui, &t, Color32::RED, true, "Red")),
+            ),
+            (
+                "width_dot",
+                Box::new(|ui| width_dot(ui, &t, 5.0, false, "5 px")),
+            ),
+            ("color_add", Box::new(|ui| color_add(ui, &t, "Custom"))),
             (
                 "menu_item",
                 Box::new(|ui| menu_item(ui, &t, Some(Ico::Scan), "Capture", Some("PrtSc"), false)),

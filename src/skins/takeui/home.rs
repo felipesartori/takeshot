@@ -558,7 +558,15 @@ mod tests {
         let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
         let card = painted_at(&painted, &["a.png"], |_| true).unwrap();
         let hover = vec![vec![egui::Event::PointerMoved(card)]];
-        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, hover.clone());
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (1160.0, 740.0), true, hover.clone());
+        // The card: the smallest tall rectangle around its name.
+        let rect = blocks
+            .iter()
+            .map(|(r, _)| *r)
+            .filter(|r| r.contains(card) && r.height() > 100.0 && r.width() < 400.0)
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .expect("the card");
         let a = PathBuf::from("a.png");
         for (icon, want) in [
             (Ico::Copy, MainAction::Copy(a.clone())),
@@ -567,9 +575,9 @@ mod tests {
             (Ico::Trash, MainAction::Trash(a.clone())),
         ] {
             let g = glyph(icon).to_string();
-            // The card's own button: over its picture, under the header and the filters.
+            // The card's own button: inside the card, above its name.
             let at = painted_at(&painted, &[g.as_str()], |r| {
-                r.center().y > 180.0 && r.center().y < card.y
+                rect.contains(r.center()) && r.center().y < card.y
             })
             .expect("button painted");
             let mut frames = hover.clone();

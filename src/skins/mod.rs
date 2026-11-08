@@ -21,6 +21,17 @@ pub fn main_window(
     acts
 }
 
+/// The editor in the current theme (TakeUI for both until the Coral UI skin exists). Returns what
+/// the user asked for; `Editor::apply` does it.
+pub fn editor(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    ed: &mut crate::screens::editor::Editor,
+    shared: &mut Shared,
+) -> Vec<crate::screens::editor::EditorAction> {
+    takeui::editor::editor(ui, t, ed, shared)
+}
+
 /// Applies the egui style for this look when it changed since the last frame (theme or light and
 /// dark); true when it did.
 pub fn begin_frame(ctx: &egui::Context, t: &Tokens) -> bool {
