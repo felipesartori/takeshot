@@ -367,7 +367,9 @@ impl Annotator {
     }
 
     /// For the pointer: the handle under `p_img` (or the one being dragged) and whether an object is there.
-    pub fn hover(&self, p_img: Pos2, view: &View, m: TextMeasure) -> (Option<Handle>, bool) {
+    /// What is under the pointer: a handle of the selection, whether an object is, and whether a
+    /// selected one is (any tool moves it).
+    pub fn hover(&self, p_img: Pos2, view: &View, m: TextMeasure) -> (Option<Handle>, bool, bool) {
         let handle = match self.dragging {
             Some(Drag::Resize { handle, .. }) => Some(handle),
             _ => self
@@ -375,14 +377,16 @@ impl Annotator {
                 .handle_at(p_img, HANDLE_REACH / view.k, m)
                 .map(|(_, h)| h),
         };
-        let over = matches!(self.dragging, Some(Drag::Move { .. }))
-            || self.doc.hit(p_img, HIT_REACH / view.k, m).is_some();
-        (handle, over)
+        let moving = matches!(self.dragging, Some(Drag::Move { .. }));
+        let hit = self.doc.hit(p_img, HIT_REACH / view.k, m);
+        let over_selection = moving || hit.is_some_and(|id| self.doc.selected().contains(&id));
+        (handle, moving || hit.is_some(), over_selection)
     }
 
-    /// Selection, moving and resizing on a canvas response. Handles of selected objects answer with
-    /// any tool; picking and moving by the body only with Select. `Missed` leaves the interaction to
-    /// drawing (`handle_pointer`) or to the capture area.
+    /// Selection, moving and resizing on a canvas response. Handles and the body of selected
+    /// objects answer with any tool (the shape just drawn can be put in place at once); picking
+    /// other objects only with Select. `Missed` leaves the interaction to drawing
+    /// (`handle_pointer`) or to the capture area.
     pub fn handle_select_pointer(
         &mut self,
         ui: &Ui,
@@ -423,7 +427,12 @@ impl Annotator {
         let drag = if let Some((id, handle)) = self.doc.handle_at(p, HANDLE_REACH / view.k, m) {
             Drag::Resize { id, handle }
         } else if self.tool != Tool::Select {
-            return SelectOutcome::Missed;
+            // A drawing tool moves the selection by its body and draws everywhere else, over
+            // other objects too.
+            match self.doc.hit(p, HIT_REACH / view.k, m) {
+                Some(id) if self.doc.selected().contains(&id) => Drag::Move { last: p },
+                _ => return SelectOutcome::Missed,
+            }
         } else if let Some(id) = self.doc.hit(p, HIT_REACH / view.k, m) {
             if shift {
                 self.doc.select(Some(id), true);
@@ -1428,6 +1437,79 @@ mod tests {
     }
 
     #[test]
+    fn a_drawing_tool_moves_the_selected_shape() {
+        let (mut an, ids) = with(
+            Tool::Arrow,
+            vec![rect_ann((100.0, 100.0), (200.0, 200.0), false)],
+        );
+        an.doc.select(Some(ids[0]), false);
+        let mut opts = DrawOpts::default();
+        // The left edge, away from its handles.
+        let frames = drag(
+            pos2(100.0, 120.0),
+            &[pos2(130.0, 150.0), pos2(160.0, 180.0)],
+        );
+        run(Modifiers::NONE, frames, |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert_eq!(an.doc.objs().len(), 1, "nothing new was drawn");
+        assert!(
+            bounds(&an, ids[0])
+                .min
+                .distance(pos2(160.0 - 2.0, 160.0 - 2.0))
+                < 0.01
+        );
+        an.undo();
+        assert!(
+            bounds(&an, ids[0])
+                .min
+                .distance(pos2(100.0 - 2.0, 100.0 - 2.0))
+                < 0.01
+        );
+        assert!(!an.doc.undo(), "one step for the whole move");
+    }
+
+    #[test]
+    fn a_drawing_tool_still_draws_over_other_shapes() {
+        let (mut an, ids) = with(
+            Tool::Arrow,
+            vec![
+                rect_ann((100.0, 100.0), (200.0, 200.0), false),
+                rect_ann((400.0, 400.0), (500.0, 500.0), false),
+            ],
+        );
+        an.doc.select(Some(ids[0]), false);
+        let mut opts = DrawOpts::default();
+        let before = bounds(&an, ids[1]);
+        // An arrow that starts on the other rectangle's edge.
+        let frames = drag(
+            pos2(400.0, 420.0),
+            &[pos2(350.0, 380.0), pos2(300.0, 300.0)],
+        );
+        run(Modifiers::NONE, frames, |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert_eq!(an.doc.objs().len(), 3, "an arrow was drawn");
+        assert_eq!(bounds(&an, ids[1]), before, "the other rectangle stays");
+    }
+
+    #[test]
+    fn the_pointer_shows_move_over_the_selection_with_any_tool() {
+        let (mut an, ids) = with(
+            Tool::Pen,
+            vec![
+                rect_ann((100.0, 100.0), (200.0, 200.0), false),
+                rect_ann((400.0, 400.0), (500.0, 500.0), false),
+            ],
+        );
+        an.doc.select(Some(ids[0]), false);
+        let (_, over, on_selection) = an.hover(pos2(100.0, 120.0), &VIEW, &m);
+        assert!(over && on_selection);
+        let (_, over, on_selection) = an.hover(pos2(400.0, 420.0), &VIEW, &m);
+        assert!(over && !on_selection);
+    }
+
+    #[test]
     fn a_drawing_tool_on_a_selected_handle_resizes_instead_of_drawing() {
         let (mut an, ids) = with(
             Tool::Rect,
@@ -1650,7 +1732,7 @@ mod tests {
             Tool::Select,
             vec![rect_ann((100.0, 100.0), (200.0, 200.0), true)],
         );
-        assert_eq!(an.hover(pos2(150.0, 150.0), &VIEW, &m), (None, true));
+        assert_eq!(an.hover(pos2(150.0, 150.0), &VIEW, &m), (None, true, false));
         assert_eq!(
             an.hover(pos2(200.0, 200.0), &VIEW, &m).0,
             None,
@@ -1659,9 +1741,12 @@ mod tests {
         an.doc.select(Some(ids[0]), false);
         assert_eq!(
             an.hover(pos2(201.0, 199.0), &VIEW, &m),
-            (Some(Handle::SE), true)
+            (Some(Handle::SE), true, true)
         );
-        assert_eq!(an.hover(pos2(400.0, 400.0), &VIEW, &m), (None, false));
+        assert_eq!(
+            an.hover(pos2(400.0, 400.0), &VIEW, &m),
+            (None, false, false)
+        );
         an.dragging = Some(Drag::Resize {
             id: ids[0],
             handle: Handle::N,
