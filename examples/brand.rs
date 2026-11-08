@@ -1,6 +1,7 @@
 //! Renders the brand SVG masters in assets/brand/ into PNGs, takeshot.ico, Takeshot.icns and the
-//! Windows installer's pictures (packaging/windows/*.bmp). Run with `cargo run --example brand`
-//! after changing any SVG; the outputs are committed.
+//! Windows installer's pictures (packaging/windows/*.bmp) and the macOS dmg window's background
+//! (packaging/macos/dmg-background*.png). Run with `cargo run --example brand` after changing any
+//! SVG; the outputs are committed.
 
 use std::fs;
 use std::path::Path;
@@ -17,13 +18,19 @@ fn render(name: &str, size: u32) -> Vec<u8> {
 }
 
 /// `name`'s SVG at `w` x `h` (scaled by the width), straight-alpha RGBA. Text is set in the
-/// app's own Quicksand, so the wordmark matches the app on any machine.
+/// app's own fonts (Quicksand, Roboto), so the wordmark and captions match the app on any machine.
 fn render_size(name: &str, w: u32, h: u32) -> Vec<u8> {
     let svg = fs::read(Path::new(DIR).join(format!("{name}.svg"))).expect("read svg");
     let mut opts = resvg::usvg::Options::default();
-    opts.fontdb_mut()
-        .load_font_file("assets/fonts/Quicksand-Medium.ttf")
-        .expect("load Quicksand");
+    for font in [
+        "Quicksand-Medium.ttf",
+        "Roboto-Regular.ttf",
+        "Roboto-Medium.ttf",
+    ] {
+        opts.fontdb_mut()
+            .load_font_file(Path::new("assets/fonts").join(font))
+            .expect("load font");
+    }
     let tree = resvg::usvg::Tree::from_data(&svg, &opts).expect("parse svg");
     let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h).expect("pixmap");
     let scale = w as f32 / tree.size().width();
@@ -51,6 +58,17 @@ fn save_bmp(name: &str, w: u32, h: u32) {
     let img = image::RgbImage::from_raw(w, h, rgb).expect("buffer size");
     let out = Path::new("packaging/windows").join(format!("{name}.bmp"));
     img.save(&out).expect("write bmp");
+}
+
+/// The dmg window's background at 1x and 2x (CI joins them into one TIFF for Retina screens).
+fn save_dmg_background() {
+    for (scale, suffix) in [(1, ""), (2, "@2x")] {
+        let (w, h) = (660 * scale, 400 * scale);
+        let img = image::RgbaImage::from_raw(w, h, render_size("dmg-background", w, h))
+            .expect("buffer size");
+        img.save(Path::new("packaging/macos").join(format!("dmg-background{suffix}.png")))
+            .expect("write png");
+    }
 }
 
 fn save_png(name: &str, size: u32) {
@@ -106,5 +124,6 @@ fn main() {
         .expect("write icns");
     save_bmp("installer-sidebar", 164, 314);
     save_bmp("installer-header", 150, 57);
-    println!("brand assets written to {DIR} and packaging/windows");
+    save_dmg_background();
+    println!("brand assets written to {DIR}, packaging/windows and packaging/macos");
 }

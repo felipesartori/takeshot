@@ -157,7 +157,7 @@ One resident process per user owns the tray, the shortcuts and the main window. 
 | Rendering | tiny-skia, ab_glyph, image |
 | Screen capture | xcap (Windows, macOS, X11) and the desktop portal (Wayland) |
 | System | tray-icon, global-hotkey, arboard, interprocess, auto-launch, rfd, trash |
-| Packaging | cargo-packager (NSIS, WiX, app, deb, AppImage) and hdiutil (dmg) |
+| Packaging | cargo-packager (NSIS, WiX, app, deb, AppImage) and create-dmg (dmg) |
 | CI | GitHub Actions: fmt, clippy and tests on Windows, macOS and Linux for every pull request; a one-button release builds the installers and publishes them |
 
 ## Project layout
@@ -172,7 +172,7 @@ src/
   screens/       window state and behaviour: home, editor, capture, pin, notice, shell
   views/         how the screens draw, in both themes
 assets/          embedded fonts and the brand masters (SVG, PNG, ICO, ICNS)
-packaging/       installer templates (Windows NSIS, macOS Info.plist keys)
+packaging/       installers: the Windows NSIS template and pictures, the macOS Info.plist keys and dmg background
 design/          takeshot-ui.fig (OpenPencil or Figma) and the exported references
 docs/            README pictures, and the macOS and Linux test scripts
 scripts/         check.sh (what CI runs), screenshots.sh, dev.sh, linux-packages.sh, linux-smoke.sh
@@ -317,7 +317,7 @@ Um processo residente por usuário cuida da bandeja, dos atalhos e da janela pri
 | Desenho | tiny-skia, ab_glyph, image |
 | Captura de tela | xcap (Windows, macOS, X11) e o portal do desktop (Wayland) |
 | Sistema | tray-icon, global-hotkey, arboard, interprocess, auto-launch, rfd, trash |
-| Instaladores | cargo-packager (NSIS, WiX, app, deb, AppImage) e hdiutil (dmg) |
+| Instaladores | cargo-packager (NSIS, WiX, app, deb, AppImage) e create-dmg (dmg) |
 | CI | GitHub Actions: fmt, clippy e testes em Windows, macOS e Linux em todo pull request; uma release de um botão gera os instaladores e publica |
 
 ## Estrutura do projeto
