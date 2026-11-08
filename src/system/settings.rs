@@ -201,6 +201,8 @@ pub struct DrawOpts {
     pub text_box: bool,
     pub filled: bool,
     pub blur_mode: BlurMode,
+    /// The corner radius of the next rectangle, in picture px.
+    pub radius: f32,
     pub last_tool: Tool,
     pub recent_colors: Vec<[u8; 4]>,
 }
@@ -215,6 +217,7 @@ impl Default for DrawOpts {
             text_box: false,
             filled: false,
             blur_mode: BlurMode::Blur,
+            radius: 0.0,
             last_tool: Tool::Arrow,
             recent_colors: Vec::new(),
         }

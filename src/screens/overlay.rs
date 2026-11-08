@@ -946,7 +946,7 @@ mod tests {
         o.an = Annotator::with_doc(
             tool,
             Doc::from_anns(vec![Ann {
-                shape: Shape::Rect(pos2(300.0, 300.0), pos2(400.0, 400.0)),
+                shape: Shape::Rect(pos2(300.0, 300.0), pos2(400.0, 400.0), 0.0),
                 color: [255, 0, 0, 255],
                 width: 4.0,
                 filled: true,
@@ -976,7 +976,7 @@ mod tests {
 
     fn rect_min(o: &Overlay) -> Pos2 {
         match o.an.doc.objs()[0].ann.shape {
-            Shape::Rect(a, _) => a,
+            Shape::Rect(a, _, _) => a,
             _ => unreachable!(),
         }
     }
@@ -1400,7 +1400,7 @@ mod tests {
         assert_eq!(doc.objs().len(), 2);
         assert!(doc.objs().iter().any(|x| x.id == hidden && x.hidden));
         match doc.objs()[0].ann.shape {
-            Shape::Rect(a, _) => assert!(a.distance(pos2(200.0, 200.0)) < 0.01),
+            Shape::Rect(a, _, _) => assert!(a.distance(pos2(200.0, 200.0)) < 0.01),
             _ => unreachable!(),
         }
         assert!(doc.undo(), "the history came along");

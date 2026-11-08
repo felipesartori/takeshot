@@ -727,6 +727,11 @@ fn tool_options(
             gesture(r, v, acts, |v| EditorAction::SetWidth(v.round().max(1.0)));
         }
     }
+    if tool == Tool::Rect {
+        let mut v = opts.radius;
+        let r = kit::slider_row(ui, t, tr(Msg::Corners), &mut v, 0.0..=40.0, "px");
+        gesture(r, v, acts, |v| EditorAction::SetRadius(v.round()));
+    }
     if tool != Tool::Blur {
         let mut v = (opts.color[3] as f32 * 100.0 / 255.0).round();
         let r = kit::slider_row(ui, t, tr(Msg::Opacity), &mut v, 0.0..=100.0, "%");
@@ -884,7 +889,7 @@ mod tests {
             filled: false,
         };
         let doc = Doc::from_anns(vec![
-            ann(Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0))),
+            ann(Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0), 0.0)),
             ann(Shape::Arrow(pos2(400.0, 400.0), pos2(600.0, 300.0))),
             ann(Shape::Ellipse(pos2(700.0, 100.0), pos2(900.0, 250.0))),
         ]);
@@ -1413,11 +1418,11 @@ x"),
         };
         let doc = Doc::from_anns(vec![
             ann(
-                Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0)),
+                Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0), 0.0),
                 [255, 0, 0, 255],
             ),
             ann(
-                Shape::Rect(pos2(400.0, 100.0), pos2(600.0, 200.0)),
+                Shape::Rect(pos2(400.0, 100.0), pos2(600.0, 200.0), 0.0),
                 [0, 0, 255, 128],
             ),
         ]);
@@ -1816,7 +1821,7 @@ x"),
             filled: false,
         };
         let anns = vec![
-            ann(Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0))),
+            ann(Shape::Rect(pos2(100.0, 100.0), pos2(300.0, 200.0), 0.0)),
             ann(Shape::Text {
                 pos: pos2(400.0, 100.0),
                 text: "Peak in October, the best month of the year by far".into(),

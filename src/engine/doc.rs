@@ -58,7 +58,7 @@ pub fn ann_bounds(a: &Ann, m: TextMeasure) -> Rect {
             }
             r.expand(half)
         }
-        Shape::Rect(p0, p1) | Shape::Ellipse(p0, p1) => norm_rect(*p0, *p1).expand(half),
+        Shape::Rect(p0, p1, _) | Shape::Ellipse(p0, p1) => norm_rect(*p0, *p1).expand(half),
         Shape::Blur(p0, p1, _) => norm_rect(*p0, *p1),
         Shape::Text {
             pos,
@@ -112,17 +112,6 @@ fn dist_to_polyline(p: Pos2, pts: &[Pos2]) -> f32 {
     }
 }
 
-fn dist_to_rect_border(p: Pos2, r: Rect) -> f32 {
-    if r.contains(p) {
-        (p.x - r.min.x)
-            .min(r.max.x - p.x)
-            .min(p.y - r.min.y)
-            .min(r.max.y - p.y)
-    } else {
-        r.distance_to_pos(p)
-    }
-}
-
 /// Distance along the ray from the centre: exact on the axes, close enough elsewhere for picking.
 fn dist_to_ellipse_border(p: Pos2, r: Rect) -> f32 {
     let c = r.center();
@@ -166,9 +155,9 @@ fn hits(a: &Ann, p: Pos2, tol: f32, m: TextMeasure) -> bool {
             let (_, head) = arrow_geom(*p0, *p1, a.width);
             dist_to_segment(p, *p0, *p1) <= reach || point_in_triangle(p, head)
         }
-        Shape::Rect(p0, p1) => {
-            let r = norm_rect(*p0, *p1);
-            (a.filled && r.contains(p)) || dist_to_rect_border(p, r) <= reach
+        Shape::Rect(p0, p1, radius) => {
+            let d = rounded_rect_distance(p, norm_rect(*p0, *p1), *radius);
+            (a.filled && d <= 0.0) || d.abs() <= reach
         }
         Shape::Ellipse(p0, p1) => {
             let r = norm_rect(*p0, *p1);
@@ -178,6 +167,18 @@ fn hits(a: &Ann, p: Pos2, tol: f32, m: TextMeasure) -> bool {
             ann_bounds(a, m).expand(tol).contains(p)
         }
     }
+}
+
+/// Signed distance from `p` to the outline of `r` with corners of `radius` (clamped to half the
+/// shorter side): negative inside.
+fn rounded_rect_distance(p: Pos2, r: Rect, radius: f32) -> f32 {
+    let rad = radius.clamp(0.0, r.width().min(r.height()) / 2.0);
+    let c = r.center();
+    let d = vec2(
+        (p.x - c.x).abs() - (r.width() / 2.0 - rad),
+        (p.y - c.y).abs() - (r.height() / 2.0 - rad),
+    );
+    vec2(d.x.max(0.0), d.y.max(0.0)).length() + d.x.max(d.y).min(0.0) - rad
 }
 
 fn corners(r: Rect) -> Vec<(Handle, Pos2)> {
@@ -296,6 +297,8 @@ pub struct Restyle {
     pub font_size: Option<f32>,
     pub text_box: Option<bool>,
     pub blur_mode: Option<BlurMode>,
+    /// A rectangle's corner radius.
+    pub radius: Option<f32>,
 }
 
 impl Restyle {
@@ -309,6 +312,7 @@ impl Restyle {
                     || self.text_box.is_some_and(|b| b != *boxed)
             }
             Shape::Blur(_, _, m) => self.blur_mode.is_some_and(|b| b != *m),
+            Shape::Rect(_, _, r) => self.radius.is_some_and(|x| x != *r),
             _ => false,
         };
         self.rgb.is_some_and(|c| c[..] != a.color[..3])
@@ -348,6 +352,11 @@ impl Restyle {
             Shape::Blur(_, _, m) => {
                 if let Some(b) = self.blur_mode {
                     *m = b;
+                }
+            }
+            Shape::Rect(_, _, r) => {
+                if let Some(x) = self.radius {
+                    *r = x;
                 }
             }
             _ => {}
@@ -464,7 +473,7 @@ impl Doc {
             Shape::Line(a, b) | Shape::Arrow(a, b) => {
                 vec![(Handle::Start, *a), (Handle::End, *b)]
             }
-            Shape::Rect(a, b) | Shape::Ellipse(a, b) | Shape::Blur(a, b, _) => {
+            Shape::Rect(a, b, _) | Shape::Ellipse(a, b) | Shape::Blur(a, b, _) => {
                 sides_and_corners(norm_rect(*a, *b))
             }
             Shape::Pen(p) | Shape::Marker(p) => corners(points_rect(p)),
@@ -523,7 +532,7 @@ impl Doc {
                     to
                 };
             }
-            Shape::Rect(p0, p1) | Shape::Ellipse(p0, p1) | Shape::Blur(p0, p1, _) => {
+            Shape::Rect(p0, p1, _) | Shape::Ellipse(p0, p1) | Shape::Blur(p0, p1, _) => {
                 let r = resize_box(norm_rect(*p0, *p1), h, to, keep_ratio);
                 *p0 = r.min;
                 *p1 = r.max;
@@ -790,7 +799,7 @@ mod tests {
     }
 
     fn rect(a: (f32, f32), b: (f32, f32)) -> Ann {
-        ann(Shape::Rect(pos2(a.0, a.1), pos2(b.0, b.1)))
+        ann(Shape::Rect(pos2(a.0, a.1), pos2(b.0, b.1), 0.0))
     }
 
     fn counter(n: u32) -> Ann {
@@ -1112,6 +1121,27 @@ mod tests {
         assert!(d.undo());
         assert_eq!(d.objs()[0].ann.color, [255, 0, 0, 255]);
         assert!(!d.undo());
+    }
+
+    #[test]
+    fn the_hit_follows_the_rounded_outline() {
+        let rect = |radius: f32| Ann {
+            shape: Shape::Rect(pos2(0.0, 0.0), pos2(200.0, 200.0), radius),
+            color: [255, 0, 0, 255],
+            width: 4.0,
+            filled: false,
+        };
+        let square = Doc::from_anns(vec![rect(0.0)]);
+        let round = Doc::from_anns(vec![rect(60.0)]);
+        let corner = pos2(2.0, 2.0);
+        assert!(square.hit(corner, 0.0, &m).is_some());
+        assert!(
+            round.hit(corner, 0.0, &m).is_none(),
+            "outside the rounded corner"
+        );
+        let k = std::f32::consts::FRAC_1_SQRT_2;
+        let on_arc = pos2(60.0 - 60.0 * k, 60.0 - 60.0 * k);
+        assert!(round.hit(on_arc, 0.0, &m).is_some(), "on the arc");
     }
 
     #[test]

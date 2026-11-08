@@ -105,7 +105,8 @@ pub enum Shape {
     Marker(Vec<Pos2>),
     Line(Pos2, Pos2),
     Arrow(Pos2, Pos2),
-    Rect(Pos2, Pos2),
+    /// Two opposite corners and the corner radius in picture px (0 is square).
+    Rect(Pos2, Pos2, f32),
     Ellipse(Pos2, Pos2),
     Blur(Pos2, Pos2, BlurMode),
     Text {
@@ -153,7 +154,7 @@ impl Ann {
             Shape::Pen(pts) | Shape::Marker(pts) => pts.iter_mut().for_each(mv),
             Shape::Line(a, b)
             | Shape::Arrow(a, b)
-            | Shape::Rect(a, b)
+            | Shape::Rect(a, b, _)
             | Shape::Ellipse(a, b)
             | Shape::Blur(a, b, _) => {
                 *a += d;
@@ -169,7 +170,7 @@ impl Ann {
         match &self.shape {
             Shape::Pen(p) | Shape::Marker(p) => p.len() < 2,
             Shape::Line(a, b) | Shape::Arrow(a, b) => a.distance(*b) < 3.0,
-            Shape::Rect(a, b) | Shape::Ellipse(a, b) | Shape::Blur(a, b, _) => {
+            Shape::Rect(a, b, _) | Shape::Ellipse(a, b) | Shape::Blur(a, b, _) => {
                 (a.x - b.x).abs() < 3.0 || (a.y - b.y).abs() < 3.0
             }
             Shape::Text { text, .. } => text.trim().is_empty(),

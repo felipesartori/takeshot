@@ -210,7 +210,7 @@ impl Annotator {
             Tool::Marker => Shape::Marker(vec![p]),
             Tool::Line => Shape::Line(p, p),
             Tool::Arrow => Shape::Arrow(p, p),
-            Tool::Rect => Shape::Rect(p, p),
+            Tool::Rect => Shape::Rect(p, p, opts.radius),
             Tool::Ellipse => Shape::Ellipse(p, p),
             Tool::Blur => Shape::Blur(p, p, opts.blur_mode),
             _ => Shape::Line(p, p),
@@ -290,7 +290,7 @@ impl Annotator {
                         }
                         Shape::Line(p0, p1)
                         | Shape::Arrow(p0, p1)
-                        | Shape::Rect(p0, p1)
+                        | Shape::Rect(p0, p1, _)
                         | Shape::Ellipse(p0, p1)
                         | Shape::Blur(p0, p1, _) => {
                             *p0 = a;
@@ -540,7 +540,12 @@ impl Annotator {
                 opts.font_size = size;
                 opts.text_box = boxed;
             }
-            Shape::Rect(..) | Shape::Ellipse(..) => {
+            Shape::Rect(_, _, radius) => {
+                opts.width = o.ann.width;
+                opts.filled = o.ann.filled;
+                opts.radius = radius;
+            }
+            Shape::Ellipse(..) => {
                 opts.width = o.ann.width;
                 opts.filled = o.ann.filled;
             }
@@ -606,6 +611,7 @@ impl Annotator {
             font_size: changed(before.font_size, after.font_size),
             text_box: changed(before.text_box, after.text_box),
             blur_mode: changed(before.blur_mode, after.blur_mode),
+            radius: changed(before.radius, after.radius),
         };
         if r != Restyle::default() {
             self.doc.restyle_selected(&r);
@@ -969,12 +975,14 @@ pub fn paint_ann(p: &Painter, v: &View, a: &Ann, fonts: &FontLib) {
                 Stroke::NONE,
             ));
         }
-        Shape::Rect(a0, b0) => {
+        Shape::Rect(a0, b0, radius) => {
             let r = egui::Rect::from_two_pos(v.to_screen(*a0), v.to_screen(*b0));
+            let rad = (radius * v.k).clamp(0.0, r.width().min(r.height()) / 2.0);
+            let corners = egui::CornerRadius::same(rad.round().min(255.0) as u8);
             if a.filled {
-                p.rect_filled(r, 0.0, col);
+                p.rect_filled(r, corners, col);
             } else {
-                p.rect_stroke(r, 0.0, st, egui::StrokeKind::Middle);
+                p.rect_stroke(r, corners, st, egui::StrokeKind::Middle);
             }
         }
         Shape::Ellipse(a0, b0) => {
@@ -1059,7 +1067,7 @@ mod tests {
 
     fn rect_ann(a: (f32, f32), b: (f32, f32), filled: bool) -> Ann {
         Ann {
-            shape: Shape::Rect(pos2(a.0, a.1), pos2(b.0, b.1)),
+            shape: Shape::Rect(pos2(a.0, a.1), pos2(b.0, b.1), 0.0),
             color: [255, 0, 0, 255],
             width: 4.0,
             filled,
@@ -1313,7 +1321,7 @@ mod tests {
                 "{tool:?}"
             );
             match an.doc.objs()[0].ann.shape {
-                Shape::Rect(a, b) => {
+                Shape::Rect(a, b, _) => {
                     assert!(a.distance(pos2(100.0, 100.0)) < 0.01, "{tool:?}");
                     assert!(b.distance(pos2(300.0, 300.0)) < 0.01, "{tool:?}");
                 }
@@ -1787,6 +1795,48 @@ mod tests {
     }
 
     #[test]
+    fn live_drawing_rounds_the_corners_by_the_view_scale() {
+        // The picture shown at half size: a 30 px corner shows as 15.
+        let ann = Ann {
+            shape: Shape::Rect(pos2(0.0, 0.0), pos2(100.0, 80.0), 30.0),
+            color: [255, 0, 0, 255],
+            width: 4.0,
+            filled: false,
+        };
+        let ctx = egui::Context::default();
+        let fonts = FontLib::load();
+        let mut full = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let view = View {
+                origin: pos2(0.0, 0.0),
+                k: 0.5,
+            };
+            paint_ann(ui.painter(), &view, &ann, &fonts);
+        });
+        full.textures_delta.clear();
+        let radius = full.shapes.iter().find_map(|c| match &c.shape {
+            egui::Shape::Rect(r) => Some(r.corner_radius),
+            _ => None,
+        });
+        assert_eq!(radius, Some(egui::CornerRadius::same(15)));
+    }
+
+    #[test]
+    fn picking_a_rect_shows_its_corners_in_the_options() {
+        let (mut an, ids) = with(
+            Tool::Select,
+            vec![Ann {
+                shape: Shape::Rect(pos2(100.0, 100.0), pos2(200.0, 200.0), 18.0),
+                color: [255, 0, 0, 255],
+                width: 4.0,
+                filled: false,
+            }],
+        );
+        let mut opts = DrawOpts::default();
+        an.pick(ids[0], false, &mut opts);
+        assert_eq!(opts.radius, 18.0);
+    }
+
+    #[test]
     fn a_drawing_tool_moves_any_shape_under_it() {
         // Not selected: pressing on its line picks it, shows its style and moves it.
         let (mut an, ids) = with(
@@ -1970,7 +2020,7 @@ mod tests {
         assert_eq!(an.doc.objs().len(), 1, "nothing new was drawn");
         assert!(an.live.is_none());
         match an.doc.objs()[0].ann.shape {
-            Shape::Rect(_, b) => assert!(b.distance(pos2(300.0, 300.0)) < 0.01),
+            Shape::Rect(_, b, _) => assert!(b.distance(pos2(300.0, 300.0)) < 0.01),
             _ => unreachable!(),
         }
     }
@@ -2205,7 +2255,7 @@ mod tests {
             (Shape::Marker(vec![p]), Tool::Marker),
             (Shape::Line(p, p), Tool::Line),
             (Shape::Arrow(p, p), Tool::Arrow),
-            (Shape::Rect(p, p), Tool::Rect),
+            (Shape::Rect(p, p, 0.0), Tool::Rect),
             (Shape::Ellipse(p, p), Tool::Ellipse),
             (Shape::Blur(p, p, BlurMode::Blur), Tool::Blur),
             (

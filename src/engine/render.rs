@@ -307,6 +307,30 @@ pub fn text_box_padding(size: f32) -> egui::Vec2 {
 
 // ---------------------------------------------------------------- annotations
 
+/// The outline of `r` with corners of `radius` (clamped to half the shorter side), as cubic arcs.
+fn rounded_rect_path(r: egui::Rect, radius: f32) -> Option<sk::Path> {
+    let rad = radius.clamp(0.0, r.width().min(r.height()) / 2.0);
+    if rad <= 0.0 {
+        let rect = sk::Rect::from_ltrb(r.min.x, r.min.y, r.max.x, r.max.y)?;
+        return Some(sk::PathBuilder::from_rect(rect));
+    }
+    // A quarter circle as one cubic: control points 0.5523 of the radius along the tangents.
+    let c = rad * 0.552_284_8;
+    let (l, t, rt, b) = (r.min.x, r.min.y, r.max.x, r.max.y);
+    let mut pb = sk::PathBuilder::new();
+    pb.move_to(l + rad, t);
+    pb.line_to(rt - rad, t);
+    pb.cubic_to(rt - rad + c, t, rt, t + rad - c, rt, t + rad);
+    pb.line_to(rt, b - rad);
+    pb.cubic_to(rt, b - rad + c, rt - rad + c, b, rt - rad, b);
+    pb.line_to(l + rad, b);
+    pb.cubic_to(l + rad - c, b, l, b - rad + c, l, b - rad);
+    pb.line_to(l, t + rad);
+    pb.cubic_to(l, t + rad - c, l + rad - c, t, l + rad, t);
+    pb.close();
+    pb.finish()
+}
+
 pub fn render_annotations(base: &RgbaImage, anns: &[Ann], fonts: &FontLib) -> RgbaImage {
     if anns.is_empty() {
         return base.clone();
@@ -380,10 +404,9 @@ pub fn draw_ann(pm: &mut sk::Pixmap, a: &Ann, fonts: &FontLib) {
                 );
             }
         }
-        Shape::Rect(p0, p1) => {
+        Shape::Rect(p0, p1, radius) => {
             let r = norm_rect(*p0, *p1);
-            if let Some(rect) = sk::Rect::from_ltrb(r.min.x, r.min.y, r.max.x, r.max.y) {
-                let path = sk::PathBuilder::from_rect(rect);
+            if let Some(path) = rounded_rect_path(r, *radius) {
                 if a.filled {
                     pm.fill_path(&path, &paint, sk::FillRule::Winding, id, None);
                 } else {
@@ -1006,6 +1029,25 @@ mod tests {
     }
 
     #[test]
+    fn a_rounded_rect_renders_with_its_radius() {
+        let fonts = FontLib::load();
+        let base = RgbaImage::from_pixel(200, 200, image::Rgba([255, 255, 255, 255]));
+        let rect = |radius: f32| Ann {
+            shape: Shape::Rect(pos2(40.0, 40.0), pos2(160.0, 160.0), radius),
+            color: [255, 0, 0, 255],
+            width: 6.0,
+            filled: true,
+        };
+        let square = render_annotations(&base, &[rect(0.0)], &fonts);
+        let round = render_annotations(&base, &[rect(30.0)], &fonts);
+        // The box's corner is inside the square and outside the rounded one.
+        assert_eq!(square.get_pixel(42, 42).0, [255, 0, 0, 255]);
+        assert_eq!(round.get_pixel(42, 42).0, [255, 255, 255, 255]);
+        // The middle of a side is in both.
+        assert_eq!(round.get_pixel(100, 42).0, [255, 0, 0, 255]);
+    }
+
+    #[test]
     fn renders_styles_and_marks() {
         let fonts = FontLib::load();
         assert!(fonts.list.len() >= 2, "at least the two built-in fonts");
@@ -1018,7 +1060,7 @@ mod tests {
                 filled: false,
             },
             Ann {
-                shape: Shape::Rect(pos2(250.0, 280.0), pos2(500.0, 400.0)),
+                shape: Shape::Rect(pos2(250.0, 280.0), pos2(500.0, 400.0), 0.0),
                 color: [0, 179, 255, 255],
                 width: 3.0,
                 filled: false,

@@ -122,6 +122,8 @@ pub enum EditorAction {
     SetTool(Tool),
     SetColor([u8; 4]),
     SetWidth(f32),
+    /// A rectangle's corner radius, in picture px.
+    SetRadius(f32),
     /// The alpha of the colour, 0 to 255.
     SetOpacity(u8),
     SetFill(bool),
@@ -321,6 +323,7 @@ impl Editor {
                 o.color = [c[0], c[1], c[2], o.color[3]];
             }),
             EditorAction::SetWidth(w) => restyle(self, shared, &|o| o.width = w),
+            EditorAction::SetRadius(r) => restyle(self, shared, &|o| o.radius = r),
             EditorAction::SetOpacity(alpha) => restyle(self, shared, &|o| o.color[3] = alpha),
             EditorAction::SetFill(on) => restyle(self, shared, &|o| o.filled = on),
             EditorAction::SetFont(f) => restyle(self, shared, &|o| o.font = f),
@@ -985,7 +988,7 @@ mod tests {
         ed.apply(EditorAction::Duplicate, &ctx, None, &mut shared);
         let shape = |i: usize| ed.an.doc.objs()[i].ann.shape.clone();
         match (shape(0), shape(1)) {
-            (Shape::Rect(a, _), Shape::Rect(b, _)) => assert_eq!(b - a, vec2(12.0, 12.0)),
+            (Shape::Rect(a, _, _), Shape::Rect(b, _, _)) => assert_eq!(b - a, vec2(12.0, 12.0)),
             other => panic!("{other:?}"),
         }
     }
@@ -1029,13 +1032,34 @@ mod tests {
         let shared = crate::Shared::for_tests();
         let base = RgbaImage::from_pixel(200, 100, image::Rgba([240, 240, 240, 255]));
         let doc = Doc::from_anns(vec![Ann {
-            shape: Shape::Rect(pos2(10.0, 10.0), pos2(60.0, 50.0)),
+            shape: Shape::Rect(pos2(10.0, 10.0), pos2(60.0, 50.0), 0.0),
             color: [255, 0, 0, 255],
             width: 3.0,
             filled: false,
         }]);
         let ed = Editor::new(&egui::Context::default(), base, doc, &shared);
         (ed, shared)
+    }
+
+    #[test]
+    fn a_corners_drag_is_one_undo_step() {
+        let ctx = egui::Context::default();
+        let (mut ed, mut shared) = editor();
+        let id = ed.an.doc.objs()[0].id;
+        ed.apply(EditorAction::Select(id, false), &ctx, None, &mut shared);
+        ed.apply(EditorAction::Gesture(true), &ctx, None, &mut shared);
+        for r in [6.0, 12.0, 20.0] {
+            ed.apply(EditorAction::SetRadius(r), &ctx, None, &mut shared);
+        }
+        ed.apply(EditorAction::Gesture(false), &ctx, None, &mut shared);
+        let radius = |ed: &Editor| match ed.an.doc.objs()[0].ann.shape {
+            Shape::Rect(_, _, r) => r,
+            _ => unreachable!(),
+        };
+        assert_eq!(radius(&ed), 20.0);
+        assert_eq!(shared.settings.draw.radius, 20.0, "the next rectangle too");
+        ed.apply(EditorAction::Undo, &ctx, None, &mut shared);
+        assert_eq!(radius(&ed), 0.0, "one step back to square");
     }
 
     #[test]
@@ -1104,7 +1128,7 @@ mod tests {
         assert!(unsaved_edits(&an, saved), "text being typed");
         an.draft = None;
         an.commit(Ann {
-            shape: Shape::Rect(pos2(0.0, 0.0), pos2(50.0, 50.0)),
+            shape: Shape::Rect(pos2(0.0, 0.0), pos2(50.0, 50.0), 0.0),
             color: [255, 0, 0, 255],
             width: 3.0,
             filled: false,

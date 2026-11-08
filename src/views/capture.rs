@@ -325,7 +325,7 @@ mod tests {
         .with_doc(
             tool,
             Doc::from_anns(vec![Ann {
-                shape: Shape::Rect(pos2(300.0, 300.0), pos2(400.0, 400.0)),
+                shape: Shape::Rect(pos2(300.0, 300.0), pos2(400.0, 400.0), 0.0),
                 color: [255, 0, 0, 255],
                 width: 4.0,
                 filled: true,
