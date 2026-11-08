@@ -147,7 +147,7 @@ jobs:
               cp target/universal/release/takeshot target/release/takeshot
               cargo packager --release --formats app
               APP=target/packages/Takeshot.app
-              lipo -verify_arch arm64 x86_64 "$APP/Contents/MacOS/takeshot"
+              lipo "$APP/Contents/MacOS/takeshot" -verify_arch arm64 x86_64
               if [ "$SIGN_MACOS" = "true" ]; then
                 codesign --force --deep --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "$APP"
               else
