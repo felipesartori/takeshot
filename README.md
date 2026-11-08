@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/home-takeui-dark-en.png" alt="Takeshot: Home with the captures and the detail panel" width="700" />
+  <img src="assets/brand/png/takeshot-banner.png" alt="Takeshot: screenshots, ready to post" width="100%" />
 </p>
 
 <h1 align="center">Takeshot</h1>

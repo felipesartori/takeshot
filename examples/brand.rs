@@ -1,6 +1,7 @@
 //! Renders the brand SVG masters in assets/brand/ into PNGs, takeshot.ico, Takeshot.icns and the
-//! Windows installer's pictures (packaging/windows/*.bmp) and the macOS dmg window's background
-//! (packaging/macos/dmg-background*.png). Run with `cargo run --example brand` after changing any
+//! Windows installer's pictures (packaging/windows/*.bmp), the macOS dmg window's background
+//! (packaging/macos/dmg-background*.png) and the repository banner (1280 x 640, GitHub's social
+//! preview size). Run with `cargo run --example brand` after changing any
 //! SVG; the outputs are committed.
 
 use std::fs;
@@ -26,6 +27,8 @@ fn render_size(name: &str, w: u32, h: u32) -> Vec<u8> {
         "Quicksand-Medium.ttf",
         "Roboto-Regular.ttf",
         "Roboto-Medium.ttf",
+        "Roboto-Bold.ttf",
+        "RobotoMono-Medium.ttf",
     ] {
         opts.fontdb_mut()
             .load_font_file(Path::new("assets/fonts").join(font))
@@ -69,6 +72,15 @@ fn save_dmg_background() {
         img.save(Path::new("packaging/macos").join(format!("dmg-background{suffix}.png")))
             .expect("write png");
     }
+}
+
+/// The repository banner: README header and GitHub's social preview (1280 x 640, under 1 MB).
+fn save_banner() {
+    let (w, h) = (1280, 640);
+    let img = image::RgbaImage::from_raw(w, h, render_size("takeshot-banner", w, h))
+        .expect("buffer size");
+    img.save(Path::new(DIR).join("png").join("takeshot-banner.png"))
+        .expect("write png");
 }
 
 fn save_png(name: &str, size: u32) {
@@ -125,5 +137,6 @@ fn main() {
     save_bmp("installer-sidebar", 164, 314);
     save_bmp("installer-header", 150, 57);
     save_dmg_background();
+    save_banner();
     println!("brand assets written to {DIR}, packaging/windows and packaging/macos");
 }

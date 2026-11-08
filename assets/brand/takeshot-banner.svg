@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <radialGradient id="glowL" cx="250" cy="260" r="440" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8D43B1" stop-opacity=".30"/>
+      <stop offset="1" stop-color="#8D43B1" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowR" cx="940" cy="330" r="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8D43B1" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#8D43B1" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="16" cy="16" r="1.3" fill="#FFFFFF" fill-opacity=".07"/>
+    </pattern>
+    <linearGradient id="head" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#EBD3FA"/>
+      <stop offset="1" stop-color="#B873DD"/>
+    </linearGradient>
+    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A45FCB"/>
+      <stop offset="1" stop-color="#4E2470"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".14"/>
+      <stop offset=".55" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A45FCB"/>
+      <stop offset="1" stop-color="#8D43B1"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="26" stdDeviation="30" flood-color="#000000" flood-opacity=".55"/>
+    </filter>
+    <filter id="shadowS" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#1B0B2A" flood-opacity=".45"/>
+    </filter>
+    <filter id="shadowT" x="-40%" y="-20%" width="180%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity=".5"/>
+    </filter>
+    <filter id="blur" x="-20%" y="-80%" width="140%" height="260%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+    <clipPath id="win"><rect x="722" y="118" width="432" height="392" rx="12"/></clipPath>
+  </defs>
+
+  <!-- Background: the shell, a soft purple glow behind each half and a faint dot grid. -->
+  <rect width="1280" height="640" fill="#121212"/>
+  <rect width="1280" height="640" fill="url(#dots)"/>
+  <rect width="1280" height="640" fill="url(#glowL)"/>
+  <rect width="1280" height="640" fill="url(#glowR)"/>
+
+  <!-- Left: the mark, the name, what it is. -->
+  <g transform="translate(84 80) scale(1.33333)">
+    <rect width="48" height="48" rx="11.5" fill="#733FA2"/>
+    <g transform="translate(8.16 8.16) scale(0.66)">
+      <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 21 L9 9 L21 9"/>
+        <path d="M39 27 L39 39 L27 39"/>
+      </g>
+      <circle cx="24" cy="24" r="5" fill="#3FCC59"/>
+    </g>
+  </g>
+  <text x="166" y="128" font-family="Quicksand" font-weight="500" font-size="46" fill="#F2F2F2">Takeshot</text>
+
+  <text x="84" y="236" font-family="Roboto" font-weight="700" font-size="64" letter-spacing="-1" fill="#F2F2F2">Screenshots,</text>
+  <text x="84" y="308" font-family="Roboto" font-weight="700" font-size="64" letter-spacing="-1" fill="url(#head)">ready to post.</text>
+
+  <g font-family="Roboto" font-size="22" fill="#A3A3A3">
+    <text x="84" y="358">Press PrtSc, drag over what you want and mark it</text>
+    <text x="84" y="390">up with arrows, boxes, text, steps and blur. Every</text>
+    <text x="84" y="422">mark stays an object you can still edit.</text>
+  </g>
+
+  <g font-family="Roboto" font-weight="500" font-size="16" text-anchor="middle">
+    <rect x="84" y="468" width="84" height="38" rx="10" fill="#2B2033" stroke="#8D43B1"/>
+    <text x="126" y="492" font-family="Roboto Mono" font-size="16" fill="#C79BE6">PrtSc</text>
+    <rect x="178" y="468" width="96" height="38" rx="10" fill="#2B2033" stroke="#8D43B1"/>
+    <text x="226" y="492" fill="#C79BE6">Windows</text>
+    <rect x="284" y="468" width="84" height="38" rx="10" fill="#2B2033" stroke="#8D43B1"/>
+    <text x="326" y="492" fill="#C79BE6">macOS</text>
+    <rect x="378" y="468" width="76" height="38" rx="10" fill="#2B2033" stroke="#8D43B1"/>
+    <text x="416" y="492" fill="#C79BE6">Linux</text>
+  </g>
+
+  <!-- Right: a capture, styled and marked up, with the capture's tools beside it. -->
+  <rect x="688" y="72" width="500" height="496" rx="24" fill="url(#frame)" filter="url(#shadow)"/>
+  <rect x="688" y="72" width="500" height="496" rx="24" fill="url(#sheen)"/>
+  <rect x="688.5" y="72.5" width="499" height="495" rx="23.5" fill="none" stroke="#FFFFFF" stroke-opacity=".16"/>
+
+  <rect x="722" y="118" width="432" height="392" rx="12" fill="#FFFFFF" filter="url(#shadowS)"/>
+  <g clip-path="url(#win)">
+    <g transform="translate(722 118)">
+      <rect width="432" height="392" fill="#FFFFFF"/>
+      <rect width="432" height="34" fill="#ECECEC"/>
+      <circle cx="18" cy="17" r="5.5" fill="#F0605D"/>
+      <circle cx="36" cy="17" r="5.5" fill="#F5BF4F"/>
+      <circle cx="54" cy="17" r="5.5" fill="#5FC85B"/>
+
+      <rect y="34" width="92" height="358" fill="#F1F1F1"/>
+      <rect x="8" y="48" width="76" height="26" rx="8" fill="#E9DAF5"/>
+      <rect x="18" y="57" width="52" height="8" rx="4" fill="#8D43B1"/>
+      <rect x="18" y="92" width="44" height="8" rx="4" fill="#CFCFCF"/>
+      <rect x="18" y="116" width="56" height="8" rx="4" fill="#CFCFCF"/>
+      <rect x="18" y="140" width="38" height="8" rx="4" fill="#CFCFCF"/>
+      <g filter="url(#blur)">
+        <rect x="12" y="334" width="66" height="9" rx="4.5" fill="#5A5A5A"/>
+        <rect x="12" y="350" width="48" height="9" rx="4.5" fill="#5A5A5A"/>
+      </g>
+
+      <rect x="116" y="56" width="150" height="14" rx="7" fill="#1F1F1F"/>
+      <rect x="116" y="80" width="220" height="9" rx="4.5" fill="#BDBDBD"/>
+
+      <rect x="116" y="110" width="292" height="150" rx="10" fill="#FAFAFA" stroke="#E5E5E5"/>
+      <g fill="url(#bar)">
+        <rect x="140" y="190" width="26" height="50" rx="5"/>
+        <rect x="186" y="160" width="26" height="80" rx="5"/>
+        <rect x="232" y="176" width="26" height="64" rx="5"/>
+        <rect x="278" y="136" width="26" height="104" rx="5"/>
+        <rect x="324" y="152" width="26" height="88" rx="5"/>
+      </g>
+      <rect x="370" y="120" width="26" height="120" rx="5" fill="#3FCC59"/>
+
+      <rect x="116" y="282" width="250" height="9" rx="4.5" fill="#D4D4D4"/>
+      <rect x="116" y="298" width="196" height="9" rx="4.5" fill="#D4D4D4"/>
+
+      <rect x="300" y="312" width="108" height="40" rx="10" fill="#8D43B1"/>
+      <text x="354" y="337" font-family="Roboto" font-weight="500" font-size="15" text-anchor="middle" fill="#FFFFFF">Publish</text>
+
+      <!-- Marks: an outline, a step, an arrow (selected, with its handles) and a second step. -->
+      <rect x="108" y="102" width="308" height="166" rx="14" fill="none" stroke="#F03E3E" stroke-width="4"/>
+      <circle cx="108" cy="102" r="14" fill="#F03E3E"/>
+      <text x="108" y="107.5" font-family="Roboto" font-weight="700" font-size="15" text-anchor="middle" fill="#FFFFFF">1</text>
+
+      <path d="M170 368 L278 339.6" fill="none" stroke="#F03E3E" stroke-width="5" stroke-linecap="round"/>
+      <path d="M292 336 L278.5 347.8 L274.5 332.4 Z" fill="#F03E3E" stroke="#F03E3E" stroke-width="2" stroke-linejoin="round"/>
+      <rect x="158" y="322" width="146" height="58" rx="3" fill="none" stroke="#8D43B1" stroke-width="2"/>
+      <g fill="#FFFFFF" stroke="#8D43B1" stroke-width="1.5">
+        <rect x="154" y="318" width="8" height="8"/>
+        <rect x="300" y="318" width="8" height="8"/>
+        <rect x="154" y="376" width="8" height="8"/>
+        <rect x="300" y="376" width="8" height="8"/>
+        <rect x="227" y="318" width="8" height="8"/>
+        <rect x="227" y="376" width="8" height="8"/>
+        <rect x="154" y="347" width="8" height="8"/>
+        <rect x="300" y="347" width="8" height="8"/>
+      </g>
+      <circle cx="408" cy="312" r="14" fill="#F03E3E"/>
+      <text x="408" y="317.5" font-family="Roboto" font-weight="700" font-size="15" text-anchor="middle" fill="#FFFFFF">2</text>
+    </g>
+  </g>
+
+  <!-- The capture area: crop corners and its size. -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".95">
+    <path d="M712 132 V108 H736"/>
+    <path d="M1140 108 H1164 V132"/>
+    <path d="M1164 496 V520 H1140"/>
+    <path d="M736 520 H712 V496"/>
+  </g>
+  <rect x="722" y="80" width="94" height="22" rx="11" fill="#121212" fill-opacity=".82"/>
+  <text x="769" y="95.5" font-family="Roboto" font-weight="500" font-size="12" text-anchor="middle" fill="#FFFFFF">1280 × 720</text>
+
+  <!-- The watermark of the style. -->
+  <g transform="translate(1052 530) scale(0.375)" opacity=".92">
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 21 L9 9 L21 9"/>
+      <path d="M39 27 L39 39 L27 39"/>
+    </g>
+    <circle cx="24" cy="24" r="5" fill="#3FCC59"/>
+  </g>
+  <text x="1154" y="546" font-family="Quicksand" font-weight="500" font-size="17" text-anchor="end" fill="#FFFFFF" fill-opacity=".85">takeshot</text>
+
+  <!-- The tools, as the capture shows them beside the area. -->
+  <rect x="1166" y="176" width="50" height="248" rx="25" fill="#1C1C1C" stroke="#333333" filter="url(#shadowT)"/>
+  <rect x="1173" y="192" width="36" height="36" rx="11" fill="#8D43B1"/>
+  <path d="M1182 220 L1199 203 M1190 203 H1199 V212" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="1183" y="249.5" width="16" height="13" rx="2.5" fill="none" stroke="#E5E5E5" stroke-width="2"/>
+  <text x="1191" y="309" font-family="Roboto" font-weight="700" font-size="20" text-anchor="middle" fill="#E5E5E5">T</text>
+  <circle cx="1191" cy="348" r="10" fill="none" stroke="#E5E5E5" stroke-width="2"/>
+  <text x="1191" y="352.5" font-family="Roboto" font-weight="700" font-size="12" text-anchor="middle" fill="#E5E5E5">1</text>
+  <g fill="#E5E5E5">
+    <circle cx="1185" cy="388" r="1.9"/><circle cx="1191" cy="388" r="1.9"/><circle cx="1197" cy="388" r="1.9"/>
+    <circle cx="1185" cy="394" r="1.9"/><circle cx="1191" cy="394" r="1.9"/><circle cx="1197" cy="394" r="1.9"/>
+    <circle cx="1185" cy="400" r="1.9"/><circle cx="1191" cy="400" r="1.9"/><circle cx="1197" cy="400" r="1.9"/>
+  </g>
+</svg>
