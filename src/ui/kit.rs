@@ -746,8 +746,14 @@ pub enum BarItem {
 
 /// A 28 x 28 button of a floating bar (radius 6): a 16 px icon, or a 16 px colour dot ringed in
 /// the border colour; hover only colours the background.
+/// A floating bar's button, 28 px tall: an icon (28 wide) or a colour with the chevron of its menu
+/// (40 wide).
 pub fn bar_button(ui: &mut Ui, t: &Tokens, item: BarItem, tip: &str) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let w = match item {
+        BarItem::Icon(_) => 28.0,
+        BarItem::Color(_) => 40.0,
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
     let h = hover_mix(ui, &resp);
     let p = ui.painter();
     p.rect_filled(
@@ -758,9 +764,72 @@ pub fn bar_button(ui: &mut Ui, t: &Tokens, item: BarItem, tip: &str) -> Response
     match item {
         BarItem::Icon(i) => draw_icon(p, rect.center(), i, 16.0, dim(mix(t.muted, t.text, h), ui)),
         BarItem::Color(c) => {
-            p.circle_filled(rect.center(), 8.0, c);
-            p.circle_stroke(rect.center(), 7.5, Stroke::new(1.0, t.border));
+            let dot = pos2(rect.left() + 14.0, rect.center().y);
+            p.circle_filled(dot, 8.0, c);
+            p.circle_stroke(dot, 7.5, Stroke::new(1.0, t.border));
+            draw_icon(
+                p,
+                pos2(rect.right() - 10.0, rect.center().y),
+                Ico::ChevronDown,
+                12.0,
+                dim(mix(t.muted, t.text, h), ui),
+            );
         }
+    }
+    resp.on_hover_text(tip)
+}
+
+/// A floating bar's button with an icon and a short text, 28 px tall: 8 px in, the icon, the text,
+/// and the chevron of its menu when it opens one. `on` tints it (a switch that is on).
+pub fn bar_text(
+    ui: &mut Ui,
+    t: &Tokens,
+    icon: Ico,
+    text: &str,
+    chevron: bool,
+    on: bool,
+    tip: &str,
+) -> Response {
+    let tw = text_size(ui, text, 12.0, Weight::Medium).x;
+    let w = 8.0 + 16.0 + 6.0 + tw + if chevron { 4.0 + 12.0 } else { 0.0 } + 8.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    let bg = if on {
+        t.tint
+    } else {
+        mix(Color32::TRANSPARENT, t.raised, h)
+    };
+    p.rect_filled(rect, CornerRadius::same(6), bg);
+    let fg = dim(
+        if on {
+            t.accent
+        } else {
+            mix(t.muted, t.text, h)
+        },
+        ui,
+    );
+    let mut x = rect.left() + 8.0;
+    draw_icon(p, pos2(x + 8.0, rect.center().y), icon, 16.0, fg);
+    x += 16.0 + 6.0;
+    let text_fg = dim(if on { t.accent } else { t.text }, ui);
+    draw_text(
+        p,
+        pos2(x, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        12.0,
+        Weight::Medium,
+        text_fg,
+    );
+    if chevron {
+        draw_icon(
+            p,
+            pos2(x + tw + 4.0 + 6.0, rect.center().y),
+            Ico::ChevronDown,
+            12.0,
+            fg,
+        );
     }
     resp.on_hover_text(tip)
 }
@@ -1918,6 +1987,16 @@ mod tests {
             (
                 "bar_button colour",
                 Box::new(|ui| bar_button(ui, &t, BarItem::Color(Color32::RED), "Colour")),
+                28.0,
+            ),
+            (
+                "bar_text",
+                Box::new(|ui| bar_text(ui, &t, Ico::Line, "3 px", true, false, "Width")),
+                28.0,
+            ),
+            (
+                "bar_text on",
+                Box::new(|ui| bar_text(ui, &t, Ico::PaintBucket, "Fill", false, true, "Fill")),
                 28.0,
             ),
         ];

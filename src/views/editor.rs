@@ -407,13 +407,21 @@ fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut 
     else {
         return;
     };
-    // 5 x 28 px buttons 2 apart, 4 px inside.
-    let size = vec2(4.0 + 5.0 * 28.0 + 4.0 * 2.0 + 4.0, 36.0);
+    // Its size from the frame before (it changes with the object's kind and width).
+    let size_id = egui::Id::unique("takeshot-object-bar-size");
+    let size = ui
+        .ctx()
+        .data(|d| d.get_temp::<egui::Vec2>(size_id))
+        .unwrap_or(vec2(300.0, 36.0));
     // The handles stand up to 6 px outside the object.
     let at =
         crate::engine::placement::object_bar(sel.expand(6.0), size, ed.canvas_area().shrink(8.0));
-    let color = shared.settings.draw.color;
-    egui::Area::new(egui::Id::unique("takeui-object-bar"))
+    let opts = &shared.settings.draw;
+    let color = opts.color;
+    let kind = ed.an.bar_tool();
+    let has_width = kind.is_some_and(|k| !matches!(k, Tool::Text | Tool::Blur));
+    let has_fill = matches!(kind, Some(Tool::Rect | Tool::Ellipse));
+    let shown = egui::Area::new(egui::Id::unique("takeshot-object-bar"))
         .order(egui::Order::Foreground)
         .fixed_pos(at.min)
         .show(ui.ctx(), |ui| {
@@ -453,6 +461,69 @@ fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut 
                                     set_color(ui, col.to_array(), acts);
                                 }
                             });
+                        if has_width || has_fill {
+                            super::divider(ui, t, 20.0);
+                        }
+                        if has_width {
+                            let label = format!("{} px", opts.width.round());
+                            let w = kit::bar_text(
+                                ui,
+                                t,
+                                Ico::Line,
+                                &label,
+                                true,
+                                false,
+                                tr(Msg::Width),
+                            );
+                            egui::Popup::from_toggle_button_response(&w)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                .show(|ui| {
+                                    ui.set_min_width(220.0);
+                                    ui.spacing_mut().item_spacing.y = 10.0;
+                                    ui.label(
+                                        egui::RichText::new(tr(Msg::Width))
+                                            .font(font(12.0, Weight::Regular))
+                                            .color(t.muted),
+                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        for v in WIDTHS {
+                                            let tip = format!("{v} px");
+                                            let on = (opts.width - v).abs() < 0.01;
+                                            if kit::width_dot(ui, t, v, on, &tip).clicked() {
+                                                acts.push(EditorAction::SetWidth(v));
+                                            }
+                                        }
+                                    });
+                                    let mut v = (opts.color[3] as f32 * 100.0 / 255.0).round();
+                                    let r = kit::slider_row(
+                                        ui,
+                                        t,
+                                        tr(Msg::Opacity),
+                                        &mut v,
+                                        0.0..=100.0,
+                                        "%",
+                                    );
+                                    gesture(r, v, acts, |v| {
+                                        EditorAction::SetOpacity((v * 255.0 / 100.0).round() as u8)
+                                    });
+                                });
+                        }
+                        if has_fill
+                            && kit::bar_text(
+                                ui,
+                                t,
+                                Ico::PaintBucket,
+                                tr(Msg::Fill),
+                                false,
+                                opts.filled,
+                                tr(Msg::Fill),
+                            )
+                            .clicked()
+                        {
+                            acts.push(EditorAction::SetFill(!opts.filled));
+                        }
+                        super::divider(ui, t, 20.0);
                         let duplicate = format!("{} ({})", tr(Msg::Duplicate), cmd("D"));
                         for (icon, tip, act) in [
                             (Ico::CopyPlus, duplicate.as_str(), EditorAction::Duplicate),
@@ -475,6 +546,8 @@ fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut 
                     });
                 });
         });
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(size_id, shown.response.rect.size()));
 }
 
 /// The right panel, as in "Editor · escuro": the Object and Style tabs 12 px in, then the open
@@ -1390,6 +1463,77 @@ x"),
     }
 
     #[test]
+    fn the_object_bar_sets_width_opacity_and_fill() {
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(EditorAction::Select(rect, false), &ctx, None, &mut shared);
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let on_bar = |painted: &[(String, Rect)], text: &str| {
+            painted
+                .iter()
+                .find(|(s, r)| {
+                    s == text && r.right() < SIZE.0 - PANEL && r.top() > BAR_HEIGHT + TOOL_BAR
+                })
+                .map(|(_, r)| r.center())
+        };
+        // The width opens its menu: the widths and the opacity.
+        let width = on_bar(&painted, "3 px").expect("the width on the object bar");
+        let mut open = click(width);
+        open.push(vec![]);
+        let (_, painted, blocks) = run_editor(&mut ed, &mut shared, SIZE, true, open.clone());
+        let opacity = on_bar(&painted, tr(Msg::Opacity)).expect("the opacity in the menu");
+        // The dots sit in their row between the width and the opacity.
+        // The dots are 4 to 11 px circles (the handles of the selection are 8 px squares).
+        let widest = blocks
+            .iter()
+            .map(|(r, _)| *r)
+            .filter(|r| {
+                r.top() > width.y
+                    && r.center().y < opacity.y - 8.0
+                    && (r.width() - r.height()).abs() < 0.5
+                    && (9.0..=12.0).contains(&r.width())
+            })
+            .max_by(|a, b| a.width().total_cmp(&b.width()))
+            .expect("the width dots");
+        open.extend(click(widest.center()));
+        run_editor(&mut ed, &mut shared, SIZE, true, open);
+        assert_eq!(ed.an.doc.objs()[0].ann.width, 12.0, "the widest dot");
+        // Fill toggles the shape's fill.
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let fill = on_bar(&painted, tr(Msg::Fill)).expect("Fill on the object bar");
+        run_editor(&mut ed, &mut shared, SIZE, true, click(fill));
+        assert!(ed.an.doc.objs()[0].ann.filled);
+    }
+
+    #[test]
+    fn the_object_bar_has_no_width_for_a_text() {
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        ed.an.commit(Ann {
+            shape: Shape::Text {
+                pos: pos2(500.0, 500.0),
+                text: "Pico".into(),
+                font: 0,
+                size: 26.0,
+                boxed: false,
+            },
+            color: [0, 0, 0, 255],
+            width: 3.0,
+            filled: false,
+        });
+        let text = ed.an.doc.objs().last().unwrap().id;
+        ed.apply(EditorAction::Select(text, false), &ctx, None, &mut shared);
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        assert!(on_canvas(&painted, Ico::CopyPlus).is_some(), "the bar");
+        assert!(
+            !painted
+                .iter()
+                .any(|(s, _)| s == "3 px" || s == tr(Msg::Fill))
+        );
+    }
+
+    #[test]
     fn no_object_bar_for_a_selection_out_of_view() {
         // At 400 % the view shows the picture's middle; the rectangle (100,100)-(300,200) is off it.
         let (mut ed, mut shared) = editor();
@@ -1572,8 +1716,7 @@ x"),
             &mut shared,
         );
         let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
-        let dup = on_canvas(&painted, Ico::CopyPlus).expect("the object bar");
-        let colour = dup - vec2(30.0, 0.0);
+        let colour = on_canvas(&painted, Ico::ChevronDown).expect("the colour's chevron");
         let (_, painted, blocks) = run_editor(
             &mut ed,
             &mut shared,
