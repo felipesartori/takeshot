@@ -76,10 +76,10 @@ fn title_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, acts: &mut Vec<EditorAction>)
         .ctx()
         .data(|d| d.get_temp::<f32>(full_id))
         .unwrap_or(620.0);
-    let lead = 16.0 + chrome::leading_inset() + 22.0 + 16.0;
+    let lead = 12.0 + chrome::leading_inset() + 20.0 + 8.0;
     let history = 6.0 + 32.0 + 2.0 + 32.0 + 12.0;
     let window = if chrome::draws_window_buttons() {
-        3.0 * 44.0 + 2.0 * 4.0 + 24.0
+        12.0 + 3.0 * 32.0 + 3.0 * 4.0 + 6.0 + 1.0 + 6.0
     } else {
         12.0
     };
@@ -91,16 +91,16 @@ fn title_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, acts: &mut Vec<EditorAction>)
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
+                ui.add_space(12.0);
                 if chrome::draws_window_buttons() {
                     if let Some(c) = chrome::window_buttons(ui, t) {
                         acts.push(EditorAction::Window(c));
                     }
-                    ui.add_space(10.0);
+                    // The same gap on both sides of the line.
+                    ui.add_space(6.0);
                     let (line, _) = ui.allocate_exact_size(vec2(1.0, 20.0), egui::Sense::hover());
                     ui.painter().rect_filled(line, 0.0, t.border);
                     ui.add_space(6.0);
-                } else {
-                    ui.add_space(12.0);
                 }
                 ui.spacing_mut().item_spacing.x = 6.0;
                 let w = ui
@@ -125,10 +125,10 @@ fn title_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, acts: &mut Vec<EditorAction>)
             .layout(Layout::left_to_right(Align::Center)),
         |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.add_space(16.0 + chrome::leading_inset());
+            ui.add_space(12.0 + chrome::leading_inset());
             let mark = ed_mark(ui, t);
-            ui.add(egui::Image::new((mark, vec2(22.0, 22.0))));
-            ui.add_space(10.0);
+            ui.add(egui::Image::new((mark, vec2(20.0, 20.0))));
+            ui.add_space(2.0);
             let [w, h] = ed.size();
             let room = (ui.available_width() - history).max(0.0);
             name_and_size(ui, t, ed.name(), &format!("· {w} × {h}"), room);
@@ -888,6 +888,32 @@ mod tests {
         ]);
         let ed = Editor::new(&egui::Context::default(), base, doc, &shared);
         (ed, shared)
+    }
+
+    #[test]
+    fn the_editor_title_bar_is_44_px_with_32_px_window_buttons() {
+        let (mut ed, mut shared) = editor();
+        let (_, painted, blocks) = run_editor(&mut ed, &mut shared, (1280.0, 820.0), true, vec![]);
+        if cfg!(not(target_os = "macos")) {
+            let close = blocks
+                .iter()
+                .map(|(r, _)| *r)
+                .filter(|r| r.top() < BAR_HEIGHT && r.width() < 100.0)
+                .max_by(|a, b| a.right().total_cmp(&b.right()))
+                .expect("the close button");
+            assert_eq!(close.size(), vec2(32.0, 32.0), "{close:?}");
+            assert_eq!(close.top(), 6.0, "{close:?}");
+            assert_eq!(1280.0 - close.right(), 12.0, "{close:?}");
+        }
+        let name = painted
+            .iter()
+            .find(|(s, r)| s.starts_with("Takeshot ") && r.center().y < BAR_HEIGHT)
+            .map(|(_, r)| *r)
+            .expect("the file name");
+        assert!(
+            (name.center().y - BAR_HEIGHT / 2.0).abs() <= 1.0,
+            "{name:?}"
+        );
     }
 
     #[test]

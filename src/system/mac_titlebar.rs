@@ -1,6 +1,6 @@
 //! macOS: the traffic lights inside the theme's title bar (decision 13). The window keeps its
-//! native frame with the content under a transparent title bar; an empty unified-compact toolbar
-//! makes that bar as tall as the theme's and centres the lights in it.
+//! native frame with the content under a transparent title bar; an empty compact unified toolbar
+//! (about 38 pt) keeps the lights near the middle of the theme's 44 px bar.
 
 /// Gives the window of this app titled `title` the transparent bar and the toolbar that centres
 /// the traffic lights. Main thread only; a window already done keeps its toolbar.
@@ -19,7 +19,7 @@ pub fn center_traffic_lights(title: &str) {
         window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         let toolbar = NSToolbar::new(mtm);
         window.setToolbar(Some(&toolbar));
-        // The unified toolbar is 52 pt tall, the theme bar's height, so the lights sit centred.
-        window.setToolbarStyle(NSWindowToolbarStyle::Unified);
+        // The compact unified toolbar is the closest to the theme bar's 44 px (the full one is 52).
+        window.setToolbarStyle(NSWindowToolbarStyle::UnifiedCompact);
     }
 }

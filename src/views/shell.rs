@@ -2,7 +2,7 @@
 //! the window buttons) over a rounded content panel, as in "A · Janela principal" of the design.
 
 use crate::Shared;
-use crate::screens::home::{Home, MainAction, chip, hotkey_text};
+use crate::screens::home::{Home, MainAction};
 use crate::system::instance::Page;
 use crate::ui::chrome::{self, BAR_HEIGHT};
 use crate::ui::i18n::{Msg, t as tr};
@@ -22,7 +22,7 @@ pub fn main_window(
         .resizable(false)
         .show_separator_line(false)
         .frame(Frame::new().fill(t.shell))
-        .show(ui, |ui| title_bar(ui, t, home, shared, &mut acts));
+        .show(ui, |ui| title_bar(ui, t, home, &mut acts));
     egui::CentralPanel::no_frame()
         .frame(Frame::new().fill(t.shell).inner_margin(Margin::same(8)))
         .show(ui, |ui| {
@@ -47,25 +47,19 @@ pub fn main_window(
     acts
 }
 
-fn title_bar(
-    ui: &mut Ui,
-    t: &Tokens,
-    home: &mut Home,
-    shared: &Shared,
-    acts: &mut Vec<MainAction>,
-) {
+fn title_bar(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
     // The empty bar moves the window; it goes first so the bar's buttons sit above it.
     chrome::drag_area(ui, ui.max_rect());
-    // Measures from "A · Janela principal": 4 px between items, the mark 16 px in, the pills
-    // 28 px after the name, the window buttons flush right behind a short line.
+    // Measures from page C: 4 px between items, 12 px at both ends, the name 8 px after the mark
+    // and the pills 20 px after the name; the window buttons behind a short line.
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.add_space(16.0 + chrome::leading_inset());
+        ui.add_space(12.0 + chrome::leading_inset());
         let mark = home.mark(ui.ctx(), t);
-        ui.add(egui::Image::new((mark, vec2(22.0, 22.0))));
-        ui.add_space(12.0);
-        ui.label(crate::ui::brand::wordmark(t.theme, 17.0).color(t.text));
-        ui.add_space(28.0);
+        ui.add(egui::Image::new((mark, vec2(20.0, 20.0))));
+        ui.add_space(4.0);
+        ui.label(crate::ui::brand::wordmark(t.theme, 16.0).color(t.text));
+        ui.add_space(16.0);
         for (page, icon, msg) in [
             (Page::Start, Ico::Home, Msg::Home),
             (Page::Style, Ico::Palette, Msg::Style),
@@ -76,13 +70,11 @@ fn title_bar(
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if !chrome::draws_window_buttons() {
-                ui.add_space(12.0);
-            } else {
+            ui.add_space(12.0);
+            if chrome::draws_window_buttons() {
                 if let Some(c) = chrome::window_buttons(ui, t) {
                     acts.push(MainAction::Window(c));
                 }
-                ui.add_space(10.0);
                 let (line, _) = ui.allocate_exact_size(vec2(1.0, 20.0), egui::Sense::hover());
                 ui.painter().rect_filled(line, 0.0, t.border);
             }
@@ -97,13 +89,6 @@ fn title_bar(
             if kit::icon_button(ui, t, icon, false, tr(tip)).clicked() {
                 acts.push(MainAction::SetMode(next));
             }
-            ui.add_space(12.0);
-            let status = home.hotkey_status.as_ref();
-            let tip = match hotkey_text(status, &shared.settings) {
-                Ok(s) | Err(s) => s,
-            };
-            let (state, text) = chip(status, &shared.settings);
-            kit::status_chip(ui, t, state, &text).on_hover_text(tip);
         });
     });
 }
@@ -119,9 +104,10 @@ mod tests {
     use crate::views::testing::{click, content_box, painted_at, run, run_painted};
 
     #[test]
-    fn the_title_bar_matches_the_design() {
-        // "A · Janela principal": a 52 px bar, the window buttons its full height, flush right.
-        assert_eq!(BAR_HEIGHT, 52.0);
+    fn the_title_bar_is_44_px_with_32_px_window_buttons() {
+        // Page C: a 44 px bar; every button of it 32 x 32, 6 px from the top and bottom, the last
+        // one 12 px from the right edge.
+        assert_eq!(BAR_HEIGHT, 44.0);
         let (mut home, mut shared) = Home::for_tests(vec![]);
         let (_, painted, blocks) =
             run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
@@ -129,14 +115,12 @@ mod tests {
             let close = blocks
                 .iter()
                 .map(|(r, _)| *r)
-                .find(|r| {
-                    r.right() == 1160.0
-                        && r.top() == 0.0
-                        && r.height() == BAR_HEIGHT
-                        && r.width() < 100.0
-                })
+                .filter(|r| r.top() < BAR_HEIGHT && r.width() < 100.0)
+                .max_by(|a, b| a.right().total_cmp(&b.right()))
                 .expect("the close button");
-            assert_eq!(close.width(), 44.0, "{close:?}");
+            assert_eq!(close.size(), egui::vec2(32.0, 32.0), "{close:?}");
+            assert_eq!(close.top(), 6.0, "{close:?}");
+            assert_eq!(1160.0 - close.right(), 12.0, "{close:?}");
         }
         let name =
             painted_at(&painted, &["Takeshot"], |r| r.center().y < BAR_HEIGHT).expect("the name");
@@ -157,6 +141,18 @@ mod tests {
             assert!(in_bar(word).is_some(), "{theme:?}: {word}");
             assert!(in_bar(other).is_none(), "{theme:?}: not {other}");
         }
+    }
+
+    #[test]
+    fn the_title_bar_has_no_shortcut_status() {
+        // The status lives in Settings > Shortcuts and the conflict notice.
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        let (_, text) = crate::screens::home::chip(None, &shared.settings);
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        assert!(
+            painted_at(&painted, &[text.as_str()], |r| r.center().y < BAR_HEIGHT).is_none(),
+            "{text}"
+        );
     }
 
     #[test]

@@ -650,10 +650,10 @@ pub enum WindowControl {
     Close,
 }
 
-/// 44 × 52 window button, the title bar's full height. Hover fills `hover`; Close fills `danger`
-/// with a white glyph. With the window maximized, Maximize shows the restore glyph.
+/// 32 × 32 window button, rounded like the bar's other buttons. Hover fills `hover`; Close fills
+/// `danger` with a white glyph. With the window maximized, Maximize shows the restore glyph.
 pub fn window_control(ui: &mut Ui, t: &Tokens, c: WindowControl, maximized: bool) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 52.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
     let h = hover_mix(ui, &resp);
     let p = ui.painter();
     let (icon, tip, hover_bg, hover_fg) = match c {
@@ -662,12 +662,16 @@ pub fn window_control(ui: &mut Ui, t: &Tokens, c: WindowControl, maximized: bool
         WindowControl::Maximize => (Ico::Square, Msg::MaximizeWindow, t.hover, t.text),
         WindowControl::Close => (Ico::Close, Msg::CloseWord, t.danger, Color32::WHITE),
     };
-    p.rect_filled(rect, 0.0, mix(Color32::TRANSPARENT, hover_bg, h));
+    p.rect_filled(
+        rect,
+        CornerRadius::same(t.radius),
+        mix(Color32::TRANSPARENT, hover_bg, h),
+    );
     draw_icon(
         p,
         rect.center(),
         icon,
-        15.0,
+        16.0,
         dim(mix(t.muted, hover_fg, h), ui),
     );
     resp.on_hover_text(tr(tip))
@@ -2050,7 +2054,7 @@ mod tests {
                 let still = rect_of(false, &f);
                 let hovered = rect_of(true, &f);
                 // The full height of the 52 px bar, as in the design.
-                assert_eq!(still.alloc.size(), egui::vec2(44.0, 52.0), "{c:?}");
+                assert_eq!(still.alloc.size(), egui::vec2(32.0, 32.0), "{c:?}");
                 assert!(!still.hovered && hovered.hovered, "{c:?}: pointer missed");
                 assert_eq!(still.alloc, hovered.alloc, "{c:?} moves on hover");
                 assert!(
