@@ -42,10 +42,18 @@ pub struct TextDraft {
     pub caret: Option<usize>,
 }
 
+/// A number for each draft opened in this process (`TextDraft::started`): a capture's text and
+/// the editor's next one never share a text field, nor its undo.
+fn next_draft() -> f64 {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as f64
+}
+
 /// The character index nearest `rel` (picture px from the text's top-left) in `text`: the line
 /// under it, then the boundary between letters nearest it.
 fn caret_at(text: &str, font: usize, size: f32, rel: Vec2, m: TextMeasure) -> usize {
-    let line_h = m("Ag", font, size, false).y.max(1.0);
+    // One line's step, line gap included: two lines' height less one's.
+    let line_h = (m("A\nA", font, size, false).y - m("A", font, size, false).y).max(1.0);
     let line = (rel.y / line_h).floor().max(0.0) as usize;
     let mut before = 0;
     let lines: Vec<&str> = text.split('\n').collect();
@@ -90,8 +98,6 @@ pub struct Annotator {
     pub dragging: Option<Drag>,
     /// Revision and left-out objects of the last baked picture.
     baked: Option<(u64, Vec<ObjId>)>,
-    /// Drafts opened so far (`TextDraft::started`).
-    drafts: u32,
 }
 
 impl Annotator {
@@ -112,7 +118,6 @@ impl Annotator {
             draft: None,
             dragging: None,
             baked: None,
-            drafts: 0,
         }
     }
 
@@ -226,11 +231,10 @@ impl Annotator {
                     self.commit_draft(opts);
                     // The text being typed takes the options: nothing else may follow them.
                     self.doc.select(None, false);
-                    self.drafts += 1;
                     self.draft = Some(TextDraft {
                         pos: view.to_img(p),
                         text: String::new(),
-                        started: self.drafts as f64,
+                        started: next_draft(),
                         caret: None,
                     });
                 }
@@ -239,6 +243,7 @@ impl Annotator {
                 if resp.clicked()
                     && let Some(p) = pointer
                 {
+                    self.commit_draft(opts);
                     let n = self.next_counter();
                     self.commit(Ann {
                         shape: Shape::Counter {
@@ -255,6 +260,7 @@ impl Annotator {
                 if resp.drag_started() {
                     let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
                     if let Some(o) = origin {
+                        self.commit_draft(opts);
                         let p = view.to_img(o);
                         self.start = Some(p);
                         self.live = Some(Ann {
@@ -412,7 +418,6 @@ impl Annotator {
         used
     }
 
-    /// For the pointer: the handle under `p_img` (or the one being dragged) and whether an object is there.
     /// Whether a visible text object is at `p_img`.
     fn text_at(&self, p_img: Pos2, m: TextMeasure) -> bool {
         self.doc.hit(p_img, 0.0, m).is_some_and(|id| {
@@ -482,7 +487,10 @@ impl Annotator {
         let drag = if let Some((id, handle)) = self.doc.handle_at(p, HANDLE_REACH / view.k, m) {
             Drag::Resize { id, handle }
         } else if let Some(id) = self.doc.hit(p, HIT_REACH / view.k, m) {
-            if shift {
+            // The text being typed is kept first, in its own style.
+            self.commit_draft(opts);
+            // Shift adds to the selection with Select; with a drawing tool it constrains drawing.
+            if shift && self.tool == Tool::Select {
                 self.doc.select(Some(id), true);
             } else if !started || !self.doc.selected().contains(&id) {
                 // Dragging an object of a multi-selection moves them all; a click picks just it.
@@ -640,11 +648,10 @@ impl Annotator {
         opts.color = color;
         self.doc.select(None, false);
         let caret = caret_at(&text, font, size, p_img - pos, m);
-        self.drafts += 1;
         self.draft = Some(TextDraft {
             pos,
             text,
-            started: self.drafts as f64,
+            started: next_draft(),
             caret: Some(caret),
         });
         true
@@ -1663,6 +1670,112 @@ mod tests {
         assert_eq!(pick(&ctx(Tool::Text, true, true)), egui::CursorIcon::Text);
         assert_eq!(pick(&ctx(Tool::Arrow, true, true)), egui::CursorIcon::Move);
         assert_eq!(pick(&ctx(Tool::Text, true, false)), egui::CursorIcon::Move);
+    }
+
+    fn typing(an: &mut Annotator, text: &str) {
+        an.draft = Some(TextDraft {
+            pos: pos2(400.0, 400.0),
+            text: text.into(),
+            started: 0.0,
+            caret: None,
+        });
+    }
+
+    fn text_colour(an: &Annotator) -> Option<[u8; 4]> {
+        an.doc
+            .objs()
+            .iter()
+            .find(|o| matches!(o.ann.shape, Shape::Text { .. }))
+            .map(|o| o.ann.color)
+    }
+
+    #[test]
+    fn picking_a_shape_ends_the_text_being_typed_in_its_own_style() {
+        let (mut an, ids) = with(
+            Tool::Text,
+            vec![rect_ann((100.0, 100.0), (200.0, 200.0), false)],
+        );
+        typing(&mut an, "Pico");
+        let mut opts = DrawOpts {
+            color: [0, 0, 255, 255],
+            ..Default::default()
+        };
+        run(Modifiers::NONE, click(pos2(100.0, 150.0)), |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert!(an.draft.is_none(), "the text is kept first");
+        assert_eq!(text_colour(&an), Some([0, 0, 255, 255]));
+        assert_eq!(an.doc.objs()[0].ann.color, [255, 0, 0, 255]);
+        assert_eq!(an.doc.selected(), &[ids[0]]);
+    }
+
+    #[test]
+    fn a_new_shape_ends_the_text_being_typed() {
+        let (mut an, _) = with(Tool::Arrow, vec![]);
+        typing(&mut an, "Pico");
+        let mut opts = DrawOpts::default();
+        run(
+            Modifiers::NONE,
+            drag(
+                pos2(100.0, 100.0),
+                &[pos2(150.0, 150.0), pos2(200.0, 200.0)],
+            ),
+            |ui, resp| an.handle_canvas(ui, resp, &VIEW, &m, &mut opts),
+        );
+        assert!(an.draft.is_none());
+        assert_eq!(an.doc.objs().len(), 2, "the text and the arrow");
+    }
+
+    #[test]
+    fn shift_with_a_drawing_tool_moves_only_the_shape_under_it() {
+        let (mut an, ids) = with(
+            Tool::Arrow,
+            vec![
+                rect_ann((100.0, 100.0), (200.0, 200.0), false),
+                rect_ann((400.0, 400.0), (500.0, 500.0), false),
+            ],
+        );
+        an.doc.select(Some(ids[0]), false);
+        let first = bounds(&an, ids[0]);
+        let second = bounds(&an, ids[1]);
+        let mut opts = DrawOpts::default();
+        run(
+            Modifiers::SHIFT,
+            drag(
+                pos2(400.0, 420.0),
+                &[pos2(430.0, 450.0), pos2(460.0, 480.0)],
+            ),
+            |ui, resp| an.handle_canvas(ui, resp, &VIEW, &m, &mut opts),
+        );
+        assert_eq!(bounds(&an, ids[0]), first, "the last shape drawn stays");
+        assert_ne!(bounds(&an, ids[1]), second);
+        assert_eq!(an.doc.selected(), &[ids[1]]);
+    }
+
+    #[test]
+    fn the_caret_finds_the_line_with_the_font_s_line_gap() {
+        // 20 px lines 10 px apart: the click at y 45 is on the second line.
+        let gap = |t: &str, _f: usize, _s: f32, _b: bool| {
+            let lines = t.lines().count().max(1) as f32;
+            let w = t.lines().map(|l| l.chars().count()).max().unwrap_or(0) as f32 * 10.0;
+            vec2(w, lines * 20.0 + (lines - 1.0) * 10.0)
+        };
+        assert_eq!(caret_at("ab\ncd\nef", 0, 20.0, vec2(11.0, 45.0), &gap), 4);
+    }
+
+    #[test]
+    fn every_draft_gets_its_own_field() {
+        // A capture's text and the editor's first text never share a field (or its undo).
+        let mut a = Annotator::new(Tool::Text);
+        let mut b = Annotator::new(Tool::Text);
+        let mut opts = DrawOpts::default();
+        for an in [&mut a, &mut b] {
+            run(Modifiers::NONE, click(pos2(300.0, 300.0)), |ui, resp| {
+                an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+            });
+        }
+        let (sa, sb) = (a.draft.unwrap().started, b.draft.unwrap().started);
+        assert_ne!(sa, sb);
     }
 
     #[test]

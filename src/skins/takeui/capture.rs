@@ -211,6 +211,9 @@ fn options_bar(
         if tool != Tool::Blur
             && let Some(c) = super::palette(ui, t, opts.color)
         {
+            if ui.input(|i| i.pointer.any_down()) {
+                acts.push(CaptureAction::Gesture(true));
+            }
             acts.push(CaptureAction::SetColor(c));
         }
         match tool {

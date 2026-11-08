@@ -38,6 +38,8 @@ pub enum CaptureAction {
     SetBlurMode(BlurMode),
     Duplicate,
     Delete,
+    /// A colour picker grabbed: its changes undo in one step until the button is let go.
+    Gesture(bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -204,6 +206,8 @@ impl Overlay {
                 self.an.doc.duplicate_selected(vec2(12.0, 12.0));
             }
             CaptureAction::Delete => self.an.doc.delete_selected(),
+            CaptureAction::Gesture(true) => self.an.doc.begin_gesture(),
+            CaptureAction::Gesture(false) => self.an.doc.end_gesture(),
         }
         Switch::None
     }
@@ -267,6 +271,10 @@ impl Overlay {
         }
         let screen = ui.max_rect();
         let view = Self::view_on(screen, self.img_size());
+        // A colour picker's gesture ends with the button.
+        if !ui.input(|i| i.pointer.any_down()) {
+            self.an.doc.end_gesture();
+        }
         let opts_snapshot = shared.settings.draw.clone();
 
         // ---------------- baked picture
@@ -291,8 +299,9 @@ impl Overlay {
 
         let drawing_tool = self.sel.is_some() && self.an.tool != Tool::Select;
         self.canvas_input(ui, &canvas, &view, pointer, shared);
-        if drawing_tool {
-            // The wheel changes the stroke width (or the text size), a notch a step.
+        if drawing_tool && !menu_open && canvas.hovered() {
+            // The wheel changes the stroke width (or the text size), a notch a step; over a menu
+            // it scrolls the menu.
             let events = ui.input(|i| i.events.clone());
             let n = crate::engine::annotator::wheel_notches(&mut self.wheel_acc, &events);
             if n != 0 {
@@ -377,11 +386,11 @@ impl Overlay {
         }
 
         // ---------------- keyboard
-        // Keys wait while a text is typed, a menu is open or a field (a colour's numbers) has the
-        // keyboard.
+        // Keys wait while a text is typed, a menu is open or a text field (a colour's numbers)
+        // has the keyboard.
         if !typing
             && !menu_open
-            && !ctx.egui_wants_keyboard_input()
+            && !ctx.text_edit_focused()
             && let Some(sw) = self.keys(ui, &ctx, frame, shared, pointer, &view)
         {
             switch = sw;
@@ -1325,6 +1334,32 @@ mod tests {
             ],
         );
         assert_eq!(sh.settings.draw.width, 4.0);
+    }
+
+    #[test]
+    fn the_wheel_over_an_open_menu_leaves_the_width() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        sh.settings.draw.width = 3.0;
+        let mut o = capture(&ctx, &sh, Tool::Rect);
+        let at = pos2(600.0, 600.0);
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, 1.0),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+        };
+        ui_frames_with(
+            &mut o,
+            &mut sh,
+            vec![vec![egui::Event::PointerMoved(at)], vec![wheel], vec![]],
+            Some(egui::Id::unique("a-menu")),
+        );
+        assert_eq!(
+            sh.settings.draw.width, 3.0,
+            "the menu scrolls, the width stays"
+        );
     }
 
     #[test]

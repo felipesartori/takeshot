@@ -435,9 +435,10 @@ impl Editor {
         // The styled preview stays within the GPU's texture side; a larger zoom magnifies it.
         let full = render::layout(iw, ih, &shared.settings.style, &shared.settings.watermark);
         let max_side = ctx.input(|i| i.max_texture_side) as f32;
-        let s = want.min(max_side / full.w.max(full.h));
-        let tw = ((iw * s).round() as u32).max(1);
-        let th = ((ih * s).round() as u32).max(1);
+        // A pixel of margin and rounding down: the composed picture rounds its own size up.
+        let s = want.min((max_side - 1.0) / full.w.max(full.h));
+        let tw = ((iw * s).floor() as u32).max(1);
+        let th = ((ih * s).floor() as u32).max(1);
         let need = self
             .preview_src
             .as_ref()
@@ -935,36 +936,43 @@ mod tests {
 
     #[test]
     fn the_preview_stays_under_the_gpu_texture_limit() {
-        // A wide picture at 200 %: its full-size preview would pass a 2048 px texture limit.
-        let shared = crate::Shared::for_tests();
-        let base = RgbaImage::from_pixel(3000, 500, image::Rgba([240, 240, 240, 255]));
-        let mut ed = Editor::new(&egui::Context::default(), base, Doc::new(), &shared);
-        let mut shared = shared;
-        let ctx = egui::Context::default();
-        shared.fonts.install(&ctx);
-        let t = crate::ui::tokens::tokens(crate::ui::tokens::ThemeId::TakeUi, true);
-        ed.apply(
-            EditorAction::Zoom(Zoom::Percent(200)),
-            &ctx,
-            None,
-            &mut shared,
-        );
-        for i in 0..3 {
-            let input = egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
-                max_texture_side: Some(2048),
-                time: Some(i as f64 * 0.05),
-                ..Default::default()
-            };
-            ctx.run_ui(input, |ui| {
-                ed.canvas(ui, &t, &mut shared);
-            })
-            .textures_delta
-            .clear();
+        // Wide pictures at 200 % against a 2048 px texture limit; 1843 px used to round 1 px past.
+        for (w, h) in [(3000, 500), (1843, 500)] {
+            let shared = crate::Shared::for_tests();
+            let base = RgbaImage::from_pixel(w, h, image::Rgba([240, 240, 240, 255]));
+            let mut ed = Editor::new(&egui::Context::default(), base, Doc::new(), &shared);
+            let mut shared = shared;
+            let ctx = egui::Context::default();
+            shared.fonts.install(&ctx);
+            let t = crate::ui::tokens::tokens(crate::ui::tokens::ThemeId::TakeUi, true);
+            ed.apply(
+                EditorAction::Zoom(Zoom::Percent(200)),
+                &ctx,
+                None,
+                &mut shared,
+            );
+            for i in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                    max_texture_side: Some(2048),
+                    time: Some(i as f64 * 0.05),
+                    ..Default::default()
+                };
+                ctx.run_ui(input, |ui| {
+                    ed.canvas(ui, &t, &mut shared);
+                })
+                .textures_delta
+                .clear();
+            }
+            let side = ed.preview.as_ref().map(|t| t.size()).expect("a preview");
+            assert!(side[0] <= 2048 && side[1] <= 2048, "{w}x{h}: {side:?}");
+            assert!(!ed.preview_dirty, "rendered once, not every frame");
+            assert_eq!(
+                ed.preview_target,
+                ed.shown_scale().min(1.0),
+                "no rebuild loop"
+            );
         }
-        let side = ed.preview.as_ref().map(|t| t.size()).expect("a preview");
-        assert!(side[0] <= 2048 && side[1] <= 2048, "{side:?}");
-        assert!(!ed.preview_dirty, "rendered once, not every frame");
     }
 
     #[test]

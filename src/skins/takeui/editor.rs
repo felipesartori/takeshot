@@ -262,8 +262,16 @@ fn actions(ui: &mut Ui, t: &Tokens, compact: bool, acts: &mut Vec<EditorAction>)
 /// The palette as editor actions.
 fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4], acts: &mut Vec<EditorAction>) {
     if let Some(c) = super::palette(ui, t, color) {
-        acts.push(EditorAction::SetColor(c));
+        set_color(ui, c, acts);
     }
+}
+
+/// A colour picked; while the picker is dragged, its changes undo in one step.
+fn set_color(ui: &Ui, c: [u8; 4], acts: &mut Vec<EditorAction>) {
+    if ui.input(|i| i.pointer.any_down()) {
+        acts.push(EditorAction::Gesture(true));
+    }
+    acts.push(EditorAction::SetColor(c));
 }
 
 fn divider(ui: &mut Ui, t: &Tokens) {
@@ -442,7 +450,7 @@ fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut 
                                     &mut col,
                                     egui::color_picker::Alpha::Opaque,
                                 ) {
-                                    acts.push(EditorAction::SetColor(col.to_array()));
+                                    set_color(ui, col.to_array(), acts);
                                 }
                             });
                         let duplicate = format!("{} ({})", tr(Msg::Duplicate), cmd("D"));

@@ -559,9 +559,13 @@ impl Doc {
         self.changed();
     }
 
-    /// Starts a gesture (a slider held): its restyles undo in one step, saved at its first change.
+    /// Starts a gesture (a slider or a colour picker held): its restyles undo in one step, saved at
+    /// its first change. Beginning one already open changes nothing (the picker begins it on every
+    /// frame it changes).
     pub fn begin_gesture(&mut self) {
-        self.gesture = Some(false);
+        if self.gesture.is_none() {
+            self.gesture = Some(false);
+        }
     }
 
     pub fn end_gesture(&mut self) {
@@ -1089,6 +1093,25 @@ mod tests {
             100,
             "outside a gesture every change is a step"
         );
+    }
+
+    #[test]
+    fn a_gesture_begun_again_is_still_one_step() {
+        // The colour picker begins its gesture on every frame it changes.
+        let mut d = Doc::from_anns(vec![rect((0.0, 0.0), (50.0, 50.0))]);
+        let a = d.objs()[0].id;
+        d.select(Some(a), false);
+        for v in [10, 20, 30] {
+            d.begin_gesture();
+            d.restyle_selected(&Restyle {
+                rgb: Some([v, 0, 0]),
+                ..Default::default()
+            });
+        }
+        d.end_gesture();
+        assert!(d.undo());
+        assert_eq!(d.objs()[0].ann.color, [255, 0, 0, 255]);
+        assert!(!d.undo());
     }
 
     #[test]
