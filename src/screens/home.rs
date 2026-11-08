@@ -84,6 +84,9 @@ enum Thumbnail {
         tex: egui::TextureHandle,
         size: [u32; 2],
         used: u64,
+        /// The capture's date and size it was made from: a capture saved over under the same
+        /// name gets a new one.
+        made_from: (std::time::SystemTime, u64),
     },
     Failed,
 }
@@ -114,6 +117,8 @@ pub struct Home {
     cols: usize,
     folder_missing: bool,
     thumbs: Thumbs,
+    /// The thumbnails' disk cache (Delete drops a capture's thumbnail from it).
+    cache: Option<crate::system::thumbcache::Cache>,
     textures: HashMap<PathBuf, Thumbnail>,
     /// The cards drawn in the last frame; a waiting thumbnail not among them is dropped.
     drawn: std::collections::HashSet<PathBuf>,
@@ -146,13 +151,13 @@ pub struct HomeRequests {
 
 impl Home {
     pub fn new(ctx: &egui::Context, shared: &Shared) -> Self {
-        let mut h = Self::empty(ctx, crate::system::thumbcache::dir());
+        let mut h = Self::empty(ctx, crate::system::thumbcache::Cache::system());
         h.scan(ctx, shared.captures_dir(), 0.0);
         h
     }
 
     /// An empty Início whose thumbnails go through the disk cache at `cache`.
-    fn empty(ctx: &egui::Context, cache: Option<std::path::PathBuf>) -> Self {
+    fn empty(ctx: &egui::Context, cache: Option<crate::system::thumbcache::Cache>) -> Self {
         Self {
             page: Page::Start,
             section: SettingsSection::General,
@@ -167,7 +172,8 @@ impl Home {
             pending_select: None,
             cols: 1,
             folder_missing: false,
-            thumbs: Thumbs::new(ctx, cache),
+            thumbs: Thumbs::new(ctx, cache.clone()),
+            cache,
             textures: HashMap::new(),
             drawn: std::collections::HashSet::new(),
             frame: 0,
@@ -305,7 +311,9 @@ impl Home {
         let frame = self.frame;
         self.drawn.insert(path.to_path_buf());
         match self.textures.get_mut(path) {
-            Some(Thumbnail::Ready { tex, size, used }) => {
+            Some(Thumbnail::Ready {
+                tex, size, used, ..
+            }) => {
                 *used = frame;
                 (CardThumb::Ready(tex.id(), tex.size_vec2()), Some(*size))
             }
@@ -400,7 +408,17 @@ impl Home {
         self.entries = entries;
         let present: std::collections::HashSet<&Path> =
             self.entries.iter().map(|e| e.path.as_path()).collect();
-        self.textures.retain(|p, _| present.contains(p.as_path()));
+        let now: HashMap<&Path, (std::time::SystemTime, u64)> = self
+            .entries
+            .iter()
+            .map(|e| (e.path.as_path(), (e.modified, e.bytes)))
+            .collect();
+        self.textures
+            .retain(|p, t| match (now.get(p.as_path()), t) {
+                (None, _) => false,
+                (Some(stamp), Thumbnail::Ready { made_from, .. }) => made_from == stamp,
+                _ => true,
+            });
         if self
             .selected
             .as_deref()
@@ -482,6 +500,11 @@ impl Home {
             if !self.textures.contains_key(&path) {
                 continue;
             }
+            let made_from = self
+                .entries
+                .iter()
+                .find(|e| e.path == path)
+                .map_or((std::time::UNIX_EPOCH, 0), |e| (e.modified, e.bytes));
             let thumb = match result {
                 Ok((img, size)) => Thumbnail::Ready {
                     tex: ctx.load_texture(
@@ -491,6 +514,7 @@ impl Home {
                     ),
                     size,
                     used: self.frame,
+                    made_from,
                 },
                 Err(_) => Thumbnail::Failed,
             };
@@ -713,19 +737,25 @@ impl Home {
                 },
                 Err(e) => shared.toast(e.to_string()),
             },
-            MainAction::Trash(p) => match library::move_to_trash(&p) {
-                Ok(()) => {
-                    shared.toast(tr(Msg::MovedToTrash).to_string());
-                    let rest = self
-                        .entries
-                        .iter()
-                        .filter(|e| e.path != p)
-                        .cloned()
-                        .collect();
-                    self.set_entries(rest);
+            MainAction::Trash(p) => {
+                // Its thumbnail goes too: a small capture's thumbnail is the whole picture.
+                if let Some(c) = &self.cache {
+                    c.forget(&p);
                 }
-                Err(e) => shared.toast(e),
-            },
+                match library::move_to_trash(&p) {
+                    Ok(()) => {
+                        shared.toast(tr(Msg::MovedToTrash).to_string());
+                        let rest = self
+                            .entries
+                            .iter()
+                            .filter(|e| e.path != p)
+                            .cloned()
+                            .collect();
+                        self.set_entries(rest);
+                    }
+                    Err(e) => shared.toast(e),
+                }
+            }
             MainAction::SetMode(m) => {
                 shared.settings.ui_mode = m;
                 shared.settings_dirty = true;
@@ -1068,6 +1098,43 @@ mod tests {
     }
 
     #[test]
+    fn a_capture_changed_under_its_name_gets_a_new_thumbnail() {
+        let t1 = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        let shot = |modified, bytes| Entry {
+            path: PathBuf::from("a.png"),
+            name: "a.png".into(),
+            modified,
+            bytes,
+        };
+        let (mut home, _shared) = Home::for_tests(vec![shot(t1, 100)]);
+        let ctx = egui::Context::default();
+        let tex = ctx.load_texture(
+            "a",
+            egui::ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+            egui::TextureOptions::LINEAR,
+        );
+        home.textures.insert(
+            PathBuf::from("a.png"),
+            Thumbnail::Ready {
+                tex,
+                size: [1, 1],
+                used: 0,
+                made_from: (t1, 100),
+            },
+        );
+        home.set_entries(vec![shot(t1, 100)]);
+        assert!(
+            home.textures.contains_key(Path::new("a.png")),
+            "unchanged: kept"
+        );
+        home.set_entries(vec![shot(t1 + std::time::Duration::from_secs(5), 100)]);
+        assert!(
+            !home.textures.contains_key(Path::new("a.png")),
+            "saved over: made again"
+        );
+    }
+
+    #[test]
     fn the_thumbnail_cache_keeps_the_most_recently_drawn() {
         let (mut home, _shared) = Home::for_tests(vec![]);
         let ctx = egui::Context::default();
@@ -1083,6 +1150,7 @@ mod tests {
                     tex,
                     size: [1, 1],
                     used: i as u64,
+                    made_from: (std::time::UNIX_EPOCH, 0),
                 },
             );
         }

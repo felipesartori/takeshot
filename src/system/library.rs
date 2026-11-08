@@ -10,6 +10,8 @@ use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::SystemTime;
 
+use crate::system::thumbcache::Cache;
+
 /// One image in the folder.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
@@ -162,34 +164,51 @@ type Shared = (Mutex<(ThumbQueue, bool)>, Condvar);
 pub struct Thumbs {
     jobs: Arc<Shared>,
     rx: Mutex<Receiver<(PathBuf, Thumb)>>,
+    /// The threads that started.
+    #[cfg(test)]
+    workers: usize,
 }
 
 impl Thumbs {
     /// Half the processor's threads, at most 3: a first visit to a folder of photos goes faster,
     /// while at most 3 full pictures (about 50 MB each for 12 MP) are decoded at once.
-    pub fn new(ctx: &egui::Context, cache: Option<PathBuf>) -> Self {
+    pub fn new(ctx: &egui::Context, cache: Option<Cache>) -> Self {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         Self::with_workers(ctx, cache, (cores / 2).clamp(1, 3))
     }
 
-    pub fn with_workers(ctx: &egui::Context, cache: Option<PathBuf>, workers: usize) -> Self {
+    /// `workers` threads over one queue (at least one).
+    pub fn with_workers(ctx: &egui::Context, cache: Option<Cache>, workers: usize) -> Self {
         let jobs: Arc<Shared> =
             Arc::new((Mutex::new((ThumbQueue::default(), false)), Condvar::new()));
         let (done, rx) = channel();
+        let mut started = 0;
         for worker in 0..workers.max(1) {
             let (ctx, queue, done, cache) =
                 (ctx.clone(), jobs.clone(), done.clone(), cache.clone());
             let spawned = std::thread::Builder::new()
                 .name(format!("takeshot-thumbs-{worker}"))
-                .spawn(move || thumb_worker(&ctx, &queue, &done, cache.as_deref(), worker == 0));
-            if let Err(e) = spawned {
-                eprintln!("takeshot: no thumbnails: {e}");
+                .spawn(move || thumb_worker(&ctx, &queue, &done, cache.as_ref(), worker == 0));
+            match spawned {
+                Ok(_) => started += 1,
+                Err(e) => eprintln!("takeshot: no thumbnails: {e}"),
             }
+        }
+        if started == 0 {
+            eprintln!("takeshot: Início shows no thumbnails");
         }
         Self {
             jobs,
             rx: Mutex::new(rx),
+            #[cfg(test)]
+            workers: started,
         }
+    }
+
+    /// The threads that started.
+    #[cfg(test)]
+    pub fn workers(&self) -> usize {
+        self.workers
     }
 
     pub fn request(&self, path: PathBuf) {
@@ -217,21 +236,22 @@ impl Thumbs {
 }
 
 /// One thumbnail thread: takes the newest request, makes it and sends it back, until the owner goes.
-/// The first one also keeps the disk cache to its cap, at start and every 500 thumbnails.
+/// The first one also prunes the disk cache (gone or changed captures, then past its cap), at
+/// start and every 500 thumbnails it makes.
 fn thumb_worker(
     ctx: &egui::Context,
     queue: &Shared,
     done: &std::sync::mpsc::Sender<(PathBuf, Thumb)>,
-    cache: Option<&Path>,
+    cache: Option<&Cache>,
     prunes: bool,
 ) {
     let mut made = 0usize;
     loop {
-        if let Some(dir) = cache
+        if let Some(c) = cache
             && prunes
             && made.is_multiple_of(500)
         {
-            crate::system::thumbcache::prune(dir, crate::system::thumbcache::CAP);
+            c.prune();
         }
         let path = {
             let (lock, ready) = queue;
@@ -268,18 +288,14 @@ impl Drop for Thumbs {
     }
 }
 
-/// A capture's thumbnail and its size: from the disk cache at `cache` when it is there (the size
-/// from the file's header, without decoding it), else decoded, shrunk and stored there. image's
-/// default limits (512 MiB) turn a gigantic picture into an error instead of a stall.
-fn make_thumb(path: &Path, cache: Option<&Path>) -> Thumb {
-    if let Some(dir) = cache
-        && let Some(small) = crate::system::thumbcache::load(dir, path)
-        && let Ok((w, h)) = image::ImageReader::open(path)
-            .and_then(|r| r.with_guessed_format())
-            .map_err(image::ImageError::IoError)
-            .and_then(|r| r.into_dimensions())
-    {
-        return Ok((small, [w, h]));
+/// A capture's thumbnail and its size: from the disk cache when it has them (without reading the
+/// capture, only its size and date), else decoded, shrunk and stored there under the capture as it
+/// was before decoding. image's default limits (512 MiB) turn a gigantic picture into an error
+/// instead of a stall.
+fn make_thumb(path: &Path, cache: Option<&Cache>) -> Thumb {
+    let entry = cache.and_then(|c| c.entry(path));
+    if let Some(hit) = entry.as_ref().and_then(|e| e.load()) {
+        return Ok(hit);
     }
     let img = image::ImageReader::open(path)
         .map_err(|e| e.to_string())?
@@ -299,8 +315,8 @@ fn make_thumb(path: &Path, cache: Option<&Path>) -> Thumb {
     } else {
         img
     };
-    if let Some(dir) = cache {
-        crate::system::thumbcache::store(dir, path, &small);
+    if let Some(e) = &entry {
+        e.store(&small, [w, h]);
     }
     Ok((small, [w, h]))
 }
@@ -394,7 +410,10 @@ mod tests {
             make_thumb(p, None).unwrap();
         });
         println!("thumb_bench: one thread, no cache: {png:.1} ms a capture, {jpg:.1} ms a photo");
-        let cache = dir.join("cache");
+        let cache = Cache {
+            dir: dir.join("cache"),
+            cap: 1000,
+        };
         let (png, jpg) = per_kind(&paths, |p| {
             make_thumb(p, Some(&cache)).unwrap();
         });
@@ -524,7 +543,10 @@ mod tests {
     #[test]
     fn a_thumb_is_made_once_then_read_from_the_cache() {
         let d = temp_dir("thumb-cache");
-        let cache = d.join("cache");
+        let cache = Cache {
+            dir: d.join("cache"),
+            cap: 10,
+        };
         let shot = d.join("shot.png");
         image::RgbaImage::from_pixel(1000, 500, image::Rgba([200, 0, 0, 255]))
             .save(&shot)
@@ -532,13 +554,13 @@ mod tests {
         let (made, dims) = make_thumb(&shot, Some(&cache)).unwrap();
         assert_eq!(dims, [1000, 500]);
         assert_eq!(
-            crate::system::thumbcache::load(&cache, &shot),
-            Some(made),
+            cache.entry(&shot).unwrap().load(),
+            Some((made, dims)),
             "stored for the next time"
         );
-        // What the cache holds is what comes back, with the size from the file's header.
+        // What the cache holds is what comes back.
         let blue = image::RgbaImage::from_pixel(32, 16, image::Rgba([0, 0, 255, 255]));
-        crate::system::thumbcache::store(&cache, &shot, &blue);
+        cache.entry(&shot).unwrap().store(&blue, [1000, 500]);
         assert_eq!(
             make_thumb(&shot, Some(&cache)).unwrap(),
             (blue, [1000, 500])
@@ -548,6 +570,63 @@ mod tests {
             make_thumb(&shot, None).unwrap().0.get_pixel(0, 0).0,
             [200, 0, 0, 255]
         );
+    }
+
+    #[test]
+    fn a_cache_hit_never_reads_the_capture() {
+        let d = temp_dir("hit-no-read");
+        let cache = Cache {
+            dir: d.join("cache"),
+            cap: 10,
+        };
+        let shot = d.join("photo.jpg");
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            900,
+            600,
+            image::Rgba([10, 200, 30, 255]),
+        ))
+        .to_rgb8()
+        .save(&shot)
+        .unwrap();
+        let (made, dims) = make_thumb(&shot, Some(&cache)).unwrap();
+        // The same size and date, other bytes: only reading the file could tell.
+        let meta = std::fs::metadata(&shot).unwrap();
+        std::fs::write(&shot, vec![0u8; meta.len() as usize]).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&shot)
+            .unwrap()
+            .set_modified(meta.modified().unwrap())
+            .unwrap();
+        assert_eq!(make_thumb(&shot, Some(&cache)).unwrap(), (made, dims));
+    }
+
+    #[test]
+    fn the_asked_threads_start_and_the_first_prunes_the_cache() {
+        let thumbs = Thumbs::with_workers(&egui::Context::default(), None, 3);
+        assert_eq!(thumbs.workers(), 3);
+        // A cache over its cap of 2 when the threads start.
+        let d = temp_dir("prune-at-start");
+        let cache = Cache {
+            dir: d.join("cache"),
+            cap: 2,
+        };
+        for i in 0..4 {
+            let p = d.join(format!("{i}.png"));
+            image::RgbaImage::new(10, 10).save(&p).unwrap();
+            cache
+                .entry(&p)
+                .unwrap()
+                .store(&image::RgbaImage::new(4, 4), [10, 10]);
+        }
+        let count = || std::fs::read_dir(&cache.dir).unwrap().count();
+        assert_eq!(count(), 4);
+        let _thumbs = Thumbs::with_workers(&egui::Context::default(), Some(cache.clone()), 1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while count() > 2 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(count(), 2);
     }
 
     #[test]
