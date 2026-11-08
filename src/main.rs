@@ -307,6 +307,8 @@ struct App {
     editor_window: (egui::Pos2, egui::Vec2),
     /// Work area of the capture's monitor, in points (for placing the notice).
     notice_area: egui::Rect,
+    /// The resident's Quit, waiting for this window's answer (editors, pinned pictures, capture).
+    quit_request: Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>,
 }
 
 impl App {
@@ -370,6 +372,21 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // The resident's Quit: an editor with changes asks its user; the rest close.
+        let quit = self.quit_request.lock().ok().and_then(|mut q| q.take());
+        if let Some(reply) = quit {
+            let closes = match &mut self.mode {
+                Mode::Editor(e) => matches!(e.quit_requested(reply), Switch::Close),
+                _ => {
+                    let _ = reply.send(true);
+                    true
+                }
+            };
+            if closes {
+                self.shared.settings.save();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
         let sw = match &mut self.mode {
             Mode::Home(h) => {
                 let t = self.shared.tokens(ctx.system_theme());
@@ -780,6 +797,27 @@ fn main() -> eframe::Result {
                 }
                 Launch::Home => Mode::Home(Box::new(main_home(ctx, &shared, args.page))),
             };
+            // A window of its own answers the resident's Quit.
+            let quit_request = Arc::new(std::sync::Mutex::new(None));
+            if screenshot.is_none()
+                && matches!(mode, Mode::Editor(_) | Mode::Pin(_) | Mode::Overlay(_))
+            {
+                let base = system::instance::endpoint();
+                let pid = std::process::id();
+                let (slot, ctx) = (quit_request.clone(), ctx.clone());
+                let listening = system::instance::listen_for_quit(
+                    &system::instance::child_endpoint(&base, pid),
+                    move |reply| {
+                        if let Ok(mut q) = slot.lock() {
+                            *q = Some(reply);
+                        }
+                        ctx.request_repaint();
+                    },
+                );
+                if listening.is_ok() {
+                    std::thread::spawn(move || system::instance::register_child(&base, pid));
+                }
+            }
             Ok(Box::new(App {
                 mode,
                 shared,
@@ -789,6 +827,7 @@ fn main() -> eframe::Result {
                 shot_requested: false,
                 editor_window,
                 notice_area,
+                quit_request,
             }))
         }),
     );

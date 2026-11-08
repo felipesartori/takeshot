@@ -53,6 +53,13 @@ pub struct Shell {
     /// The main window's icon, decoded once per theme.
     icon: Option<(crate::ui::tokens::ThemeId, Arc<egui::IconData>)>,
     quitting: bool,
+    /// Quit was chosen: the next tick asks the other windows.
+    quit_asked: bool,
+    /// A Quit waiting for the editors, pinned pictures and capture to answer.
+    quit_round: Option<(
+        crate::system::instance::QuitRound,
+        std::sync::mpsc::Receiver<crate::system::instance::QuitAnswer>,
+    )>,
     /// The first frame ran (the start-up hide happens once).
     started: bool,
     /// Bumped by the recents thread, so the Linux native menu is rebuilt when the list changes.
@@ -77,6 +84,8 @@ impl Shell {
             mark: None,
             icon: None,
             quitting: false,
+            quit_asked: false,
+            quit_round: None,
             started: false,
             recents_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             menu_version: u64::MAX,
@@ -89,6 +98,10 @@ impl Shell {
     /// Keeps the recent captures fresh (every 30 s) and the Linux native menu in step with them
     /// and the mode. Called on every wake-up, window shown or not.
     pub fn tick(&mut self, ctx: &egui::Context, resident: &Resident, shared: &Shared) {
+        if std::mem::take(&mut self.quit_asked) {
+            self.start_quit(ctx, resident);
+        }
+        self.check_quit(ctx);
         let now = ctx.input(|i| i.time);
         if now >= self.next_recents {
             self.next_recents = now + 30.0;
@@ -284,9 +297,55 @@ impl Shell {
         let _ = actions::spawn_self(args);
     }
 
+    /// Quit: the next tick asks every window of its own to close first.
     fn quit(&mut self, ctx: &egui::Context) {
-        self.quitting = true;
-        ctx.send_viewport_cmd_to(ViewportId::ROOT, Cmd::Close);
+        self.quit_asked = true;
+        ctx.request_repaint();
+    }
+
+    /// Asks every window of its own to close (an editor with changes asks its user); the resident
+    /// goes once they all have, and stays if one was cancelled.
+    fn start_quit(&mut self, ctx: &egui::Context, resident: &Resident) {
+        use crate::system::instance;
+        if self.quit_round.is_some() {
+            return;
+        }
+        let children = resident.children();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let base = instance::endpoint();
+        for pid in &children {
+            let (tx, name, ctx) = (
+                tx.clone(),
+                instance::child_endpoint(&base, *pid),
+                ctx.clone(),
+            );
+            std::thread::spawn(move || {
+                let _ = tx.send(instance::ask_to_quit(&name));
+                ctx.request_repaint();
+            });
+        }
+        self.quit_round = Some((instance::QuitRound::new(children.len()), rx));
+        self.check_quit(ctx);
+    }
+
+    /// Reads the Quit's answers that came in and quits, or stays, once all are in.
+    fn check_quit(&mut self, ctx: &egui::Context) {
+        use crate::system::instance::QuitOutcome;
+        let Some((round, rx)) = &mut self.quit_round else {
+            return;
+        };
+        while let Ok(a) = rx.try_recv() {
+            round.answer(a);
+        }
+        match round.outcome() {
+            QuitOutcome::Waiting => {}
+            QuitOutcome::Stay => self.quit_round = None,
+            QuitOutcome::Quit => {
+                self.quit_round = None;
+                self.quitting = true;
+                ctx.send_viewport_cmd_to(ViewportId::ROOT, Cmd::Close);
+            }
+        }
     }
 
     /// Draws the resident's windows for this frame. `ui` is the root's: the host on Windows and

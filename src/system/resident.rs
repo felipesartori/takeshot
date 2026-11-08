@@ -109,15 +109,32 @@ pub struct Resident {
     #[cfg(windows)]
     hook: Option<crate::system::prtsc_hook::PrtScHook>,
     pub tray: Option<Tray>,
+    /// The process ids of the windows of their own (editors, pinned pictures, the capture) that
+    /// registered, for Quit.
+    children: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
 }
 
 impl Resident {
+    /// The children registered so far.
+    pub fn children(&self) -> Vec<u32> {
+        self.children.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
     /// Starts everything; `listener` answers second launches when this process won the name.
     pub fn start(ctx: &egui::Context, settings: &Settings, listener: Option<Listener>) -> Self {
         let (queue, sender) = Queue::new(ctx);
+        let children = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         if let Some(l) = listener {
             let s = sender.clone();
-            l.spawn(move |page| s.send(ResidentEvent::Show(page)));
+            let list = children.clone();
+            l.serve(
+                move |page| s.send(ResidentEvent::Show(page)),
+                move |pid| {
+                    if let Ok(mut c) = list.lock() {
+                        c.push(pid);
+                    }
+                },
+            );
         }
         let s = sender.clone();
         let hotkeys = Hotkeys::start(settings, move |shot| s.send(ResidentEvent::Shot(shot)));
@@ -136,6 +153,7 @@ impl Resident {
             #[cfg(windows)]
             hook: None,
             tray,
+            children,
         };
         r.set_priority(wants_hook(settings));
         r

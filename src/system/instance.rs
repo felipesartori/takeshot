@@ -1,5 +1,8 @@
 //! Single instance: the first Takeshot process owns a local socket; a second launch asks it to show a page and exits.
 //! Captures are one at a time too: a capture whose selection is on screen holds a file lock.
+//! Quit: the editors, pinned pictures and the capture register with the resident and listen on a
+//! socket of their own, so the tray's Quit can ask each to close (an editor with changes asks its
+//! user first, and a Cancel keeps everything open).
 
 #[cfg(target_os = "macos")]
 use interprocess::local_socket::GenericFilePath;
@@ -180,13 +183,160 @@ pub fn send_show(name: &str, page: Page) -> io::Result<()> {
     Err(last)
 }
 
+/// A line a client sends the resident.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Request {
+    /// A second launch: show this page.
+    Show(Page),
+    /// A window of its own (editor, pinned picture, capture) started: its process id.
+    Child(u32),
+}
+
+/// Reads one request line.
+pub fn parse_request(line: &str) -> Option<Request> {
+    let line = line.trim();
+    if let Some(p) = line.strip_prefix("show ") {
+        return Page::parse(p).map(Request::Show);
+    }
+    line.strip_prefix("child ")
+        .and_then(|pid| pid.parse().ok())
+        .map(Request::Child)
+}
+
+/// The socket name a child process listens on for the resident's Quit.
+pub fn child_endpoint(base: &str, pid: u32) -> String {
+    format!("{base}-child-{pid}")
+}
+
+/// Tells the resident (when one runs) that this process is a window of its own, so its Quit asks
+/// it to close too.
+pub fn register_child(base: &str, pid: u32) {
+    for _ in 0..10 {
+        if let Ok(mut s) = connect(base) {
+            let _ = s.write_all(format!("child {pid}\n").as_bytes());
+            let _ = s.flush();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// How a child answered the resident's Quit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QuitAnswer {
+    /// It closed (or was gone already).
+    Closed,
+    /// Its user chose Cancel: everything stays open.
+    Cancelled,
+}
+
+/// Listens on `name` for the resident's Quit, on a background thread: `on_quit` gets a sender for
+/// the answer (`true` closes, `false` cancels), which goes back once the user has chosen.
+pub fn listen_for_quit(
+    name: &str,
+    on_quit: impl Fn(std::sync::mpsc::Sender<bool>) + Send + Sync + 'static,
+) -> io::Result<()> {
+    let listener = create(name, true)?;
+    let on_quit = Arc::new(on_quit);
+    std::thread::Builder::new()
+        .name("takeshot-quit".into())
+        .spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut conn) = conn else {
+                    continue;
+                };
+                let on_quit = on_quit.clone();
+                std::thread::spawn(move || {
+                    let mut line = String::new();
+                    let mut reader = BufReader::new((&mut conn).take(16));
+                    if reader.read_line(&mut line).is_err() || line.trim() != "quit" {
+                        return;
+                    }
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    on_quit(tx);
+                    let closes = rx.recv().unwrap_or(true);
+                    let _ = conn.write_all(if closes { b"closed\n" } else { b"cancel\n" });
+                    let _ = conn.flush();
+                });
+            }
+        })?;
+    Ok(())
+}
+
+/// Asks the child listening on `name` to close and waits for its answer (its user may be
+/// choosing); a child that is gone, or goes while closing, counts as closed.
+pub fn ask_to_quit(name: &str) -> QuitAnswer {
+    let Ok(mut s) = connect(name) else {
+        return QuitAnswer::Closed;
+    };
+    if s.write_all(b"quit\n").and_then(|_| s.flush()).is_err() {
+        return QuitAnswer::Closed;
+    }
+    let mut line = String::new();
+    match BufReader::new(s).read_line(&mut line) {
+        Ok(_) if line.trim() == "cancel" => QuitAnswer::Cancelled,
+        _ => QuitAnswer::Closed,
+    }
+}
+
+/// Where a Quit stands.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QuitOutcome {
+    /// A child has not answered yet.
+    Waiting,
+    /// Every child closed: the resident quits.
+    Quit,
+    /// A child's user chose Cancel: the resident stays.
+    Stay,
+}
+
+/// The answers to one Quit, child by child.
+#[derive(Clone, Debug)]
+pub struct QuitRound {
+    left: usize,
+    cancelled: bool,
+}
+
+impl QuitRound {
+    pub fn new(children: usize) -> Self {
+        Self {
+            left: children,
+            cancelled: false,
+        }
+    }
+
+    pub fn answer(&mut self, a: QuitAnswer) {
+        self.left = self.left.saturating_sub(1);
+        self.cancelled |= a == QuitAnswer::Cancelled;
+    }
+
+    pub fn outcome(&self) -> QuitOutcome {
+        match (self.left, self.cancelled) {
+            (0, false) => QuitOutcome::Quit,
+            (0, true) => QuitOutcome::Stay,
+            _ => QuitOutcome::Waiting,
+        }
+    }
+}
+
 impl Listener {
-    /// Answers second launches on a background thread for the rest of the process. Each
-    /// connection gets its own short thread and at most 64 bytes, so a client that never writes
-    /// cannot hold up the next launch.
+    /// Answers second launches on a background thread for the rest of the process.
+    #[cfg(test)]
     pub fn spawn(self, on_show: impl Fn(Page) + Send + Sync + 'static) {
+        self.serve(on_show, |_| {});
+    }
+
+    /// Answers second launches (`on_show`) and children registering (`on_child`) on a background
+    /// thread for the rest of the process. Each connection gets its own short thread and at most
+    /// 64 bytes, so a client that never writes cannot hold up the next launch.
+    pub fn serve(
+        self,
+        on_show: impl Fn(Page) + Send + Sync + 'static,
+        on_child: impl Fn(u32) + Send + Sync + 'static,
+    ) {
         let listener = self.0;
         let on_show = Arc::new(on_show);
+        let on_child = Arc::new(on_child);
         let spawned = std::thread::Builder::new()
             .name("takeshot-instance".into())
             .spawn(move || {
@@ -195,14 +345,15 @@ impl Listener {
                         std::thread::sleep(Duration::from_millis(50));
                         continue;
                     };
-                    let on_show = on_show.clone();
+                    let (on_show, on_child) = (on_show.clone(), on_child.clone());
                     std::thread::spawn(move || {
                         let mut line = String::new();
-                        if BufReader::new(conn.take(64)).read_line(&mut line).is_ok()
-                            && let Some(page) =
-                                line.trim().strip_prefix("show ").and_then(Page::parse)
-                        {
-                            on_show(page);
+                        if BufReader::new(conn.take(64)).read_line(&mut line).is_ok() {
+                            match parse_request(&line) {
+                                Some(Request::Show(page)) => on_show(page),
+                                Some(Request::Child(pid)) => on_child(pid),
+                                None => {}
+                            }
                         }
                     });
                 }
@@ -302,6 +453,76 @@ mod tests {
         drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
         assert!(path.exists());
         assert!(matches!(claim(&name), Claim::Primary(_)));
+    }
+
+    #[test]
+    fn requests_read_show_and_child() {
+        assert_eq!(
+            parse_request("show settings\n"),
+            Some(Request::Show(Page::Settings))
+        );
+        assert_eq!(parse_request("child 4242\n"), Some(Request::Child(4242)));
+        assert_eq!(parse_request("child x"), None);
+        assert_eq!(parse_request("quit"), None);
+    }
+
+    #[test]
+    fn a_child_registers_with_the_resident() {
+        let name = unique("register");
+        let Claim::Primary(listener) = claim(&name) else {
+            panic!("the first claim must be primary");
+        };
+        let (tx, rx) = channel();
+        listener.serve(
+            |_| {},
+            move |pid| {
+                let _ = tx.send(pid);
+            },
+        );
+        register_child(&name, 4242);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(4242));
+    }
+
+    #[test]
+    fn a_child_answers_a_quit_request() {
+        for (closes, want) in [(true, QuitAnswer::Closed), (false, QuitAnswer::Cancelled)] {
+            let name = unique(if closes {
+                "child-closes"
+            } else {
+                "child-cancels"
+            });
+            listen_for_quit(&name, move |reply| {
+                let _ = reply.send(closes);
+            })
+            .unwrap();
+            assert_eq!(ask_to_quit(&name), want);
+        }
+        // A child that is gone counts as closed.
+        assert_eq!(ask_to_quit(&unique("nobody")), QuitAnswer::Closed);
+    }
+
+    #[test]
+    fn a_quit_round_waits_for_every_child_and_any_cancel_keeps_all() {
+        let mut round = QuitRound::new(3);
+        assert_eq!(round.outcome(), QuitOutcome::Waiting);
+        round.answer(QuitAnswer::Closed);
+        round.answer(QuitAnswer::Cancelled);
+        assert_eq!(
+            round.outcome(),
+            QuitOutcome::Waiting,
+            "one still asking its user"
+        );
+        round.answer(QuitAnswer::Closed);
+        assert_eq!(round.outcome(), QuitOutcome::Stay);
+        let mut round = QuitRound::new(2);
+        round.answer(QuitAnswer::Closed);
+        round.answer(QuitAnswer::Closed);
+        assert_eq!(round.outcome(), QuitOutcome::Quit);
+        assert_eq!(
+            QuitRound::new(0).outcome(),
+            QuitOutcome::Quit,
+            "no child: quit at once"
+        );
     }
 
     #[test]

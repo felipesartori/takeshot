@@ -110,6 +110,14 @@ pub enum PanelTab {
     Style,
 }
 
+/// The answer to the Quit's question about unsaved edits.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QuitChoice {
+    Discard,
+    Cancel,
+    SaveAndClose,
+}
+
 /// What the user asked for in the editor; the editor view returns these and `Editor::apply` carries them out.
 #[derive(Clone, PartialEq, Debug)]
 pub enum EditorAction {
@@ -225,6 +233,10 @@ pub struct Editor {
     /// picture arrived with objects (they were never exported either).
     saved_rev: Option<u64>,
     asking_close: bool,
+    /// The resident's Quit waits for this editor's answer.
+    quit_reply: Option<std::sync::mpsc::Sender<bool>>,
+    /// The Quit's question is open (the window came to the front for it once).
+    asking_quit: Option<bool>,
     /// Set once the user chose to close, so the window's own close request goes through.
     closing: bool,
 }
@@ -260,6 +272,8 @@ impl Editor {
             canvas_px: vec2(1.0, 1.0),
             saved_rev,
             asking_close: false,
+            quit_reply: None,
+            asking_quit: None,
             closing: false,
         }
     }
@@ -389,6 +403,48 @@ impl Editor {
     /// Lets the next close through without asking (the screenshot self-check closes on its own).
     pub fn force_close(&mut self) {
         self.closing = true;
+    }
+
+    /// The resident's Quit reached this editor: with no unsaved edits it answers yes and closes;
+    /// otherwise it asks its user (Discard, Cancel, Save and close) and answers then.
+    pub fn quit_requested(&mut self, reply: std::sync::mpsc::Sender<bool>) -> Switch {
+        if self.unsaved() {
+            self.quit_reply = Some(reply);
+            self.asking_quit = Some(false);
+            Switch::None
+        } else {
+            let _ = reply.send(true);
+            self.closing = true;
+            Switch::Close
+        }
+    }
+
+    /// Carries out the answer to the Quit's question: Cancel keeps the editor (and everything
+    /// else) open; Save and close closes once the picture is saved.
+    pub fn answer_quit(
+        &mut self,
+        choice: QuitChoice,
+        frame: Option<&eframe::Frame>,
+        shared: &mut Shared,
+    ) -> Switch {
+        self.asking_quit = None;
+        let closes = match choice {
+            QuitChoice::Cancel => false,
+            QuitChoice::Discard => true,
+            QuitChoice::SaveAndClose => {
+                self.save(frame, shared, false);
+                !self.unsaved()
+            }
+        };
+        if let Some(tx) = self.quit_reply.take() {
+            let _ = tx.send(closes);
+        }
+        if closes {
+            self.closing = true;
+            Switch::Close
+        } else {
+            Switch::None
+        }
     }
 
     /// Closing asks first when there are unsaved edits; otherwise it closes.
@@ -593,6 +649,36 @@ impl Editor {
                     self.closing = true;
                     switch = Switch::Close;
                 }
+            }
+        }
+        if let Some(shown) = self.asking_quit {
+            if !shown {
+                // The question waits behind other windows otherwise.
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.asking_quit = Some(true);
+            }
+            let answer = kit::confirm_dialog(
+                &ctx,
+                t,
+                "editor-quit",
+                tr(Msg::DiscardTitle),
+                tr(Msg::DiscardBody),
+                &mut |_| {},
+                &[
+                    (tr(Msg::Discard), BtnKind::Danger, QuitChoice::Discard),
+                    (tr(Msg::Cancel), BtnKind::Secondary, QuitChoice::Cancel),
+                    (
+                        tr(Msg::SaveAndClose),
+                        BtnKind::Primary,
+                        QuitChoice::SaveAndClose,
+                    ),
+                ],
+                QuitChoice::Cancel,
+            );
+            if let Some(choice) = answer
+                && let s @ Switch::Close = self.answer_quit(choice, Some(frame), shared)
+            {
+                switch = s;
             }
         }
         switch
@@ -1060,6 +1146,41 @@ mod tests {
         assert_eq!(shared.settings.draw.radius, 20.0, "the next rectangle too");
         ed.apply(EditorAction::Undo, &ctx, None, &mut shared);
         assert_eq!(radius(&ed), 0.0, "one step back to square");
+    }
+
+    #[test]
+    fn a_quit_request_closes_a_clean_editor_at_once() {
+        let (mut ed, _shared) = editor();
+        // Saved: a picture never saved counts as unsaved, as for the window's X.
+        ed.saved_rev = Some(ed.an.doc.revision());
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(matches!(ed.quit_requested(tx), Switch::Close));
+        assert_eq!(rx.try_recv(), Ok(true));
+    }
+
+    #[test]
+    fn a_quit_request_asks_an_editor_with_changes() {
+        let ctx = egui::Context::default();
+        for (choice, closes) in [(QuitChoice::Cancel, false), (QuitChoice::Discard, true)] {
+            let (mut ed, mut shared) = editor();
+            ed.apply(EditorAction::Delete, &ctx, None, &mut shared);
+            ed.an.doc.select(None, false);
+            ed.an.commit(Ann {
+                shape: Shape::Ellipse(pos2(80.0, 10.0), pos2(120.0, 50.0)),
+                color: [0, 0, 255, 255],
+                width: 3.0,
+                filled: false,
+            });
+            let (tx, rx) = std::sync::mpsc::channel();
+            assert!(
+                matches!(ed.quit_requested(tx), Switch::None),
+                "it asks first"
+            );
+            assert!(rx.try_recv().is_err(), "no answer before the user's");
+            let sw = ed.answer_quit(choice, None, &mut shared);
+            assert_eq!(rx.try_recv(), Ok(closes), "{choice:?}");
+            assert_eq!(matches!(sw, Switch::Close), closes, "{choice:?}");
+        }
     }
 
     #[test]
