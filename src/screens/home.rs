@@ -146,12 +146,13 @@ pub struct HomeRequests {
 
 impl Home {
     pub fn new(ctx: &egui::Context, shared: &Shared) -> Self {
-        let mut h = Self::empty(ctx);
+        let mut h = Self::empty(ctx, crate::system::thumbcache::dir());
         h.scan(ctx, shared.captures_dir(), 0.0);
         h
     }
 
-    fn empty(ctx: &egui::Context) -> Self {
+    /// An empty Início whose thumbnails go through the disk cache at `cache`.
+    fn empty(ctx: &egui::Context, cache: Option<std::path::PathBuf>) -> Self {
         Self {
             page: Page::Start,
             section: SettingsSection::General,
@@ -166,7 +167,7 @@ impl Home {
             pending_select: None,
             cols: 1,
             folder_missing: false,
-            thumbs: Thumbs::new(ctx),
+            thumbs: Thumbs::new(ctx, cache),
             textures: HashMap::new(),
             drawn: std::collections::HashSet::new(),
             frame: 0,
@@ -187,7 +188,7 @@ impl Home {
     /// Home over these entries, never reading a folder, with a `Shared` for tests.
     #[cfg(test)]
     pub fn for_tests(entries: Vec<Entry>) -> (Self, Shared) {
-        let mut h = Self::empty(&egui::Context::default());
+        let mut h = Self::empty(&egui::Context::default(), None);
         h.last_scan = f64::INFINITY;
         h.set_entries(entries);
         (h, Shared::for_tests())

@@ -15,4 +15,5 @@ pub mod prtsc_hook;
 pub mod recents;
 pub mod resident;
 pub mod settings;
+pub mod thumbcache;
 pub mod tray;

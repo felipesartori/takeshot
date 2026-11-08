@@ -157,14 +157,15 @@ impl ThumbQueue {
 /// The queue and whether the owner went away, shared with the worker.
 type Shared = (Mutex<(ThumbQueue, bool)>, Condvar);
 
-/// Makes thumbnails on one background thread, newest request first; each result wakes the app.
+/// Makes thumbnails on one background thread, newest request first, through the disk cache at
+/// `cache` when there is one; each result wakes the app.
 pub struct Thumbs {
     jobs: Arc<Shared>,
     rx: Mutex<Receiver<(PathBuf, Thumb)>>,
 }
 
 impl Thumbs {
-    pub fn new(ctx: &egui::Context) -> Self {
+    pub fn new(ctx: &egui::Context, cache: Option<PathBuf>) -> Self {
         let jobs: Arc<Shared> =
             Arc::new((Mutex::new((ThumbQueue::default(), false)), Condvar::new()));
         let (done, rx) = channel();
@@ -173,7 +174,14 @@ impl Thumbs {
         let spawned = std::thread::Builder::new()
             .name("takeshot-thumbs".into())
             .spawn(move || {
+                // The cache is kept to its cap here, off the UI thread, and every so often.
+                let mut stored = 0usize;
                 loop {
+                    if let Some(dir) = &cache
+                        && stored.is_multiple_of(500)
+                    {
+                        crate::system::thumbcache::prune(dir, crate::system::thumbcache::CAP);
+                    }
                     let path = {
                         let (lock, ready) = &*queue;
                         let Ok(mut guard) = lock.lock() else { return };
@@ -190,7 +198,8 @@ impl Thumbs {
                             };
                         }
                     };
-                    let thumb = make_thumb(&path);
+                    let thumb = make_thumb(&path, cache.as_deref());
+                    stored += 1;
                     if done.send((path, thumb)).is_err() {
                         return;
                     }
@@ -240,8 +249,19 @@ impl Drop for Thumbs {
     }
 }
 
-/// image's default limits (512 MiB) turn a gigantic picture into an error instead of a stall.
-fn make_thumb(path: &Path) -> Thumb {
+/// A capture's thumbnail and its size: from the disk cache at `cache` when it is there (the size
+/// from the file's header, without decoding it), else decoded, shrunk and stored there. image's
+/// default limits (512 MiB) turn a gigantic picture into an error instead of a stall.
+fn make_thumb(path: &Path, cache: Option<&Path>) -> Thumb {
+    if let Some(dir) = cache
+        && let Some(small) = crate::system::thumbcache::load(dir, path)
+        && let Ok((w, h)) = image::ImageReader::open(path)
+            .and_then(|r| r.with_guessed_format())
+            .map_err(image::ImageError::IoError)
+            .and_then(|r| r.into_dimensions())
+    {
+        return Ok((small, [w, h]));
+    }
     let img = image::ImageReader::open(path)
         .map_err(|e| e.to_string())?
         .with_guessed_format()
@@ -260,6 +280,9 @@ fn make_thumb(path: &Path) -> Thumb {
     } else {
         img
     };
+    if let Some(dir) = cache {
+        crate::system::thumbcache::store(dir, path, &small);
+    }
     Ok((small, [w, h]))
 }
 
@@ -294,7 +317,7 @@ mod tests {
                 image::Rgba([245, 245, 247, 255])
             } else if x > w / 2 && y > h / 2 {
                 image::Rgba([v, v / 2 + 60, 255 - v, 255])
-            } else if (y / 9) % 3 == 0 && (x / 7 + seed) % 11 != 0 && v > 90 {
+            } else if (y / 9).is_multiple_of(3) && !(x / 7 + seed).is_multiple_of(11) && v > 90 {
                 image::Rgba([40, 40, 46, 255])
             } else {
                 image::Rgba([255, 255, 255, 255])
@@ -349,9 +372,18 @@ mod tests {
         let dir = temp_dir("thumb-bench");
         let paths = bench_folder(&dir);
         let (png, jpg) = per_kind(&paths, |p| {
-            make_thumb(p).unwrap();
+            make_thumb(p, None).unwrap();
         });
         println!("thumb_bench: one thread, no cache: {png:.1} ms a capture, {jpg:.1} ms a photo");
+        let cache = dir.join("cache");
+        let (png, jpg) = per_kind(&paths, |p| {
+            make_thumb(p, Some(&cache)).unwrap();
+        });
+        println!("thumb_bench: first visit, stored: {png:.1} ms a capture, {jpg:.1} ms a photo");
+        let (png, jpg) = per_kind(&paths, |p| {
+            make_thumb(p, Some(&cache)).unwrap();
+        });
+        println!("thumb_bench: from the cache: {png:.2} ms a capture, {jpg:.2} ms a photo");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -454,6 +486,35 @@ mod tests {
     }
 
     #[test]
+    fn a_thumb_is_made_once_then_read_from_the_cache() {
+        let d = temp_dir("thumb-cache");
+        let cache = d.join("cache");
+        let shot = d.join("shot.png");
+        image::RgbaImage::from_pixel(1000, 500, image::Rgba([200, 0, 0, 255]))
+            .save(&shot)
+            .unwrap();
+        let (made, dims) = make_thumb(&shot, Some(&cache)).unwrap();
+        assert_eq!(dims, [1000, 500]);
+        assert_eq!(
+            crate::system::thumbcache::load(&cache, &shot),
+            Some(made),
+            "stored for the next time"
+        );
+        // What the cache holds is what comes back, with the size from the file's header.
+        let blue = image::RgbaImage::from_pixel(32, 16, image::Rgba([0, 0, 255, 255]));
+        crate::system::thumbcache::store(&cache, &shot, &blue);
+        assert_eq!(
+            make_thumb(&shot, Some(&cache)).unwrap(),
+            (blue, [1000, 500])
+        );
+        // Without a cache folder it is made from the capture each time.
+        assert_eq!(
+            make_thumb(&shot, None).unwrap().0.get_pixel(0, 0).0,
+            [200, 0, 0, 255]
+        );
+    }
+
+    #[test]
     fn a_broken_image_fails_alone() {
         let d = temp_dir("thumbs");
         let broken = d.join("broken.png");
@@ -462,7 +523,7 @@ mod tests {
         image::RgbaImage::new(40, 20).save(&good).unwrap();
         let big = d.join("big.png");
         image::RgbaImage::new(1000, 500).save(&big).unwrap();
-        let thumbs = Thumbs::new(&egui::Context::default());
+        let thumbs = Thumbs::new(&egui::Context::default(), None);
         for p in [&broken, &good, &big] {
             thumbs.request(p.clone());
         }
