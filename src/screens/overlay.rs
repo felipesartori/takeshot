@@ -440,12 +440,12 @@ impl Overlay {
         {
             // A drawing tool reaches objects only inside the area, like its clicks.
             let reachable = !drawing_tool || sel_screen.is_some_and(|r| r.contains(p));
-            let (handle, over_object, over_selection) = if self.an.live.is_some()
+            let (handle, over_object) = if self.an.live.is_some()
                 || self.sel.is_none()
                 || !matches!(self.drag, Drag::None)
                 || !reachable
             {
-                (None, false, false)
+                (None, false)
             } else {
                 self.an.hover(view.to_img(p), view, &measure)
             };
@@ -455,7 +455,6 @@ impl Overlay {
                 over_chrome: false,
                 handle,
                 over_object,
-                over_selection,
                 typing: self.an.draft.is_some(),
                 dragging: self.an.dragging.is_some(),
                 space_pan: false,

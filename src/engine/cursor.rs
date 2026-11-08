@@ -22,9 +22,8 @@ pub struct CursorCtx {
     pub over_chrome: bool,
     /// Handle of a selected object under the pointer, or being dragged.
     pub handle: Option<Handle>,
+    /// Over an object itself (its line, its fill, its text; not its box): any tool moves it.
     pub over_object: bool,
-    /// Over a selected object: any tool moves it by its body.
-    pub over_selection: bool,
     pub typing: bool,
     pub dragging: bool,
     pub space_pan: bool,
@@ -43,8 +42,8 @@ fn resize_icon(h: Handle, dragging: bool) -> CursorIcon {
 }
 
 /// The pointer for this frame, in priority order: typing, space pan, bars and panels, object handle,
-/// area not started, the selection with any tool or another object with Select, drawing tool over
-/// the image, area handle, inside the area.
+/// area not started, an object (any tool moves it), drawing tool over the image, area handle,
+/// inside the area.
 pub fn pick(c: &CursorCtx) -> CursorIcon {
     if c.typing {
         return CursorIcon::Text;
@@ -65,7 +64,7 @@ pub fn pick(c: &CursorCtx) -> CursorIcon {
     if c.area == Area::NotStarted {
         return CursorIcon::Crosshair;
     }
-    if c.over_selection || (c.over_object && c.tool == Tool::Select) {
+    if c.over_object {
         return CursorIcon::Move;
     }
     // A drawing tool draws inside the capture area, or over the picture outside the capture;
@@ -94,28 +93,17 @@ mod tests {
             over_chrome: false,
             handle: None,
             over_object: false,
-            over_selection: false,
             typing: false,
             dragging: false,
             space_pan: false,
             area: Area::NotApplicable,
         };
         let cases = [
-            // Any tool moves the selection by its body (the shape just drawn stays selected).
+            // Any tool moves a shape it is over (its line, its fill, its text; never its box).
             (
                 CursorCtx {
                     over_object: true,
-                    over_selection: true,
-                    tool: Tool::Pen,
-                    ..base
-                },
-                C::Move,
-            ),
-            (
-                CursorCtx {
-                    over_object: true,
-                    over_selection: true,
-                    tool: Tool::Text,
+                    tool: Tool::Arrow,
                     area: Area::Inside,
                     ..base
                 },
@@ -304,7 +292,7 @@ mod tests {
                     tool: Tool::Pen,
                     ..base
                 },
-                C::Crosshair,
+                C::Move,
             ),
             (
                 CursorCtx {
