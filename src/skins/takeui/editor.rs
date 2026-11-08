@@ -428,10 +428,22 @@ fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut 
                         egui::Popup::from_toggle_button_response(&pick)
                             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show(|ui| {
+                                // The picker sits in this popup: egui keeps one popup open, so
+                                // a "+" here could not open another.
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                    palette(ui, t, color, acts);
+                                    if let Some(c) = super::palette_dots(ui, t, color) {
+                                        acts.push(EditorAction::SetColor(c));
+                                    }
                                 });
+                                let mut col = Color32::from_rgb(color[0], color[1], color[2]);
+                                if egui::color_picker::color_picker_color32(
+                                    ui,
+                                    &mut col,
+                                    egui::color_picker::Alpha::Opaque,
+                                ) {
+                                    acts.push(EditorAction::SetColor(col.to_array()));
+                                }
                             });
                         let duplicate = format!("{} ({})", tr(Msg::Duplicate), cmd("D"));
                         for (icon, tip, act) in [
@@ -1434,6 +1446,72 @@ x"),
             );
         }
         crate::ui::i18n::set_lang(before);
+    }
+
+    #[test]
+    fn the_object_bar_colour_offers_the_picker() {
+        // The bar's colour opens the palette with the colour picker in it (a "+" there opened
+        // nothing: egui keeps one popup open at a time).
+        let (mut ed, mut shared) = editor();
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(
+            EditorAction::Select(rect, false),
+            &egui::Context::default(),
+            None,
+            &mut shared,
+        );
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let dup = on_canvas(&painted, Ico::CopyPlus).expect("the object bar");
+        let colour = dup - vec2(30.0, 0.0);
+        let (_, painted, blocks) = run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            [click(colour), vec![vec![]]].concat(),
+        );
+        // egui's picker paints its colour square as a light, textured square of 100 px or so.
+        let picker = blocks.iter().any(|(r, c)| {
+            r.right() < SIZE.0 - PANEL
+                && (80.0..300.0).contains(&r.width())
+                && (r.width() - r.height()).abs() < 1.0
+                && c.r() > 200
+                && c.g() > 200
+        });
+        assert!(picker, "a colour picker in the popup");
+        assert!(
+            on_canvas(&painted, Ico::Plus).is_none(),
+            "no \"+\" that opens nothing"
+        );
+    }
+
+    #[test]
+    fn the_wheel_changes_the_width_one_step_a_notch() {
+        let (mut ed, mut shared) = editor();
+        ed.an.tool = Tool::Rect;
+        shared.settings.draw.width = 3.0;
+        let at = pos2(480.0, 450.0);
+        let wheel = Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, 1.0),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+        };
+        run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![
+                vec![Event::PointerMoved(at)],
+                vec![wheel],
+                vec![],
+                vec![],
+                vec![],
+            ],
+        );
+        assert_eq!(shared.settings.draw.width, 4.0);
     }
 
     #[test]

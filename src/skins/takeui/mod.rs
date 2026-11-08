@@ -35,8 +35,8 @@ pub(crate) fn divider(ui: &mut Ui, t: &Tokens, height: f32) {
     ui.painter().rect_filled(r, 0.0, t.border);
 }
 
-/// The palette's colours and the custom colour (a picker in a popup); returns the colour picked.
-pub(crate) fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4]) -> Option<[u8; 4]> {
+/// The palette's colours; returns the colour picked.
+pub(crate) fn palette_dots(ui: &mut Ui, t: &Tokens, color: [u8; 4]) -> Option<[u8; 4]> {
     let mut picked = None;
     for c in PALETTE {
         let on = color[..3] == c[..3];
@@ -46,6 +46,12 @@ pub(crate) fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4]) -> Option<[u8; 4]
             picked = Some(c);
         }
     }
+    picked
+}
+
+/// The palette's colours and the custom colour (a picker in a popup); returns the colour picked.
+pub(crate) fn palette(ui: &mut Ui, t: &Tokens, color: [u8; 4]) -> Option<[u8; 4]> {
+    let mut picked = palette_dots(ui, t, color);
     let add = kit::color_add(ui, t, tr(Msg::CustomColor));
     egui::Popup::from_toggle_button_response(&add)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)

@@ -71,6 +71,8 @@ pub struct Overlay {
     sel: Option<Rect>,
     drag: Drag,
     pub(crate) an: Annotator,
+    /// The wheel's part of a notch still to come (`wheel_notches`).
+    wheel_acc: f32,
     window_ready: u32,
     /// One capture at a time: held while this selection is on screen.
     _slot: Option<crate::system::instance::CaptureSlot>,
@@ -99,6 +101,7 @@ impl Overlay {
             sel,
             drag: Drag::None,
             an: Annotator::new(Tool::Select),
+            wheel_acc: 0.0,
             window_ready: 0,
             _slot: None,
         }
@@ -198,7 +201,7 @@ impl Overlay {
             CaptureAction::SetTextBox(on) => restyle(self, shared, &|o| o.text_box = on),
             CaptureAction::SetBlurMode(m) => restyle(self, shared, &|o| o.blur_mode = m),
             CaptureAction::Duplicate => {
-                self.an.doc.duplicate_selected(vec2(16.0, 16.0));
+                self.an.doc.duplicate_selected(vec2(12.0, 12.0));
             }
             CaptureAction::Delete => self.an.doc.delete_selected(),
         }
@@ -283,19 +286,19 @@ impl Overlay {
         let pointer = ui.input(|i| i.pointer.hover_pos());
         // The text field is placed after the picture is painted, so it shows over it.
         let typing = self.an.draft.is_some();
+        // A menu open at the start of the frame takes Esc (it closes while the skin draws).
+        let menu_open = egui::Popup::is_any_open(&ctx);
 
         let drawing_tool = self.sel.is_some() && self.an.tool != Tool::Select;
         self.canvas_input(ui, &canvas, &view, pointer, shared);
         if drawing_tool {
-            // mouse wheel changes the stroke width (or text size)
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll.abs() > 0.5 {
-                let d = &mut shared.settings.draw;
-                if self.an.tool == Tool::Text {
-                    d.font_size = (d.font_size + scroll.signum() * 2.0).clamp(8.0, 240.0);
-                } else {
-                    d.width = (d.width + scroll.signum()).clamp(1.0, 40.0);
-                }
+            // The wheel changes the stroke width (or the text size), a notch a step.
+            let events = ui.input(|i| i.events.clone());
+            let n = crate::engine::annotator::wheel_notches(&mut self.wheel_acc, &events);
+            if n != 0 {
+                let before = shared.settings.draw.clone();
+                crate::engine::annotator::wheel_restyle(self.an.tool, &mut shared.settings.draw, n);
+                self.an.restyle_from_opts(&before, &shared.settings.draw);
             }
         }
 
@@ -374,7 +377,13 @@ impl Overlay {
         }
 
         // ---------------- keyboard
-        if !typing && let Some(sw) = self.keys(ui, &ctx, frame, shared, pointer, &view) {
+        // Keys wait while a text is typed, a menu is open or a field (a colour's numbers) has the
+        // keyboard.
+        if !typing
+            && !menu_open
+            && !ctx.egui_wants_keyboard_input()
+            && let Some(sw) = self.keys(ui, &ctx, frame, shared, pointer, &view)
+        {
             switch = sw;
         }
 
@@ -1170,6 +1179,16 @@ mod tests {
     /// Full frames of the capture (its own canvas, bars and keys) on the 1600 x 900 sample;
     /// returns the last switch that was not `None`.
     fn ui_frames(o: &mut Overlay, sh: &mut Shared, events: Vec<Vec<egui::Event>>) -> Switch {
+        ui_frames_with(o, sh, events, None)
+    }
+
+    /// `ui_frames` with the popup `menu` open before every frame, as a skin's menu is.
+    fn ui_frames_with(
+        o: &mut Overlay,
+        sh: &mut Shared,
+        events: Vec<Vec<egui::Event>>,
+        menu: Option<egui::Id>,
+    ) -> Switch {
         let ctx = egui::Context::default();
         sh.fonts.install(&ctx);
         let t = crate::ui::tokens::tokens(crate::ui::tokens::ThemeId::TakeUi, true);
@@ -1182,6 +1201,9 @@ mod tests {
                 events: ev,
                 ..Default::default()
             };
+            if let Some(id) = menu {
+                egui::Popup::open_id(&ctx, id);
+            }
             ctx.run_ui(input, |ui| {
                 let s = o.ui(ui, None, &t, sh);
                 if !matches!(s, Switch::None) {
@@ -1230,6 +1252,77 @@ mod tests {
             ui_frames(&mut o, &mut sh, vec![vec![esc()]]),
             Switch::Close
         ));
+    }
+
+    #[test]
+    fn esc_on_an_open_menu_keeps_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Text);
+        let s = ui_frames_with(
+            &mut o,
+            &mut sh,
+            vec![vec![esc()]],
+            Some(egui::Id::unique("a-menu")),
+        );
+        assert!(
+            matches!(s, Switch::None),
+            "Esc closes the menu, not the capture"
+        );
+    }
+
+    #[test]
+    fn letters_do_not_switch_tools_while_typing_in_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Text);
+        o.an.draft = Some(crate::engine::annotator::TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: "Pico".into(),
+            started: 0.0,
+        });
+        let key = |pressed| egui::Event::Key {
+            key: Key::R,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        ui_frames(
+            &mut o,
+            &mut sh,
+            vec![vec![key(true), egui::Event::Text("r".into()), key(false)]],
+        );
+        assert_eq!(o.an.tool, Tool::Text);
+        assert_eq!(o.an.draft.as_ref().map(|d| d.text.as_str()), Some("Picor"));
+    }
+
+    #[test]
+    fn a_wheel_notch_changes_the_width_by_one() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        sh.settings.draw.width = 3.0;
+        let mut o = capture(&ctx, &sh, Tool::Rect);
+        let at = pos2(600.0, 600.0);
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, 1.0),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+        };
+        ui_frames(
+            &mut o,
+            &mut sh,
+            vec![
+                vec![egui::Event::PointerMoved(at)],
+                vec![wheel],
+                vec![],
+                vec![],
+                vec![],
+            ],
+        );
+        assert_eq!(sh.settings.draw.width, 4.0);
     }
 
     #[test]

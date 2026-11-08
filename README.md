@@ -71,9 +71,9 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 | `P` `L` `A` `R` `O` `M` `T` `B` `N` | Caneta, linha, seta, retângulo, círculo, marcador, texto, borrar, numeração |
 | `V` | Selecionar: escolher, mover e redimensionar objetos, ou mover e ajustar a área |
 | `Delete` ou `Backspace` | Excluir os objetos selecionados |
-| `Ctrl+D` | Duplicar os objetos selecionados (12 px para a direita e para baixo) |
+| `Ctrl+D` | Duplicar os objetos selecionados (12 px para a direita e para baixo; o botão Duplicar faz o mesmo) |
 | setas / `Shift`+setas | Mover os objetos selecionados 1 px / 10 px |
-| `Ctrl+C` / `Ctrl+S` | Copiar / salvar |
+| `Ctrl+C` / `Ctrl+S` / `Ctrl+Shift+S` | Copiar / salvar / salvar como (no editor) |
 | `Enter` ou `Ctrl+E` | Abrir no editor |
 | `Ctrl+T` | Fixar na tela |
 | `Ctrl+Z` / `Ctrl+Y` ou `Ctrl+Shift+Z` | Desfazer / refazer |

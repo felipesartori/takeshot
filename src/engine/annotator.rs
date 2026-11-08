@@ -191,6 +191,8 @@ impl Annotator {
                     && let Some(p) = pointer
                 {
                     self.commit_draft(opts);
+                    // The text being typed takes the options: nothing else may follow them.
+                    self.doc.select(None, false);
                     let now = ui.input(|i| i.time);
                     self.draft = Some(TextDraft {
                         pos: view.to_img(p),
@@ -587,6 +589,7 @@ impl Annotator {
         opts.font_size = size;
         opts.text_box = boxed;
         opts.color = color;
+        self.doc.select(None, false);
         self.draft = Some(TextDraft {
             pos,
             text,
@@ -800,6 +803,45 @@ fn paint_text(
     }
     p.galley(pos, galley, ink);
     rect
+}
+
+/// Plain mouse-wheel notches in this frame's `events` (Ctrl+wheel zooms instead): a line is a
+/// notch, and on a touchpad 50 points make one; `acc` keeps the part of a notch still to come.
+/// egui smooths the wheel over frames, so its scroll delta would count one notch many times.
+pub fn wheel_notches(acc: &mut f32, events: &[egui::Event]) -> i32 {
+    for e in events {
+        if let egui::Event::MouseWheel {
+            unit,
+            delta,
+            modifiers,
+            ..
+        } = e
+            && !(modifiers.ctrl || modifiers.command)
+        {
+            *acc += match unit {
+                egui::MouseWheelUnit::Line => delta.y,
+                egui::MouseWheelUnit::Point => delta.y / 50.0,
+                egui::MouseWheelUnit::Page => delta.y * 3.0,
+            };
+        }
+    }
+    let n = acc.trunc();
+    *acc -= n;
+    n as i32
+}
+
+/// The wheel's `notches` on the options: the stroke width by 1 px (1 to 40), or for text the
+/// size by 2 px (8 to 240).
+pub fn wheel_restyle(tool: Tool, opts: &mut DrawOpts, notches: i32) {
+    if notches == 0 {
+        return;
+    }
+    let n = notches as f32;
+    if tool == Tool::Text {
+        opts.font_size = (opts.font_size + n * 2.0).clamp(8.0, 240.0);
+    } else {
+        opts.width = (opts.width + n).clamp(1.0, 40.0);
+    }
 }
 
 /// The colour of a text's letters: its colour, or on a background in its colour, black or white.
@@ -1511,6 +1553,81 @@ mod tests {
         assert!(over && on_selection);
         let (_, over, on_selection) = an.hover(pos2(400.0, 420.0), &VIEW, &m);
         assert!(over && !on_selection);
+    }
+
+    #[test]
+    fn a_new_text_leaves_the_previous_selection_alone() {
+        // A label typed after an arrow: changing the text's colour must not recolour the arrow.
+        let (mut an, ids) = with(
+            Tool::Text,
+            vec![rect_ann((100.0, 100.0), (200.0, 200.0), false)],
+        );
+        an.doc.select(Some(ids[0]), false);
+        let mut opts = DrawOpts::default();
+        run(Modifiers::NONE, click(pos2(400.0, 400.0)), |ui, resp| {
+            an.handle_canvas(ui, resp, &VIEW, &m, &mut opts)
+        });
+        assert!(an.draft.is_some());
+        assert!(an.doc.selected().is_empty());
+        let before = opts.clone();
+        opts.color = [0, 200, 0, 255];
+        an.restyle_from_opts(&before, &opts);
+        assert_eq!(an.doc.objs()[0].ann.color, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_wheel_notch_is_one_width_step() {
+        let wheel = |unit, y: f32, modifiers| Event::MouseWheel {
+            unit,
+            delta: vec2(0.0, y),
+            modifiers,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+        };
+        let mut acc = 0.0;
+        assert_eq!(
+            wheel_notches(
+                &mut acc,
+                &[wheel(egui::MouseWheelUnit::Line, 1.0, Modifiers::NONE)]
+            ),
+            1
+        );
+        assert_eq!(
+            wheel_notches(
+                &mut acc,
+                &[wheel(egui::MouseWheelUnit::Line, -2.0, Modifiers::NONE)]
+            ),
+            -2
+        );
+        // Ctrl+wheel zooms; it is no width step.
+        assert_eq!(
+            wheel_notches(
+                &mut acc,
+                &[wheel(egui::MouseWheelUnit::Line, 1.0, Modifiers::CTRL)]
+            ),
+            0
+        );
+        // A touchpad: 50 points make a notch, the rest waits.
+        let pad: Vec<Event> = (0..7)
+            .map(|_| wheel(egui::MouseWheelUnit::Point, 10.0, Modifiers::NONE))
+            .collect();
+        assert_eq!(wheel_notches(&mut acc, &pad), 1);
+        assert_eq!(
+            wheel_notches(
+                &mut acc,
+                &[wheel(egui::MouseWheelUnit::Point, 30.0, Modifiers::NONE)]
+            ),
+            1
+        );
+        let mut opts = DrawOpts {
+            width: 3.0,
+            font_size: 20.0,
+            ..Default::default()
+        };
+        wheel_restyle(Tool::Rect, &mut opts, 1);
+        assert_eq!(opts.width, 4.0);
+        wheel_restyle(Tool::Text, &mut opts, -1);
+        assert_eq!(opts.font_size, 18.0);
     }
 
     #[test]

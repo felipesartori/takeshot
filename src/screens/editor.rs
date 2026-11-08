@@ -92,9 +92,10 @@ pub fn zoom_scale(z: Zoom, current: f32, fit: f32) -> f32 {
 const WHEEL_GAIN: f32 = 0.5;
 
 /// The scale after this frame's Ctrl+wheel or pinch factor `z`, in proportion to it (a notch
-/// spread over frames adds up to the same), from 10 to 400 %.
+/// spread over frames adds up to the same), from 10 to 400 %; below 10 % (a big picture's fit)
+/// zooming out never enlarges.
 pub fn wheel_zoom(current: f32, z: f32) -> f32 {
-    (current * z.powf(WHEEL_GAIN)).clamp(ZOOM_MIN, ZOOM_STEPS[ZOOM_STEPS.len() - 1])
+    (current * z.powf(WHEEL_GAIN)).clamp(ZOOM_MIN.min(current), ZOOM_STEPS[ZOOM_STEPS.len() - 1])
 }
 
 /// After the last Ctrl+wheel zoom, how long the stretched picture shows before it is rendered
@@ -202,6 +203,8 @@ pub struct Editor {
     pan: egui::Vec2,
     /// When Ctrl+wheel last zoomed (egui time); the preview waits `ZOOM_REST` after it.
     zoomed_at: f64,
+    /// The plain wheel's part of a notch still to come (`wheel_notches`).
+    wheel_acc: f32,
     tab: PanelTab,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
@@ -238,6 +241,7 @@ impl Editor {
             fit: 1.0,
             pan: egui::Vec2::ZERO,
             zoomed_at: f64::NEG_INFINITY,
+            wheel_acc: 0.0,
             tab: PanelTab::Object,
             preview: None,
             preview_dirty: true,
@@ -332,7 +336,7 @@ impl Editor {
             }
             EditorAction::Hide(id, hidden) => self.an.doc.set_hidden(id, hidden),
             EditorAction::Duplicate => {
-                self.an.doc.duplicate_selected(egui::vec2(16.0, 16.0));
+                self.an.doc.duplicate_selected(egui::vec2(12.0, 12.0));
             }
             EditorAction::Delete => self.an.doc.delete_selected(),
             EditorAction::ToFront => self.an.doc.bring_to_front(),
@@ -427,7 +431,11 @@ impl Editor {
             self.annotated.width() as f32,
             self.annotated.height() as f32,
         );
-        let s = s.clamp(0.02, 1.0);
+        let want = s.clamp(0.02, 1.0);
+        // The styled preview stays within the GPU's texture side; a larger zoom magnifies it.
+        let full = render::layout(iw, ih, &shared.settings.style, &shared.settings.watermark);
+        let max_side = ctx.input(|i| i.max_texture_side) as f32;
+        let s = want.min(max_side / full.w.max(full.h));
         let tw = ((iw * s).round() as u32).max(1);
         let th = ((ih * s).round() as u32).max(1);
         let need = self
@@ -461,7 +469,7 @@ impl Editor {
         self.canvas_px = vec2(img.width() as f32, img.height() as f32);
         self.lay = Some(lay);
         self.preview_scale = unit;
-        self.preview_target = s;
+        self.preview_target = want;
         match &mut self.preview {
             Some(t) => t.set(color_image(&img), egui::TextureOptions::LINEAR),
             None => {
@@ -672,6 +680,17 @@ impl Editor {
         let panning = space || middle;
         if panning && resp.dragged() {
             self.pan += resp.drag_delta();
+        }
+        // The plain wheel changes a drawing tool's width (or the text size), a notch a step.
+        if self.an.tool != Tool::Select && resp.hovered() {
+            let events = ui.input(|i| i.events.clone());
+            let n = crate::engine::annotator::wheel_notches(&mut self.wheel_acc, &events);
+            if n != 0 {
+                let before = shared.settings.draw.clone();
+                crate::engine::annotator::wheel_restyle(self.an.tool, &mut shared.settings.draw, n);
+                self.an.restyle_from_opts(&before, &shared.settings.draw);
+                shared.settings_dirty = true;
+            }
         }
         // Ctrl+wheel and the pinch zoom in proportion, around the pointer.
         let z = ui.input(|i| i.zoom_delta());
@@ -909,6 +928,58 @@ mod tests {
         assert!((back - 1.0).abs() < 1e-4, "a notch back undoes it");
         assert_eq!(wheel_zoom(3.9, 4.0), 4.0, "at most 400 %");
         assert_eq!(wheel_zoom(0.11, 0.1), 0.1, "at least 10 %");
+        // A big picture fits below 10 %: zooming out there never enlarges it.
+        assert!(wheel_zoom(0.068, 0.8) <= 0.068);
+        assert!(wheel_zoom(0.068, 1.25) > 0.068);
+    }
+
+    #[test]
+    fn the_preview_stays_under_the_gpu_texture_limit() {
+        // A wide picture at 200 %: its full-size preview would pass a 2048 px texture limit.
+        let shared = crate::Shared::for_tests();
+        let base = RgbaImage::from_pixel(3000, 500, image::Rgba([240, 240, 240, 255]));
+        let mut ed = Editor::new(&egui::Context::default(), base, Doc::new(), &shared);
+        let mut shared = shared;
+        let ctx = egui::Context::default();
+        shared.fonts.install(&ctx);
+        let t = crate::ui::tokens::tokens(crate::ui::tokens::ThemeId::TakeUi, true);
+        ed.apply(
+            EditorAction::Zoom(Zoom::Percent(200)),
+            &ctx,
+            None,
+            &mut shared,
+        );
+        for i in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                max_texture_side: Some(2048),
+                time: Some(i as f64 * 0.05),
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                ed.canvas(ui, &t, &mut shared);
+            })
+            .textures_delta
+            .clear();
+        }
+        let side = ed.preview.as_ref().map(|t| t.size()).expect("a preview");
+        assert!(side[0] <= 2048 && side[1] <= 2048, "{side:?}");
+        assert!(!ed.preview_dirty, "rendered once, not every frame");
+    }
+
+    #[test]
+    fn duplicate_copies_12_px_away() {
+        // The button and Ctrl+D give the same copy.
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        let id = ed.an.doc.objs()[0].id;
+        ed.apply(EditorAction::Select(id, false), &ctx, None, &mut shared);
+        ed.apply(EditorAction::Duplicate, &ctx, None, &mut shared);
+        let shape = |i: usize| ed.an.doc.objs()[i].ann.shape.clone();
+        match (shape(0), shape(1)) {
+            (Shape::Rect(a, _), Shape::Rect(b, _)) => assert_eq!(b - a, vec2(12.0, 12.0)),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

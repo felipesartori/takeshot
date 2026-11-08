@@ -886,7 +886,7 @@ fn draw_watermark(
         fonts::measure(font, size, text)
     };
     let gap = if lw > 0.0 && tw > 0.0 {
-        size * 0.5
+        height * 0.5
     } else {
         0.0
     };
@@ -919,7 +919,7 @@ fn draw_watermark(
             pm,
             font,
             size,
-            (tx + size * 0.05, ty + size * 0.07),
+            (tx + height * 0.05, ty + height * 0.07),
             [0, 0, 0, 90],
             text,
             opacity,
