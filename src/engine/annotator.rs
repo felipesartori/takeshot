@@ -8,7 +8,7 @@ use crate::system::fonts::{self, FontLib};
 use crate::system::settings::DrawOpts;
 use crate::ui::kit::selection_marker;
 use crate::ui::tokens::Tokens;
-use egui::{Color32, Painter, Pos2, Response, Shape as EShape, Stroke, Ui, pos2, vec2};
+use egui::{Color32, Painter, Pos2, Response, Shape as EShape, Stroke, Ui, vec2};
 
 /// How far from a handle, in screen points, a press still grabs it.
 const HANDLE_REACH: f32 = 7.0;
@@ -586,112 +586,118 @@ impl Annotator {
         true
     }
 
-    /// Keyboard input while typing text. Returns true when keys were used for the draft.
-    pub fn handle_typing(&mut self, ui: &Ui, opts: &DrawOpts) -> bool {
-        let Some(_) = &self.draft else { return false };
-        let events = ui.input(|i| i.events.clone());
-        let mut commit = false;
-        let mut cancel = false;
-        if let Some(d) = self.draft.as_mut() {
-            for e in events {
-                match e {
-                    egui::Event::Text(t) => d.text.push_str(&t),
-                    egui::Event::Paste(t) => d.text.push_str(&t),
-                    egui::Event::Key {
-                        key: egui::Key::Backspace,
-                        pressed: true,
-                        ..
-                    } => {
-                        d.text.pop();
-                    }
-                    egui::Event::Key {
-                        key: egui::Key::Enter,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } => {
-                        if modifiers.shift {
-                            d.text.push('\n');
-                        } else {
-                            commit = true;
-                        }
-                    }
-                    egui::Event::Key {
-                        key: egui::Key::Escape,
-                        pressed: true,
-                        ..
-                    } => {
-                        if d.text.is_empty() {
-                            cancel = true;
-                        } else {
-                            commit = true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if cancel {
-            self.draft = None;
-        } else if commit {
-            self.commit_draft(opts);
-        }
-        // swallow the keys so shortcuts don't fire while typing
-        ui.input_mut(|i| {
-            i.events
-                .retain(|e| !matches!(e, egui::Event::Text(_) | egui::Event::Key { .. }));
-        });
-        true
-    }
-
-    /// Paint the shape being drawn and the text being typed.
-    pub fn paint_live(
-        &self,
-        painter: &Painter,
+    /// The text being typed, as a text field over the picture in the text's own font, size and
+    /// colour: caret, arrows, Shift+arrows, mouse selection, Ctrl+A, copy and paste. Enter keeps
+    /// the text, Shift+Enter starts a line, Esc keeps it and leaves (an empty text goes). `hint`
+    /// shows in an empty field. Returns true while a text is typed, so the caller skips its
+    /// shortcuts.
+    pub fn handle_typing(
+        &mut self,
+        ui: &mut Ui,
         view: &View,
         fonts: &FontLib,
         opts: &DrawOpts,
-        time: f64,
-    ) {
+        hint: &str,
+    ) -> bool {
+        if self.draft.is_none() {
+            return false;
+        }
+        // Plain Enter or Esc only: egui's consume_key would also take Shift+Enter.
+        let mut end = false;
+        ui.input_mut(|i| {
+            i.events.retain(|e| match e {
+                egui::Event::Key {
+                    key: egui::Key::Enter | egui::Key::Escape,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.matches_exact(egui::Modifiers::NONE) => {
+                    end = true;
+                    false
+                }
+                _ => true,
+            })
+        });
+        if end {
+            if self
+                .draft
+                .as_ref()
+                .is_some_and(|d| d.text.trim().is_empty())
+            {
+                self.draft = None;
+            } else {
+                self.commit_draft(opts);
+            }
+            return true;
+        }
+        let Some(d) = self.draft.as_mut() else {
+            return true;
+        };
+        let size = (opts.font_size * view.k).max(4.0);
+        let font = egui::FontId::new(size, fonts.get(opts.font).family.clone());
+        let ink = text_ink(opts.color, opts.text_box);
+        let at = view.to_screen(d.pos);
+        let shown = if d.text.is_empty() { hint } else { &d.text };
+        let ink_size = ui
+            .painter()
+            .layout_no_wrap(shown.to_owned(), font.clone(), ink)
+            .size();
+        let text_rect = egui::Rect::from_min_size(at, ink_size);
+        if opts.text_box {
+            ui.painter().rect_filled(
+                text_rect.expand2(text_box_padding(size)),
+                size * 0.25,
+                c32(opts.color),
+            );
+        }
+        ui.painter().rect_stroke(
+            text_rect.expand(4.0),
+            3.0,
+            Stroke::new(1.0, Color32::from_white_alpha(140)),
+            egui::StrokeKind::Outside,
+        );
+        // Room after the last letter for the caret.
+        let field = egui::Rect::from_min_size(at, ink_size + vec2(size * 0.6, 0.0));
+        let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, _wrap: f32| {
+            let job = egui::text::LayoutJob::simple(
+                buf.as_str().to_owned(),
+                font.clone(),
+                ink,
+                f32::INFINITY,
+            );
+            ui.painter().layout_job(job)
+        };
+        let resp = ui.place(
+            field,
+            egui::TextEdit::multiline(&mut d.text)
+                .id(egui::Id::unique((
+                    "takeshot-text-draft",
+                    d.started.to_bits(),
+                )))
+                .frame(egui::Frame::NONE)
+                .margin(egui::Margin::ZERO)
+                .font(font.clone())
+                .hint_text(hint)
+                .desired_rows(1)
+                .desired_width(field.width())
+                .return_key(egui::KeyboardShortcut::new(
+                    egui::Modifiers::SHIFT,
+                    egui::Key::Enter,
+                ))
+                .layouter(&mut layouter),
+        );
+        // The field keeps the keyboard unless another widget took it (a font picked in a panel
+        // gives it back).
+        if ui.memory(|m| m.focused().is_none()) {
+            resp.request_focus();
+        }
+        true
+    }
+
+    /// Paint the shape being drawn (the text being typed is `handle_typing`'s field).
+    pub fn paint_live(&self, painter: &Painter, view: &View, fonts: &FontLib) {
         if let Some(a) = &self.live {
             paint_ann(painter, view, a, fonts);
-        }
-        if let Some(d) = &self.draft {
-            let size = opts.font_size * view.k;
-            let shown = if d.text.is_empty() {
-                "Digite…"
-            } else {
-                d.text.as_str()
-            };
-            let rect = paint_text(
-                painter,
-                view.to_screen(d.pos),
-                shown,
-                fonts.get(opts.font).family.clone(),
-                size,
-                opts.color,
-                opts.text_box,
-                if d.text.is_empty() { 0.5 } else { 1.0 },
-            );
-            // dashed frame + caret
-            painter.rect_stroke(
-                rect.expand(4.0),
-                3.0,
-                Stroke::new(1.0, Color32::from_white_alpha(140)),
-                egui::StrokeKind::Outside,
-            );
-            if ((time - d.started) * 2.0) as i64 % 2 == 0 {
-                let x = if d.text.is_empty() {
-                    rect.min.x
-                } else {
-                    rect.max.x + 1.0
-                };
-                let last_line_top = rect.max.y - size;
-                painter.line_segment(
-                    [pos2(x, last_line_top.max(rect.min.y)), pos2(x, rect.max.y)],
-                    Stroke::new(1.5, Color32::WHITE),
-                );
-            }
         }
     }
 
@@ -764,14 +770,7 @@ fn paint_text(
     fade: f32,
 ) -> egui::Rect {
     let size = size.max(4.0);
-    let ink = if !boxed {
-        c32(color)
-    } else if luminance(color) > 0.6 {
-        Color32::from_rgb(17, 17, 17)
-    } else {
-        Color32::WHITE
-    }
-    .gamma_multiply(fade);
+    let ink = text_ink(color, boxed).gamma_multiply(fade);
     let galley = p.layout(
         text.to_owned(),
         egui::FontId::new(size, family),
@@ -788,6 +787,17 @@ fn paint_text(
     }
     p.galley(pos, galley, ink);
     rect
+}
+
+/// The colour of a text's letters: its colour, or on a background in its colour, black or white.
+fn text_ink(color: [u8; 4], boxed: bool) -> Color32 {
+    if !boxed {
+        c32(color)
+    } else if luminance(color) > 0.6 {
+        Color32::from_rgb(17, 17, 17)
+    } else {
+        Color32::WHITE
+    }
 }
 
 /// Approximate on-screen drawing of one annotation (while it is drawn or dragged).
@@ -902,7 +912,7 @@ mod tests {
     use super::*;
     use crate::engine::doc::{Doc, Handle, ObjId, ann_bounds};
     use crate::ui::tokens::{ThemeId, tokens};
-    use egui::{Event, Modifiers, PointerButton, Rect, Sense, Vec2};
+    use egui::{Event, Modifiers, PointerButton, Rect, Sense, Vec2, pos2};
 
     fn m(t: &str, _f: usize, size: f32, boxed: bool) -> Vec2 {
         let w = t.lines().map(|l| l.chars().count()).max().unwrap_or(0) as f32 * size * 0.5;

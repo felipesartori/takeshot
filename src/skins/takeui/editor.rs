@@ -981,6 +981,90 @@ mod tests {
         assert_eq!(ed.an.draft.as_ref().map(|d| d.text.as_str()), Some("Picor"));
     }
 
+    fn key(key: Key, modifiers: Modifiers) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// The editor with `text` being typed, after `frames` of input.
+    fn type_into(text: &str, frames: Vec<Vec<Event>>) -> (Editor, Shared) {
+        let (mut ed, mut shared) = editor();
+        ed.an.tool = Tool::Text;
+        ed.an.draft = Some(TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: text.into(),
+            started: 0.0,
+        });
+        run_editor(&mut ed, &mut shared, SIZE, true, frames);
+        (ed, shared)
+    }
+
+    fn draft(ed: &Editor) -> Option<&str> {
+        ed.an.draft.as_ref().map(|d| d.text.as_str())
+    }
+
+    #[test]
+    fn typing_edits_at_the_caret() {
+        let left = || key(Key::ArrowLeft, Modifiers::NONE);
+        let (ed, _) = type_into(
+            "Pico",
+            vec![
+                vec![left(), left()],
+                vec![Event::Text("X".into())],
+                vec![key(Key::Home, Modifiers::NONE)],
+                vec![Event::Text("A".into())],
+            ],
+        );
+        assert_eq!(draft(&ed), Some("APiXco"));
+    }
+
+    #[test]
+    fn a_selection_is_typed_over() {
+        let shift_left = || key(Key::ArrowLeft, Modifiers::SHIFT);
+        let (ed, _) = type_into(
+            "Pico em outubro",
+            vec![
+                (0..7).map(|_| shift_left()).collect(),
+                vec![Event::Text("maio".into())],
+            ],
+        );
+        assert_eq!(draft(&ed), Some("Pico em maio"));
+    }
+
+    #[test]
+    fn enter_keeps_the_text_and_shift_enter_breaks_the_line() {
+        let (ed, _) = type_into(
+            "Pico",
+            vec![
+                vec![key(Key::Enter, Modifiers::SHIFT)],
+                vec![Event::Text("x".into())],
+                vec![key(Key::Enter, Modifiers::NONE)],
+            ],
+        );
+        assert_eq!(draft(&ed), None);
+        let last = ed.an.doc.objs().last().map(|o| o.ann.shape.clone());
+        assert!(
+            matches!(&last, Some(Shape::Text { text, .. }) if text == "Pico
+x"),
+            "{last:?}"
+        );
+    }
+
+    #[test]
+    fn esc_ends_the_text_and_keeps_it() {
+        let (ed, _) = type_into("Pico", vec![vec![key(Key::Escape, Modifiers::NONE)]]);
+        assert_eq!(draft(&ed), None);
+        assert_eq!(ed.an.doc.objs().len(), 4, "kept as an object");
+        let (ed, _) = type_into("", vec![vec![key(Key::Escape, Modifiers::NONE)]]);
+        assert_eq!(draft(&ed), None);
+        assert_eq!(ed.an.doc.objs().len(), 3, "an empty text goes");
+    }
+
     #[test]
     fn space_drag_pans_the_zoomed_picture() {
         let (mut ed, mut shared) = editor();

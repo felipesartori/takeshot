@@ -10,7 +10,7 @@ use crate::screens::editor::Editor;
 use crate::screens::widgets;
 use crate::system::capture::Shot;
 use crate::system::settings::DrawOpts;
-use crate::ui::i18n::{Msg, tf};
+use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::style::{Weight, font};
 use crate::ui::tokens::Tokens;
 use crate::{Shared, Switch};
@@ -280,7 +280,8 @@ impl Overlay {
             Sense::click_and_drag(),
         );
         let pointer = ui.input(|i| i.pointer.hover_pos());
-        let typing = self.an.handle_typing(ui, &shared.settings.draw);
+        // The text field is placed after the picture is painted, so it shows over it.
+        let typing = self.an.draft.is_some();
 
         let drawing_tool = self.sel.is_some() && self.an.tool != Tool::Select;
         self.canvas_input(ui, &canvas, &view, pointer, shared);
@@ -343,12 +344,13 @@ impl Overlay {
             &shared.fonts,
             &text_measure(&shared.fonts),
         );
-        self.an.paint_live(
-            &painter,
+        self.an.paint_live(&painter, &view, &shared.fonts);
+        self.an.handle_typing(
+            ui,
             &view,
             &shared.fonts,
             &shared.settings.draw,
-            ui.input(|i| i.time),
+            tr(Msg::TypeHere),
         );
 
         // magnifier while choosing the area

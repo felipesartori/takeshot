@@ -661,7 +661,13 @@ impl Editor {
             ui.scope_id().with("ed_canvas"),
             Sense::click_and_drag(),
         );
-        let typing = self.an.handle_typing(ui, &shared.settings.draw);
+        let typing = self.an.handle_typing(
+            ui,
+            &view,
+            &shared.fonts,
+            &shared.settings.draw,
+            tr(Msg::TypeHere),
+        );
         // Space (not while typing) or the middle button drags the picture instead of drawing.
         let space = !typing && self.an.draft.is_none() && ui.input(|i| i.key_down(Key::Space));
         let middle = resp.dragged_by(egui::PointerButton::Middle);
@@ -717,13 +723,7 @@ impl Editor {
             self.an
                 .paint_selection(&clip, &view, t, &shared.fonts, &measure);
         }
-        self.an.paint_live(
-            &clip,
-            &view,
-            &shared.fonts,
-            &shared.settings.draw,
-            ui.input(|i| i.time),
-        );
+        self.an.paint_live(&clip, &view, &shared.fonts);
         if !typing && !self.asking_close && !ctx.egui_wants_keyboard_input() {
             self.an.handle_object_keys(ui);
             if self.an.handle_history_keys(ui) {
