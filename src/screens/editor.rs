@@ -87,32 +87,19 @@ pub fn zoom_scale(z: Zoom, current: f32, fit: f32) -> f32 {
     }
 }
 
-/// Zoom steps from this frame's Ctrl+wheel factor `z`: one per notch, though egui spreads a
-/// notch over several frames. `acc` gathers the factors (as logarithms) and gives a step each
-/// time it passes a notch's worth; a frame with no zoom, or a turn of the wheel the other way,
-/// starts over.
-pub fn wheel_zoom_steps(acc: &mut f32, z: f32) -> i32 {
-    // ln 1.15: a mouse notch (about ln 1.22) is one step, a touchpad pinch steps as it goes.
-    const NOTCH: f32 = 0.14;
-    if (z - 1.0).abs() < 1e-4 {
-        *acc = 0.0;
-        return 0;
-    }
-    let d = z.ln();
-    if *acc != 0.0 && d.signum() != acc.signum() {
-        *acc = 0.0;
-    }
-    *acc += d;
-    if *acc >= NOTCH {
-        *acc -= NOTCH;
-        1
-    } else if *acc <= -NOTCH {
-        *acc += NOTCH;
-        -1
-    } else {
-        0
-    }
+/// How much of the Ctrl+wheel or pinch factor the zoom follows: egui's notch (e^0.25) is about
+/// 13 %.
+const WHEEL_GAIN: f32 = 0.5;
+
+/// The scale after this frame's Ctrl+wheel or pinch factor `z`, in proportion to it (a notch
+/// spread over frames adds up to the same), from 10 to 400 %.
+pub fn wheel_zoom(current: f32, z: f32) -> f32 {
+    (current * z.powf(WHEEL_GAIN)).clamp(ZOOM_MIN, ZOOM_STEPS[ZOOM_STEPS.len() - 1])
 }
+
+/// After the last Ctrl+wheel zoom, how long the stretched picture shows before it is rendered
+/// again at the new scale.
+const ZOOM_REST: f64 = 0.15;
 
 /// The tabs of the editor's right panel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -213,8 +200,8 @@ pub struct Editor {
     fit: f32,
     /// How far the picture is moved from the centre when it is larger than the canvas.
     pan: egui::Vec2,
-    /// Ctrl+wheel gathered toward the next zoom step (`wheel_zoom_steps`).
-    zoom_acc: f32,
+    /// When Ctrl+wheel last zoomed (egui time); the preview waits `ZOOM_REST` after it.
+    zoomed_at: f64,
     tab: PanelTab,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
@@ -250,7 +237,7 @@ impl Editor {
             zoom: None,
             fit: 1.0,
             pan: egui::Vec2::ZERO,
-            zoom_acc: 0.0,
+            zoomed_at: f64::NEG_INFINITY,
             tab: PanelTab::Object,
             preview: None,
             preview_dirty: true,
@@ -374,18 +361,22 @@ impl Editor {
     /// Zooms keeping the picture's point at `anchor` (from the canvas centre) where it is on
     /// screen: the pointer for Ctrl+wheel, the centre for the keys and the zoom menu. Fit centres.
     fn zoom_to(&mut self, z: Zoom, anchor: egui::Vec2) {
-        let old = self.shown_scale();
-        self.zoom = match z {
-            Zoom::Fit => None,
-            _ => Some(zoom_scale(z, old, self.fit)),
-        };
-        let ratio = self.shown_scale() / old;
-        self.pan = if self.zoom.is_none() {
-            egui::Vec2::ZERO
-        } else {
-            anchor - (anchor - self.pan) * ratio
-        };
+        match z {
+            Zoom::Fit => {
+                self.zoom = None;
+                self.pan = egui::Vec2::ZERO;
+            }
+            _ => self.zoom_at(zoom_scale(z, self.shown_scale(), self.fit), anchor),
+        }
         self.preview_dirty = true;
+    }
+
+    /// Sets the scale to `scale`, keeping the picture's point at `anchor` (from the canvas
+    /// centre) where it is on screen.
+    fn zoom_at(&mut self, scale: f32, anchor: egui::Vec2) {
+        let ratio = scale / self.shown_scale();
+        self.zoom = Some(scale);
+        self.pan = anchor - (anchor - self.pan) * ratio;
     }
 
     /// Lets the next close through without asking (the screenshot self-check closes on its own).
@@ -623,8 +614,15 @@ impl Editor {
             }
         }
         let shown = self.shown_scale();
-        if self.preview_dirty || (shown.min(1.0) - self.preview_target).abs() > 1e-4 {
+        // While Ctrl+wheel zooms, the picture is stretched; it is rendered again at the new scale
+        // once the zoom rests, so a 4K capture never renders every frame.
+        let now = ui.input(|i| i.time);
+        let since = now - self.zoomed_at;
+        let behind = (shown.min(1.0) - self.preview_target).abs() > 1e-4;
+        if self.preview_dirty || (behind && since >= ZOOM_REST) {
             self.rebuild_preview(&ctx, shown, shared);
+        } else if behind {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(ZOOM_REST - since));
         }
         let size = self.canvas_px * (shown / self.preview_scale) / ppp;
         // A picture larger than the canvas moves within its edges; a smaller one stays centred.
@@ -675,16 +673,14 @@ impl Editor {
         if panning && resp.dragged() {
             self.pan += resp.drag_delta();
         }
-        // Ctrl+wheel zooms one step per notch, around the pointer.
-        if resp.hovered()
+        // Ctrl+wheel and the pinch zoom in proportion, around the pointer.
+        let z = ui.input(|i| i.zoom_delta());
+        if (z - 1.0).abs() > 1e-4
+            && resp.hovered()
             && let Some(p) = ui.input(|i| i.pointer.hover_pos())
         {
-            let anchor = p - room.center();
-            match wheel_zoom_steps(&mut self.zoom_acc, ui.input(|i| i.zoom_delta())) {
-                1 => self.zoom_to(Zoom::In, anchor),
-                -1 => self.zoom_to(Zoom::Out, anchor),
-                _ => {}
-            }
+            self.zoom_at(wheel_zoom(self.shown_scale(), z), p - room.center());
+            self.zoomed_at = now;
         }
         let clip = ui.painter_at(img_rect.expand(40.0).intersect(area));
         {
@@ -893,31 +889,61 @@ mod tests {
     }
 
     #[test]
-    fn a_wheel_notch_is_one_zoom_step() {
-        // egui smooths a notch of Ctrl+wheel over a few frames (here e^0.2 in all, as on
-        // Windows); a frame with no zoom ends the notch.
-        let mut acc = 0.0;
-        let mut run = |frames: &[f32]| -> Vec<i32> {
-            frames
-                .iter()
-                .map(|z| wheel_zoom_steps(&mut acc, *z))
-                .filter(|s| *s != 0)
-                .collect()
+    fn the_wheel_zooms_in_proportion() {
+        // A notch of Ctrl+wheel (e^0.25 in egui, spread over a few frames) is about 13 %, the
+        // same whether it comes in one frame or several; a touchpad pinch goes on smoothly.
+        let notch = 0.25f32.exp();
+        let whole = wheel_zoom(1.0, notch);
+        assert!((whole - 1.133).abs() < 0.01, "{whole}");
+        let spread = [
+            1.07,
+            1.07,
+            1.05,
+            1.016,
+            notch / (1.07 * 1.07 * 1.05 * 1.016),
+        ]
+        .iter()
+        .fold(1.0, |s, z| wheel_zoom(s, *z));
+        assert!((spread - whole).abs() < 1e-4, "{spread} vs {whole}");
+        let back = wheel_zoom(whole, 1.0 / notch);
+        assert!((back - 1.0).abs() < 1e-4, "a notch back undoes it");
+        assert_eq!(wheel_zoom(3.9, 4.0), 4.0, "at most 400 %");
+        assert_eq!(wheel_zoom(0.11, 0.1), 0.1, "at least 10 %");
+    }
+
+    #[test]
+    fn the_preview_waits_for_the_zoom_to_rest() {
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        shared.fonts.install(&ctx);
+        let t = crate::ui::tokens::tokens(crate::ui::tokens::ThemeId::TakeUi, true);
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        let frame = |ed: &mut Editor, shared: &mut crate::Shared, events, time| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| {
+                ed.canvas(ui, &t, shared);
+            })
+            .textures_delta
+            .clear();
         };
-        assert_eq!(run(&[1.07, 1.07, 1.05, 1.016, 1.0]), vec![1]);
-        assert_eq!(
-            run(&[1.07, 1.07, 1.05, 1.016, 1.0]),
-            vec![1],
-            "the next notch"
+        let over = egui::Event::PointerMoved(pos2(400.0, 300.0));
+        frame(&mut ed, &mut shared, vec![over.clone()], 0.0);
+        frame(&mut ed, &mut shared, vec![over], 0.016);
+        let before = ed.preview_target;
+        frame(&mut ed, &mut shared, vec![egui::Event::Zoom(0.8)], 0.032);
+        frame(&mut ed, &mut shared, vec![egui::Event::Zoom(0.8)], 0.048);
+        assert!(ed.shown_scale() < before, "zoomed out");
+        assert_eq!(ed.preview_target, before, "no new picture mid-gesture");
+        frame(&mut ed, &mut shared, vec![], 0.30);
+        assert!(
+            (ed.preview_target - ed.shown_scale().min(1.0)).abs() < 1e-4,
+            "rendered again once the zoom rests"
         );
-        assert_eq!(
-            run(&[0.935, 0.935, 0.952, 0.984, 1.0]),
-            vec![-1],
-            "a notch back"
-        );
-        // A touchpad pinch: small steady factors still step, once per notch's worth.
-        let pinch = vec![1.02; 30];
-        assert_eq!(run(&pinch), vec![1, 1, 1, 1]);
     }
 
     fn editor() -> (Editor, crate::Shared) {

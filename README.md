@@ -31,7 +31,7 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 
 ![Editor](docs/editor.png)
 
-- Barra de título com o nome do arquivo e as dimensões, desfazer e refazer, Fixar na tela, Salvar como, Salvar e Copiar; barra de ferramentas com as dez ferramentas, cores, espessuras e zoom até 400 % (`Ctrl`+roda aproxima no ponteiro; espaço ou o botão do meio arrastam a imagem).
+- Barra de título com o nome do arquivo e as dimensões, desfazer e refazer, Fixar na tela, Salvar como, Salvar e Copiar; barra de ferramentas com as dez ferramentas, cores, espessuras e zoom de 10 a 400 % (`Ctrl`+roda e a pinça do touchpad aproximam no ponteiro, em proporção ao giro; espaço ou o botão do meio arrastam a imagem).
 - Painel Objeto: cor, espessura, opacidade, preenchimento, fonte e fundo do texto do objeto selecionado (ou da ferramenta), Duplicar e Excluir, e a lista de objetos: clique escolhe, o olho oculta, o botão direito traz para frente ou envia para trás. Arrastar um controle deslizante é um passo só de desfazer.
 - Sobre o objeto selecionado, uma barra pequena com a cor, duplicar, trazer para frente, enviar para trás e excluir.
 - Painel Estilo, o mesmo de Estilo na janela principal:

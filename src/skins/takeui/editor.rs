@@ -1130,7 +1130,7 @@ x"),
         let (_, _, blocks) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
         let before = picture(&blocks);
         let p = pos2(580.0, 505.0);
-        let zoom = || vec![Event::Zoom(1.25)];
+        let zoom = || vec![Event::Zoom(2.0)];
         let (_, _, blocks) = run_editor(
             &mut ed,
             &mut shared,
