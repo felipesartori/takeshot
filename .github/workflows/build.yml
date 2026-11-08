@@ -140,7 +140,11 @@ jobs:
               (cd portable && 7z a "../dist/takeshot-$VERSION-windows-x64-portable.zip" Takeshot.exe)
               ;;
             macOS)
-              cargo packager --formats app --binaries-dir target/universal/release
+              # The packager reads target/release (it ignores --binaries-dir with Cargo.toml's
+              # config): the universal binary goes there.
+              mkdir -p target/release
+              cp target/universal/release/takeshot target/release/takeshot
+              cargo packager --release --formats app
               APP=target/packages/Takeshot.app
               if [ "$SIGN_MACOS" = "true" ]; then
                 codesign --force --deep --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "$APP"
