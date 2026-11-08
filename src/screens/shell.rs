@@ -404,7 +404,14 @@ impl Shell {
                     }
                     shared.settings_dirty = true;
                 }
-                Err(e) => shared.toast(format!("{}: {e}", label(&keys))),
+                Err(e) => {
+                    let shown = label(&keys);
+                    if let crate::system::hotkeys::RebindError::Refused(why) = &e {
+                        eprintln!("shortcut {keys}: {why}");
+                    }
+                    let priority = cfg!(windows) && shown == "PrtSc";
+                    shared.toast(crate::screens::home::rebind_notice(&shown, &e, priority));
+                }
             }
         }
         if req.open_windows_settings {
@@ -534,7 +541,7 @@ fn open_windows_keyboard_settings() {
 /// The short notice, drawn in whichever window is the main one.
 fn draw_toast(ctx: &egui::Context, shared: &mut Shared) {
     if let Some((msg, at)) = &shared.toast {
-        if at.elapsed().as_secs_f32() < 2.6 {
+        if at.elapsed().as_secs_f32() < crate::ui::kit::toast_seconds(msg) {
             crate::ui::kit::toast(ctx, &shared.tokens(ctx.system_theme()), msg);
             ctx.request_repaint();
         } else {

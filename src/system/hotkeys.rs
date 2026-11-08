@@ -27,6 +27,31 @@ pub enum Status {
     Off,
 }
 
+/// Why a shortcut could not be set.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum RebindError {
+    /// Another app holds the keys.
+    InUse,
+    /// The keys do not make a shortcut.
+    Invalid,
+    /// The system refused it (its error text, for the log).
+    Refused(String),
+}
+
+/// What a `global-hotkey` error means for the user.
+fn rebind_error(e: &global_hotkey::Error) -> RebindError {
+    use global_hotkey::Error as E;
+    match e {
+        E::AlreadyRegistered(_) => RebindError::InUse,
+        E::HotKeyParseError(_)
+        | E::UnrecognizedHotKeyCode(_)
+        | E::EmptyHotKeyToken(_)
+        | E::UnexpectedHotKeyFormat(_) => RebindError::Invalid,
+        E::FailedToRegister(why) => RebindError::Refused(why.clone()),
+        other => RebindError::Refused(other.to_string()),
+    }
+}
+
 /// The shortcut each capture starts with, in the form `HotKey::from_str` reads.
 pub fn default_keys(s: Shot) -> &'static str {
     match (s, cfg!(target_os = "macos")) {
@@ -278,8 +303,8 @@ impl Hotkeys {
 
     /// Swaps the shortcut of a capture; on failure the old one stays registered. While the
     /// shortcuts are off the new keys are only kept.
-    pub fn rebind(&mut self, s: Shot, keys: &str) -> Result<(), String> {
-        HotKey::from_str(keys).map_err(|e| e.to_string())?;
+    pub fn rebind(&mut self, s: Shot, keys: &str) -> Result<(), RebindError> {
+        HotKey::from_str(keys).map_err(|_| RebindError::Invalid)?;
         if !self.enabled {
             self.keys[slot(s)] = keys.to_string();
             return Ok(());
@@ -296,10 +321,13 @@ impl Hotkeys {
         result
     }
 
-    fn register(&mut self, s: Shot, keys: &str) -> Result<(), String> {
-        let hk = HotKey::from_str(keys).map_err(|e| e.to_string())?;
-        let m = self.manager.as_ref().ok_or("global shortcuts are off")?;
-        m.register(hk).map_err(|e| e.to_string())?;
+    fn register(&mut self, s: Shot, keys: &str) -> Result<(), RebindError> {
+        let hk = HotKey::from_str(keys).map_err(|_| RebindError::Invalid)?;
+        let m = self
+            .manager
+            .as_ref()
+            .ok_or_else(|| RebindError::Refused("global shortcuts are off".into()))?;
+        m.register(hk).map_err(|e| rebind_error(&e))?;
         self.ids[slot(s)].store(hk.id(), Ordering::Relaxed);
         self.registered[slot(s)] = Some(hk);
         self.keys[slot(s)] = keys.to_string();
@@ -324,6 +352,24 @@ impl Hotkeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_taken_key_is_reported_as_in_use() {
+        use global_hotkey::Error as E;
+        let prtsc = HotKey::from_str("PrintScreen").unwrap();
+        assert_eq!(
+            rebind_error(&E::AlreadyRegistered(prtsc)),
+            RebindError::InUse
+        );
+        assert_eq!(
+            rebind_error(&E::HotKeyParseError("x".into())),
+            RebindError::Invalid
+        );
+        assert_eq!(
+            rebind_error(&E::FailedToRegister("denied".into())),
+            RebindError::Refused("denied".into())
+        );
+    }
 
     #[test]
     fn a_global_shortcut_needs_ctrl_alt_or_an_f_key() {

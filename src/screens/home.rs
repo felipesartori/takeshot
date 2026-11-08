@@ -673,6 +673,22 @@ pub(crate) fn chip(
     }
 }
 
+/// The notice for a shortcut that could not be set, in the user's language. `priority` offers
+/// Takeshot's PrtSc priority (Windows, PrtSc alone).
+pub(crate) fn rebind_notice(
+    keys: &str,
+    e: &crate::system::hotkeys::RebindError,
+    priority: bool,
+) -> String {
+    use crate::system::hotkeys::RebindError as E;
+    match e {
+        E::InUse if priority => tf(Msg::KeyInUsePriority, &[keys]),
+        E::InUse => tf(Msg::KeyInUse, &[keys]),
+        E::Invalid => tf(Msg::KeyInvalid, &[keys]),
+        E::Refused(_) => tf(Msg::KeyRefused, &[keys]),
+    }
+}
+
 pub(crate) fn hotkey_text(
     status: Option<&Status>,
     settings: &crate::system::settings::Settings,
@@ -695,6 +711,35 @@ pub(crate) fn hotkey_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rebind_notice_is_translated() {
+        use crate::system::hotkeys::RebindError;
+        use crate::ui::i18n::{Lang, set_lang};
+        set_lang(Lang::Pt);
+        assert_eq!(
+            rebind_notice("PrtSc", &RebindError::InUse, true),
+            "PrtSc está em uso por outro app. Feche o outro app ou ligue a prioridade do Takeshot em Ajustes › Atalhos."
+        );
+        assert_eq!(
+            rebind_notice("F8", &RebindError::InUse, false),
+            "F8 está em uso por outro app. Feche o outro app ou escolha outra tecla."
+        );
+        set_lang(Lang::En);
+        assert_eq!(
+            rebind_notice("PrtSc", &RebindError::InUse, true),
+            "PrtSc is in use by another app. Close that app, or turn on Takeshot priority in Settings › Shortcuts."
+        );
+        for e in [
+            RebindError::InUse,
+            RebindError::Invalid,
+            RebindError::Refused("HotKey { mods: Modifiers(0x0) }".into()),
+        ] {
+            let n = rebind_notice("Ctrl+Q", &e, false);
+            assert!(n.starts_with("Ctrl+Q"), "{n}");
+            assert!(!n.contains("HotKey"), "no library text: {n}");
+        }
+    }
 
     #[test]
     fn the_status_chip_tells_off_and_unavailable_from_busy() {

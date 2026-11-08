@@ -221,6 +221,10 @@ pub enum Msg {
     CloseWord,
     PinOriginalSize,
     PinnedTitle,
+    KeyInUse,
+    KeyInUsePriority,
+    KeyInvalid,
+    KeyRefused,
     MinimizeWindow,
     MaximizeWindow,
     RestoreWindow,
@@ -493,6 +497,12 @@ fn en(m: Msg) -> &'static str {
         Msg::CloseWord => "Close",
         Msg::PinOriginalSize => "Original size",
         Msg::PinnedTitle => "Takeshot · pinned",
+        Msg::KeyInUse => "{0} is in use by another app. Close that app or pick another key.",
+        Msg::KeyInUsePriority => {
+            "{0} is in use by another app. Close that app, or turn on Takeshot priority in Settings › Shortcuts."
+        }
+        Msg::KeyInvalid => "{0} can't be a shortcut. Pick another combination.",
+        Msg::KeyRefused => "{0} couldn't be set: the system refused it.",
         Msg::MinimizeWindow => "Minimize",
         Msg::MaximizeWindow => "Maximize",
         Msg::RestoreWindow => "Restore",
@@ -748,6 +758,12 @@ fn pt(m: Msg) -> &'static str {
         Msg::CloseWord => "Fechar",
         Msg::PinOriginalSize => "Tamanho original",
         Msg::PinnedTitle => "Takeshot · fixado",
+        Msg::KeyInUse => "{0} está em uso por outro app. Feche o outro app ou escolha outra tecla.",
+        Msg::KeyInUsePriority => {
+            "{0} está em uso por outro app. Feche o outro app ou ligue a prioridade do Takeshot em Ajustes › Atalhos."
+        }
+        Msg::KeyInvalid => "{0} não pode ser um atalho. Escolha outra combinação.",
+        Msg::KeyRefused => "{0} não pôde ser usado: o sistema recusou.",
         Msg::MinimizeWindow => "Minimizar",
         Msg::MaximizeWindow => "Maximizar",
         Msg::RestoreWindow => "Restaurar",

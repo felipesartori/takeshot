@@ -424,7 +424,7 @@ impl eframe::App for App {
         if let Some((msg, at)) = &self.shared.toast
             && !matches!(self.mode, Mode::Resident { .. })
         {
-            if at.elapsed().as_secs_f32() < 2.6 {
+            if at.elapsed().as_secs_f32() < ui::kit::toast_seconds(msg) {
                 ui::kit::toast(&ctx, &self.shared.tokens(ctx.system_theme()), msg);
                 ctx.request_repaint();
             } else {

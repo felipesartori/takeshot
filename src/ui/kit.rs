@@ -1425,6 +1425,12 @@ pub fn status_chip(ui: &mut Ui, t: &Tokens, state: ChipState, label: &str) -> Re
     resp
 }
 
+/// How long a toast stays on screen: long enough to read (about 15 characters a second), from
+/// 2.6 s to 8 s.
+pub fn toast_seconds(text: &str) -> f32 {
+    (text.chars().count() as f32 / 15.0).clamp(2.6, 8.0)
+}
+
 /// The short notice at the bottom of a window ("Copied"), in the theme: a card with a dot in the
 /// primary colour and the text.
 pub fn toast(ctx: &egui::Context, t: &Tokens, text: &str) {
@@ -1549,6 +1555,14 @@ mod tests {
             last = shapes(&full.shapes);
         }
         last
+    }
+
+    #[test]
+    fn a_long_toast_stays_long_enough_to_read() {
+        assert_eq!(toast_seconds("Copied"), 2.6);
+        let long = "PrtSc is in use by another app. Close that app, or turn on Takeshot priority.";
+        assert!(toast_seconds(long) > 4.5, "{}", toast_seconds(long));
+        assert_eq!(toast_seconds(&"x".repeat(400)), 8.0);
     }
 
     #[test]
