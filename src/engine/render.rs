@@ -363,12 +363,8 @@ pub fn draw_ann(pm: &mut sk::Pixmap, a: &Ann, fonts: &FontLib) {
         }
         Shape::Marker(points) => {
             let mut c = a.color;
-            c[3] = MARKER_ALPHA;
-            let mut paint = paint_rgba(c);
-            paint.blend_mode = sk::BlendMode::Multiply;
-            if crate::engine::model::luminance(a.color) < 0.35 {
-                paint.blend_mode = sk::BlendMode::SourceOver;
-            }
+            c[3] = crate::engine::model::marker_alpha(a.color[3]);
+            let paint = paint_rgba(c);
             let s = stroke(
                 a.width * MARKER_WIDTH_FACTOR,
                 sk::LineCap::Butt,
@@ -1026,6 +1022,40 @@ mod tests {
             );
         }
         from_pixmap(&pm)
+    }
+
+    #[test]
+    fn a_marker_shows_as_drawn_on_a_dark_picture_and_takes_its_opacity() {
+        let fonts = FontLib::load();
+        let base = RgbaImage::from_pixel(200, 100, image::Rgba([30, 20, 40, 255]));
+        let marker = |opacity: u8| Ann {
+            shape: Shape::Marker(vec![pos2(20.0, 50.0), pos2(180.0, 50.0)]),
+            color: [255, 214, 10, opacity],
+            width: 4.0,
+            filled: false,
+        };
+        let full = render_annotations(&base, &[marker(255)], &fonts)
+            .get_pixel(100, 50)
+            .0;
+        // The ink at the marker's alpha over the picture, as it is drawn live.
+        let a = MARKER_ALPHA as f32 / 255.0;
+        for (i, (ink, under)) in [(255.0, 30.0), (214.0, 20.0), (10.0, 40.0)]
+            .into_iter()
+            .enumerate()
+        {
+            let want: f32 = under + (ink - under) * a;
+            assert!(
+                (full[i] as f32 - want).abs() <= 2.0,
+                "channel {i}: {full:?}, want {want}"
+            );
+        }
+        let half = render_annotations(&base, &[marker(128)], &fonts)
+            .get_pixel(100, 50)
+            .0;
+        assert!(
+            half[0] < full[0] - 40 && half[0] > 50,
+            "half the opacity, half the ink: {half:?} against {full:?}"
+        );
     }
 
     #[test]

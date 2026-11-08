@@ -953,8 +953,12 @@ pub fn paint_ann(p: &Painter, v: &View, a: &Ann, fonts: &FontLib) {
             }
         }
         Shape::Marker(pts) => {
-            let c =
-                Color32::from_rgba_unmultiplied(a.color[0], a.color[1], a.color[2], MARKER_ALPHA);
+            let c = Color32::from_rgba_unmultiplied(
+                a.color[0],
+                a.color[1],
+                a.color[2],
+                marker_alpha(a.color[3]),
+            );
             let pts: Vec<Pos2> = pts.iter().map(|q| v.to_screen(*q)).collect();
             if pts.len() > 1 {
                 p.add(EShape::line(
@@ -1792,6 +1796,40 @@ mod tests {
         }
         let (sa, sb) = (a.draft.unwrap().started, b.draft.unwrap().started);
         assert_ne!(sa, sb);
+    }
+
+    #[test]
+    fn a_live_marker_takes_its_opacity() {
+        for (opacity, want) in [(255u8, MARKER_ALPHA), (128, 63)] {
+            let ann = Ann {
+                shape: Shape::Marker(vec![pos2(0.0, 0.0), pos2(100.0, 0.0)]),
+                color: [255, 214, 10, opacity],
+                width: 4.0,
+                filled: false,
+            };
+            let ctx = egui::Context::default();
+            let fonts = FontLib::load();
+            let mut full = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let view = View {
+                    origin: pos2(0.0, 0.0),
+                    k: 1.0,
+                };
+                paint_ann(ui.painter(), &view, &ann, &fonts);
+            });
+            full.textures_delta.clear();
+            let alpha = full.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Path(p) => match p.stroke.color {
+                    egui::epaint::ColorMode::Solid(c) => Some(c.a()),
+                    _ => None,
+                },
+                _ => None,
+            });
+            let alpha = alpha.expect("the marker's line");
+            assert!(
+                alpha.abs_diff(want) <= 1,
+                "opacity {opacity}: alpha {alpha}, want {want}"
+            );
+        }
     }
 
     #[test]

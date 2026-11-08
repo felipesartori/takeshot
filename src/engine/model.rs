@@ -14,6 +14,12 @@ pub const ARROW_CAP_WIDTH: f32 = 3.0;
 pub const ARROW_MIN_HEAD: f32 = 14.0;
 /// Marker opacity (about half).
 pub const MARKER_ALPHA: u8 = 125;
+
+/// The marker's alpha at the object's `opacity`: its half-transparent ink at 100 %, less below.
+/// Live drawing and the final picture both use it, over the picture as it is.
+pub fn marker_alpha(opacity: u8) -> u8 {
+    ((MARKER_ALPHA as u32 * opacity as u32 + 127) / 255) as u8
+}
 /// How much thicker the marker is than the pen.
 pub const MARKER_WIDTH_FACTOR: f32 = 5.0;
 /// The screen outside the selection is dimmed to 50 %.
