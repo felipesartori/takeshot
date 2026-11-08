@@ -565,133 +565,147 @@ fn detail_panel(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAct
         );
         return;
     };
-    let w = area.width();
-    ui.spacing_mut().item_spacing.y = 12.0;
-    let (thumb, dims) = home.card_thumb(&e.path);
-    let (pic, _) = ui.allocate_exact_size(vec2(w, (w * 0.62).round()), egui::Sense::hover());
-    kit::thumb(ui.painter(), t, pic, thumb);
-    let now = chrono::Local::now();
-    let day = crate::screens::home::day_label(crate::system::library::day_of(e.modified, now), now);
-    let line = |s: &str, size: f32, weight: Weight, c: egui::Color32| {
-        let mut job =
-            egui::text::LayoutJob::simple_singleline(s.to_string(), font(size, weight), c);
-        job.wrap = egui::text::TextWrapping::truncate_at_width(w);
-        job
-    };
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 3.0;
-        ui.label(line(&e.name, 13.0, Weight::Bold, t.text));
-        ui.label(line(
-            &tf(Msg::DayAtTime, &[&day, &time_of(&e)]),
-            12.0,
-            Weight::Regular,
-            t.muted,
-        ));
-    });
-    let folder = e
-        .path
-        .parent()
-        .map(|p| {
-            let parts: Vec<_> = p.components().rev().take(2).collect();
-            parts
-                .iter()
-                .rev()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(std::path::MAIN_SEPARATOR_STR)
-        })
-        .unwrap_or_default();
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 6.0;
-        let dims_text = dims.map(|[a, b]| format!("{a} × {b}")).unwrap_or_default();
-        for (m, v) in [
-            (Msg::ColDimensions, dims_text.as_str()),
-            (Msg::ColSize, &human_size(e.bytes)),
-            (Msg::CapturesFolder, folder.as_str()),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr(m))
-                        .font(font(12.0, Weight::Regular))
-                        .color(t.muted),
-                );
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(line(v, 12.0, Weight::Regular, t.text));
-                });
+    // The panel scrolls when the window is too short for it.
+    egui::ScrollArea::vertical()
+        .id_salt("detail-panel")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let w = ui.available_width();
+            ui.spacing_mut().item_spacing.y = 12.0;
+            let (thumb, dims) = home.card_thumb(&e.path);
+            let (pic, _) =
+                ui.allocate_exact_size(vec2(w, (w * 0.62).round()), egui::Sense::hover());
+            kit::thumb(ui.painter(), t, pic, thumb);
+            let now = chrono::Local::now();
+            let day = crate::screens::home::day_label(
+                crate::system::library::day_of(e.modified, now),
+                now,
+            );
+            let line = |s: &str, size: f32, weight: Weight, c: egui::Color32| {
+                let mut job =
+                    egui::text::LayoutJob::simple_singleline(s.to_string(), font(size, weight), c);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(w);
+                job
+            };
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.label(line(&e.name, 13.0, Weight::Bold, t.text));
+                ui.label(line(
+                    &tf(Msg::DayAtTime, &[&day, &time_of(&e)]),
+                    12.0,
+                    Weight::Regular,
+                    t.muted,
+                ));
             });
-        }
-    });
-    let (rule, _) = ui.allocate_exact_size(vec2(w, 1.0), egui::Sense::hover());
-    ui.painter().rect_filled(rule, 0.0, t.border);
-    let path = e.path.clone();
-    let copy_keys = if cfg!(target_os = "macos") {
-        "Cmd+C"
-    } else {
-        "Ctrl+C"
-    };
-    if kit::wide_button(
-        ui,
-        t,
-        BtnKind::Primary,
-        Some(Ico::Copy),
-        tr(Msg::Copy),
-        Some(copy_keys),
-        w,
-    )
-    .clicked()
-    {
-        acts.push(MainAction::Copy(path.clone()));
-    }
-    if kit::wide_button(
-        ui,
-        t,
-        BtnKind::Secondary,
-        Some(Ico::Edit),
-        tr(Msg::EditInEditor),
-        Some("Enter"),
-        w,
-    )
-    .clicked()
-    {
-        acts.push(MainAction::Edit(path.clone()));
-    }
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        if kit::wide_button(
-            ui,
-            t,
-            BtnKind::Ghost,
-            Some(Ico::FolderOpen),
-            tr(Msg::ShowInFolder),
-            None,
-            w - 32.0 - 8.0,
-        )
-        .clicked()
-        {
-            acts.push(MainAction::ShowInFolder(path.clone()));
-        }
-        if kit::icon_button(ui, t, Ico::Pin, false, tr(Msg::PinOnScreen)).clicked() {
-            acts.push(MainAction::Pin(path.clone()));
-        }
-    });
-    // Delete at the panel's foot, away from the others.
-    let foot = Rect::from_min_size(pos2(area.left(), area.bottom() - 32.0), vec2(w, 32.0));
-    if ui.available_rect_before_wrap().bottom() > foot.top() {
-        ui.scope_builder(UiBuilder::new().max_rect(foot), |ui| {
-            if kit::button(
+            let folder = e
+                .path
+                .parent()
+                .map(|p| {
+                    let parts: Vec<_> = p.components().rev().take(2).collect();
+                    parts
+                        .iter()
+                        .rev()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(std::path::MAIN_SEPARATOR_STR)
+                })
+                .unwrap_or_default();
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                let dims_text = dims.map(|[a, b]| format!("{a} × {b}")).unwrap_or_default();
+                for (m, v) in [
+                    (Msg::ColDimensions, dims_text.as_str()),
+                    (Msg::ColSize, &human_size(e.bytes)),
+                    (Msg::CapturesFolder, folder.as_str()),
+                ] {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(tr(m))
+                                .font(font(12.0, Weight::Regular))
+                                .color(t.muted),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(line(v, 12.0, Weight::Regular, t.text));
+                        });
+                    });
+                }
+            });
+            let (rule, _) = ui.allocate_exact_size(vec2(w, 1.0), egui::Sense::hover());
+            ui.painter().rect_filled(rule, 0.0, t.border);
+            let path = e.path.clone();
+            let copy_keys = if cfg!(target_os = "macos") {
+                "Cmd+C"
+            } else {
+                "Ctrl+C"
+            };
+            if kit::wide_button(
                 ui,
                 t,
-                BtnKind::DangerGhost,
-                Some(Ico::Trash),
-                tr(Msg::Delete),
-                Some("Del"),
+                BtnKind::Primary,
+                Some(Ico::Copy),
+                tr(Msg::Copy),
+                Some(copy_keys),
+                w,
             )
             .clicked()
             {
-                acts.push(MainAction::Trash(path.clone()));
+                acts.push(MainAction::Copy(path.clone()));
+            }
+            if kit::wide_button(
+                ui,
+                t,
+                BtnKind::Secondary,
+                Some(Ico::Edit),
+                tr(Msg::EditInEditor),
+                Some("Enter"),
+                w,
+            )
+            .clicked()
+            {
+                acts.push(MainAction::Edit(path.clone()));
+            }
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if kit::wide_button(
+                    ui,
+                    t,
+                    BtnKind::Ghost,
+                    Some(Ico::FolderOpen),
+                    tr(Msg::ShowInFolder),
+                    None,
+                    w - 32.0 - 8.0,
+                )
+                .clicked()
+                {
+                    acts.push(MainAction::ShowInFolder(path.clone()));
+                }
+                if kit::icon_button(ui, t, Ico::Pin, false, tr(Msg::PinOnScreen)).clicked() {
+                    acts.push(MainAction::Pin(path.clone()));
+                }
+            });
+            // Delete at the panel's foot, away from the others, when there is room below them; else
+            // right after them.
+            let mut delete = |ui: &mut Ui| {
+                if kit::button(
+                    ui,
+                    t,
+                    BtnKind::DangerGhost,
+                    Some(Ico::Trash),
+                    tr(Msg::Delete),
+                    Some("Del"),
+                )
+                .clicked()
+                {
+                    acts.push(MainAction::Trash(path.clone()));
+                }
+            };
+            let foot = Rect::from_min_size(pos2(area.left(), area.bottom() - 32.0), vec2(w, 32.0));
+            if ui.min_rect().bottom() + ui.spacing().item_spacing.y <= foot.top() {
+                ui.scope_builder(UiBuilder::new().max_rect(foot), delete);
+            } else {
+                delete(ui);
             }
         });
-    }
 }
 
 /// The card's tooltip: size, file size, folder and date.
@@ -1346,6 +1360,42 @@ mod tests {
             }
         }
         set_lang(Lang::En);
+    }
+
+    #[test]
+    fn the_detail_buttons_never_cover_each_other() {
+        for size in [
+            (900.0, 600.0),
+            (1160.0, 600.0),
+            (1160.0, 680.0),
+            (1160.0, 740.0),
+        ] {
+            let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+            home.apply(
+                MainAction::Select(PathBuf::from("a.png")),
+                &egui::Context::default(),
+                &mut shared,
+            );
+            let (_, painted) = run(&mut home, &mut shared, size, true, vec![]);
+            let panel = size.0 - 8.0 - 268.0;
+            let y = |m: Msg| {
+                painted_at(&painted, &[tr(m)], |r| r.left() > panel)
+                    .unwrap_or_else(|| panic!("{size:?}: {m:?} in the panel"))
+                    .y
+            };
+            let ys = [
+                y(Msg::Copy),
+                y(Msg::EditInEditor),
+                y(Msg::ShowInFolder),
+                y(Msg::Delete),
+            ];
+            for pair in ys.windows(2) {
+                assert!(
+                    pair[1] - pair[0] >= 32.0,
+                    "{size:?}: 32 px buttons one under the other: {ys:?}"
+                );
+            }
+        }
     }
 
     #[test]
