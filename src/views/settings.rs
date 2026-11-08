@@ -435,7 +435,7 @@ fn shortcuts(
         }
     });
     if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        let exe = std::env::current_exe()
+        let exe = crate::system::autostart::program()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "takeshot".into());
         ui.add_space(12.0);

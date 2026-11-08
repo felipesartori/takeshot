@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   # rust-toolchain.toml pins the MSVC toolchain for local Windows builds; CI uses plain stable.
@@ -137,7 +137,8 @@ jobs:
               cp target/packages/*.msi "dist/takeshot-$VERSION-windows-x64.msi"
               mkdir -p portable
               cp target/release/takeshot.exe portable/Takeshot.exe
-              (cd portable && 7z a "../dist/takeshot-$VERSION-windows-x64-portable.zip" Takeshot.exe)
+              cp LICENSE THIRD_PARTY_NOTICES.md portable/
+              (cd portable && 7z a "../dist/takeshot-$VERSION-windows-x64-portable.zip" .)
               ;;
             macOS)
               # The packager reads target/release (it ignores --binaries-dir with Cargo.toml's
@@ -146,6 +147,7 @@ jobs:
               cp target/universal/release/takeshot target/release/takeshot
               cargo packager --release --formats app
               APP=target/packages/Takeshot.app
+              lipo -verify_arch arm64 x86_64 "$APP/Contents/MacOS/takeshot"
               if [ "$SIGN_MACOS" = "true" ]; then
                 codesign --force --deep --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "$APP"
               else
@@ -155,13 +157,18 @@ jobs:
               mkdir -p dmg
               cp -R "$APP" dmg/
               ln -s /Applications dmg/Applications
-              hdiutil create -volname Takeshot -srcfolder dmg -ov -format UDZO "dist/takeshot-$VERSION-macos-universal.dmg"
+              # hdiutil now and then fails with "Resource busy" on the runners.
+              for try in 1 2 3; do
+                hdiutil create -volname Takeshot -srcfolder dmg -ov -format UDZO "dist/takeshot-$VERSION-macos-universal.dmg" && break
+                sleep 10
+              done
+              test -f "dist/takeshot-$VERSION-macos-universal.dmg"
               ;;
             Linux)
               cargo packager --release --formats deb,appimage
               cp target/packages/*.deb "dist/takeshot-$VERSION-linux-x86_64.deb"
               cp target/packages/*.AppImage "dist/takeshot-$VERSION-linux-x86_64.AppImage"
-              tar -C target/release -czf "dist/takeshot-$VERSION-linux-x86_64.tar.gz" takeshot
+              tar -czf "dist/takeshot-$VERSION-linux-x86_64.tar.gz" -C target/release takeshot -C "$PWD" LICENSE THIRD_PARTY_NOTICES.md
               ;;
           esac
           ls -la dist
@@ -202,6 +209,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:

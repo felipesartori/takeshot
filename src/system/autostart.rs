@@ -1,10 +1,27 @@
 //! Start with the system: the OS launches `takeshot --minimized` at login (Run key, LaunchAgent, XDG autostart).
 
 use auto_launch::{AutoLaunch, AutoLaunchBuilder};
+use std::path::PathBuf;
+
+/// The program the system should start for an entry it keeps (the login entry, a desktop
+/// shortcut): the running file, except inside an AppImage, whose running file lives in a mount
+/// that goes when it closes; then the AppImage itself (`$APPIMAGE`).
+pub fn launcher(running: PathBuf, appimage: Option<std::ffi::OsString>) -> PathBuf {
+    appimage
+        .filter(|a| !a.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(running)
+}
+
+/// `launcher` for this process.
+pub fn program() -> Result<PathBuf, String> {
+    let running = std::env::current_exe().map_err(|e| e.to_string())?;
+    Ok(launcher(running, std::env::var_os("APPIMAGE")))
+}
 
 /// The login entry for this executable; nothing changes on the system until `set_autostart`.
 pub fn autostart() -> Result<AutoLaunch, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = program()?;
     // The Run value is "path args": quote the path, which may have spaces ("C:\\Program Files").
     #[cfg(windows)]
     let path = format!("\"{}\"", exe.display());
@@ -37,6 +54,18 @@ pub fn autostart_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_appimage_hands_the_system_the_appimage_itself() {
+        let mounted = PathBuf::from("/tmp/.mount_takeshAbc/usr/bin/takeshot");
+        let image = std::ffi::OsString::from("/home/ana/Apps/takeshot.AppImage");
+        assert_eq!(
+            launcher(mounted.clone(), Some(image)),
+            PathBuf::from("/home/ana/Apps/takeshot.AppImage")
+        );
+        assert_eq!(launcher(mounted.clone(), None), mounted);
+        assert_eq!(launcher(mounted.clone(), Some("".into())), mounted);
+    }
 
     #[test]
     fn autostart_starts_minimized_as_takeshot() {

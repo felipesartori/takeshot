@@ -1,4 +1,4 @@
-; Takeshot's NSIS installer: cargo-packager 0.11.8's template with two changes, marked "Takeshot:".
+; Takeshot's NSIS installer: cargo-packager 0.11.8's template with its changes marked "Takeshot:".
 ; It installs per user under %LOCALAPPDATA%\Programs, and the uninstaller removes the login entry.
 ; Set the compression algorithm.
 !if "{{compression}}" == ""
@@ -271,7 +271,8 @@ Function PageLeaveReinstall
     ${Else}
       ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
       ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-      ExecWait '$R1 /P _?=$4' $0
+      ; Takeshot: /UPDATE, so the old uninstaller keeps the login entry for the new version.
+      ExecWait '$R1 /P /UPDATE _?=$4' $0
     ${EndIf}
 
     BringToFront
@@ -626,9 +627,17 @@ Section Uninstall
   ; Remove desktop shortcuts
   Delete "$DESKTOP\${PRODUCTNAME}.lnk"
 
-  ; Takeshot: the login entry the app adds (Settings > Start with the system) goes with it.
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Takeshot"
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Takeshot"
+  ; Takeshot: the login entry the app adds (Settings > Start with the system) goes with it, unless
+  ; a newer version's installer runs this (/UPDATE) or the entry starts another copy.
+  ClearErrors
+  ${GetOptions} $CMDLINE "/UPDATE" $R0
+  ${If} ${Errors}
+    ReadRegStr $R0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Takeshot"
+    ${If} $R0 == "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --minimized"
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Takeshot"
+      DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Takeshot"
+    ${EndIf}
+  ${EndIf}
 
   ; Remove registry information for add/remove programs
   !if "${INSTALLMODE}" == "both"

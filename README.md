@@ -91,7 +91,7 @@ Takeshot ships **TakeUI** and **Coral UI**, each light, dark or following the sy
 | `Delete` or `Backspace` | Delete the selected objects |
 | `Ctrl+D` | Duplicate the selected objects |
 | arrows / `Shift`+arrows | Move the selected objects 1 px / 10 px |
-| `Ctrl+C` / `Ctrl+S` / `Ctrl+Shift+S` | Copy / save / save as |
+| `Ctrl+C` / `Ctrl+S` / `Ctrl+Shift+S` | Copy / save / save as (in the editor) |
 | `Enter` or `Ctrl+E` | Open in the editor |
 | `Ctrl+T` | Pin on screen |
 | `Ctrl+Z` / `Ctrl+Y` or `Ctrl+Shift+Z` | Undo / redo |
@@ -108,14 +108,14 @@ Get the latest version from [Releases](https://github.com/takeflow-oficial/takes
 |---|---|
 | Windows 10 and 11 (x64) | `takeshot-<version>-windows-x64-setup.exe` (recommended: installs for your user, no administrator), `takeshot-<version>-windows-x64.msi`, or the portable `takeshot-<version>-windows-x64-portable.zip` |
 | macOS 11+ (Apple Silicon and Intel) | `takeshot-<version>-macos-universal.dmg` |
-| Linux x86_64 | `takeshot-<version>-linux-x86_64.deb` (Ubuntu 24.04+, Debian 13+), `takeshot-<version>-linux-x86_64.AppImage`, or `takeshot-<version>-linux-x86_64.tar.gz` |
+| Linux x86_64 (glibc 2.39+: Ubuntu 24.04+, Debian 13+, Fedora 40+) | `takeshot-<version>-linux-x86_64.deb`, `takeshot-<version>-linux-x86_64.AppImage`, or `takeshot-<version>-linux-x86_64.tar.gz` |
 
 The builds are not code-signed yet:
 - **Windows**: SmartScreen may say it protected your PC. Click "More info" > "Run anyway". On Windows 10 the new tray icon starts hidden under the `^` arrow: drag it to the taskbar.
-- **macOS**: the first time, right-click Takeshot in Applications > Open (or run `xattr -cr /Applications/Takeshot.app`), then allow it in System Settings > Privacy & Security > Screen & System Audio Recording.
+- **macOS**: the first time macOS blocks it. Open System Settings > Privacy & Security, click "Open Anyway" next to Takeshot and confirm (or run `xattr -cr /Applications/Takeshot.app`). Then allow it in Privacy & Security > Screen & System Audio Recording.
 - **Linux**: the tray icon needs an AppIndicator panel (`libayatana-appindicator3-1`); without it, Quit is in Settings > General. On Wayland "Minimize to tray" minimizes to the taskbar instead.
 
-The uninstaller (Windows) stops Takeshot, removes its start-with-the-system entry and can delete its settings.
+On Windows, the setup.exe's uninstaller stops Takeshot, removes its start-with-the-system entry (an update keeps it) and can delete its settings. The MSI installs for every user, asks for an administrator, and leaves the login entry behind.
 
 ## Architecture
 
@@ -157,8 +157,8 @@ One resident process per user owns the tray, the shortcuts and the main window. 
 | Rendering | tiny-skia, ab_glyph, image |
 | Screen capture | xcap (Windows, macOS, X11) and the desktop portal (Wayland) |
 | System | tray-icon, global-hotkey, arboard, interprocess, auto-launch, rfd, trash |
-| Packaging | cargo-packager (NSIS, WiX, app and dmg, deb, AppImage) |
-| CI | GitHub Actions: fmt, clippy and tests on Windows, macOS and Linux; installers on every tag |
+| Packaging | cargo-packager (NSIS, WiX, app, deb, AppImage) and hdiutil (dmg) |
+| CI | GitHub Actions: fmt, clippy and tests on Windows, macOS and Linux; installers on every run, published on tags |
 
 ## Project layout
 
@@ -174,8 +174,8 @@ src/
 assets/          embedded fonts and the brand masters (SVG, PNG, ICO, ICNS)
 packaging/       installer templates (Windows NSIS, macOS Info.plist keys)
 design/          takeshot-ui.fig (OpenPencil or Figma) and the exported references
-docs/            README pictures and the macOS test script
-scripts/         check.sh (what CI runs), screenshots.sh, dev.sh, linux-packages.sh
+docs/            README pictures, and the macOS and Linux test scripts
+scripts/         check.sh (what CI runs), screenshots.sh, dev.sh, linux-packages.sh, linux-smoke.sh
 ```
 
 ## Building
@@ -186,7 +186,7 @@ cargo build --release
 
 On Windows `rust-toolchain.toml` picks the MSVC toolchain. On Linux install first: `libgtk-3-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev`.
 
-Installers: `cargo install cargo-packager --version 0.11.8 --locked`, then `cargo packager --release --formats nsis,wix` (Windows) or `scripts/linux-packages.sh` (deb and AppImage in a container).
+Installers: `cargo install cargo-packager --version 0.11.8 --locked`, then `cargo packager --release --formats nsis,wix` (Windows) or `scripts/linux-packages.sh` (deb and AppImage in a container; `scripts/linux-smoke.sh` opens them on X11 and Wayland, see [docs/testing-linux.md](docs/testing-linux.md)).
 
 `takeshot --screenshot out.png` draws a window and saves its picture, with `--page inicio|estilo|ajustes|editor|captura`, `--theme takeui|coral`, `--mode light|dark` and `--lang en|pt`; `scripts/screenshots.sh` renders every screen in the four looks. `takeshot --minimized` starts in the tray only, and `takeshot --native-titlebar` (or `TAKESHOT_NATIVE_TITLEBAR=1`) uses the system's title bar, for the few graphics drivers that misplace clicks on a borderless window.
 
@@ -278,7 +278,7 @@ O Takeshot vem com **TakeUI** e **Coral UI**, cada um claro, escuro ou seguindo 
 | `Delete` ou `Backspace` | Excluir os objetos selecionados |
 | `Ctrl+D` | Duplicar os objetos selecionados |
 | setas / `Shift`+setas | Mover os objetos selecionados 1 px / 10 px |
-| `Ctrl+C` / `Ctrl+S` / `Ctrl+Shift+S` | Copiar / salvar / salvar como |
+| `Ctrl+C` / `Ctrl+S` / `Ctrl+Shift+S` | Copiar / salvar / salvar como (no editor) |
 | `Enter` ou `Ctrl+E` | Abrir no editor |
 | `Ctrl+T` | Fixar na tela |
 | `Ctrl+Z` / `Ctrl+Y` ou `Ctrl+Shift+Z` | Desfazer / refazer |
@@ -295,14 +295,14 @@ Baixe a versão mais recente em [Releases](https://github.com/takeflow-oficial/t
 |---|---|
 | Windows 10 e 11 (x64) | `takeshot-<versão>-windows-x64-setup.exe` (recomendado: instala para o seu usuário, sem administrador), `takeshot-<versão>-windows-x64.msi`, ou o portátil `takeshot-<versão>-windows-x64-portable.zip` |
 | macOS 11+ (Apple Silicon e Intel) | `takeshot-<versão>-macos-universal.dmg` |
-| Linux x86_64 | `takeshot-<versão>-linux-x86_64.deb` (Ubuntu 24.04+, Debian 13+), `takeshot-<versão>-linux-x86_64.AppImage`, ou `takeshot-<versão>-linux-x86_64.tar.gz` |
+| Linux x86_64 (glibc 2.39+: Ubuntu 24.04+, Debian 13+, Fedora 40+) | `takeshot-<versão>-linux-x86_64.deb`, `takeshot-<versão>-linux-x86_64.AppImage`, ou `takeshot-<versão>-linux-x86_64.tar.gz` |
 
 As versões ainda não são assinadas:
 - **Windows**: o SmartScreen pode dizer que protegeu o computador. Clique em "Mais informações" > "Executar assim mesmo". No Windows 10 o ícone novo começa escondido na seta `^` da bandeja: arraste-o para a barra.
-- **macOS**: na primeira vez, clique com o botão direito em Takeshot em Aplicativos > Abrir (ou rode `xattr -cr /Applications/Takeshot.app`), e libere em Ajustes do Sistema > Privacidade e Segurança > Gravação de Tela e Áudio do Sistema.
+- **macOS**: na primeira vez o macOS bloqueia. Abra Ajustes do Sistema > Privacidade e Segurança, clique em "Abrir Mesmo Assim" ao lado do Takeshot e confirme (ou rode `xattr -cr /Applications/Takeshot.app`). Depois libere em Privacidade e Segurança > Gravação de Tela e Áudio do Sistema.
 - **Linux**: o ícone da bandeja precisa de um painel com AppIndicator (`libayatana-appindicator3-1`); sem ele, Sair fica em Ajustes > Geral. No Wayland, "Minimizar para a bandeja" minimiza para a barra de tarefas.
 
-O desinstalador (Windows) encerra o Takeshot, remove a entrada de iniciar com o sistema e pode apagar as configurações.
+No Windows, o desinstalador do setup.exe encerra o Takeshot, remove a entrada de iniciar com o sistema (uma atualização a mantém) e pode apagar as configurações. O MSI instala para todos os usuários, pede administrador e deixa a entrada de login.
 
 ## Arquitetura
 
@@ -317,8 +317,8 @@ Um processo residente por usuário cuida da bandeja, dos atalhos e da janela pri
 | Desenho | tiny-skia, ab_glyph, image |
 | Captura de tela | xcap (Windows, macOS, X11) e o portal do desktop (Wayland) |
 | Sistema | tray-icon, global-hotkey, arboard, interprocess, auto-launch, rfd, trash |
-| Instaladores | cargo-packager (NSIS, WiX, app e dmg, deb, AppImage) |
-| CI | GitHub Actions: fmt, clippy e testes em Windows, macOS e Linux; instaladores a cada tag |
+| Instaladores | cargo-packager (NSIS, WiX, app, deb, AppImage) e hdiutil (dmg) |
+| CI | GitHub Actions: fmt, clippy e testes em Windows, macOS e Linux; instaladores em toda execução, publicados nas tags |
 
 ## Estrutura do projeto
 
@@ -332,7 +332,7 @@ cargo build --release
 
 No Windows o `rust-toolchain.toml` usa o toolchain MSVC. No Linux instale antes: `libgtk-3-dev libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev`.
 
-Instaladores: `cargo install cargo-packager --version 0.11.8 --locked`, depois `cargo packager --release --formats nsis,wix` (Windows) ou `scripts/linux-packages.sh` (deb e AppImage num container).
+Instaladores: `cargo install cargo-packager --version 0.11.8 --locked`, depois `cargo packager --release --formats nsis,wix` (Windows) ou `scripts/linux-packages.sh` (deb e AppImage num container; `scripts/linux-smoke.sh` abre os dois no X11 e no Wayland, veja [docs/testing-linux.md](docs/testing-linux.md)).
 
 `takeshot --screenshot saida.png` desenha uma janela e salva a imagem dela, com `--page inicio|estilo|ajustes|editor|captura`, `--theme takeui|coral`, `--mode light|dark` e `--lang en|pt`; `scripts/screenshots.sh` gera todas as telas nos quatro visuais. `takeshot --minimized` sobe só na bandeja, e `takeshot --native-titlebar` (ou `TAKESHOT_NATIVE_TITLEBAR=1`) usa a barra de título do sistema, para os poucos drivers de vídeo que deslocam os cliques numa janela sem borda.
 

@@ -1,12 +1,12 @@
 # Testing on macOS
 
-CI builds and lints the macOS app but cannot click through it. Before a release, someone with a Mac runs this list on the `takeshot-X.Y.Z-macos-universal.dmg` from the release (or from the `macos-universal` artifact of a workflow run). Note the macOS version and the chip (Apple Silicon or Intel) in the PR or the release discussion, with what failed.
+CI builds and lints the macOS app but cannot click through it. Before a release, someone with a Mac runs this list on the `takeshot-X.Y.Z-macos-universal.dmg` from the release (or from the `takeshot-macos-universal` artifact of a workflow run). Note the macOS version and the chip (Apple Silicon or Intel) in the PR or the release discussion, with what failed.
 
 ## Install
 
 1. Open the `.dmg` and drag Takeshot to Applications.
-2. The app is not signed by Apple yet. The first time, right-click Takeshot in Applications > Open, then Open again. If macOS says the app is damaged, run `xattr -cr /Applications/Takeshot.app` and open it again.
-3. Expect the Takeshot icon in the menu bar and the main window (Início).
+2. The app is not notarized by Apple yet, so macOS blocks it the first time. Open System Settings > Privacy & Security, click "Open Anyway" next to Takeshot and confirm. If macOS says the app is damaged, run `xattr -cr /Applications/Takeshot.app` and open it again.
+3. Expect the Takeshot icon in the menu bar and the main window (Home).
 
 ## Screen recording
 
@@ -18,7 +18,7 @@ CI builds and lints the macOS app but cannot click through it. Before a release,
 ## Windows and title bar
 
 8. The main window and the editor draw their own 44 px title bar with the traffic lights inside it, vertically centred with the bar's buttons. Drag the window by the bar, double-click it to zoom, resize it from the edges.
-9. Switch the theme in Ajustes (TakeUI and Coral UI, light and dark): every window follows, the menu bar icon included.
+9. Switch the theme in Settings (TakeUI and Coral UI, light and dark): every window follows, the menu bar icon included.
 
 ## Menu bar icon
 
@@ -32,7 +32,7 @@ CI builds and lints the macOS app but cannot click through it. Before a release,
 
 ## Start at login and quit
 
-14. Ajustes > Geral > "Iniciar com o sistema": log out and in. Takeshot starts in the menu bar only. The entry is `~/Library/LaunchAgents/Takeshot.plist`.
+14. Settings > General > "Start with the system": log out and in. Takeshot starts in the menu bar only. The entry is `~/Library/LaunchAgents/Takeshot.plist`.
 15. Open an editor, draw something, then quit from the menu bar icon: the editor asks (Discard, Cancel, Save and close). Cancel keeps everything open; Discard closes everything.
 
 ## Uninstall

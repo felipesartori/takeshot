@@ -40,6 +40,6 @@ git archive --format=tar "$sha" |
       version=\$(grep -m1 '^version' Cargo.toml | cut -d'\"' -f2)
       cp target/packages/*.deb \"/out/takeshot-\$version-linux-x86_64.deb\"
       cp target/packages/*.AppImage \"/out/takeshot-\$version-linux-x86_64.AppImage\"
-      tar -C target/release -czf \"/out/takeshot-\$version-linux-x86_64.tar.gz\" takeshot
+      tar -czf \"/out/takeshot-\$version-linux-x86_64.tar.gz\" -C target/release takeshot -C /src LICENSE THIRD_PARTY_NOTICES.md
       ls -la /out
     "

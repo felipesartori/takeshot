@@ -31,7 +31,8 @@ tray-icon = "0.26.1"
 trash = "5.3.0"
 
 # Installers: `cargo build --release`, then `cargo packager --release --formats nsis,wix` (Windows),
-# `app,dmg` (macOS) or `deb,appimage` (Linux). CI builds them for each tag (.github/workflows/build.yml).
+# `app` (macOS; CI signs it ad hoc and makes the dmg with hdiutil) or `deb,appimage` (Linux).
+# CI builds them on every run and publishes them on tags (.github/workflows/build.yml).
 [package.metadata.packager]
 product-name = "Takeshot"
 identifier = "br.com.takeflow.takeshot"
@@ -40,6 +41,8 @@ copyright = "Copyright (c) 2026-present Takeflow Sistemas"
 category = "Utility"
 license-file = "LICENSE"
 out-dir = "target/packages"
+# The licenses go with every copy (the fonts' OFL and the icons' ISC ask for it).
+resources = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 binaries = [{ path = "takeshot", main = true }]
 icons = [
   "assets/brand/takeshot.ico",
