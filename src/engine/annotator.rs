@@ -492,6 +492,16 @@ impl Annotator {
         }
     }
 
+    /// The bounds of the visible selected objects, in picture pixels.
+    pub fn selection_bounds(&self, m: TextMeasure) -> Option<egui::Rect> {
+        self.doc
+            .objs()
+            .iter()
+            .filter(|o| !o.hidden && self.doc.selected().contains(&o.id))
+            .map(|o| ann_bounds(&o.ann, m))
+            .reduce(|a, b| a.union(b))
+    }
+
     /// The tool whose options the bar shows: the active drawing tool, or with Select the picked object.
     pub fn bar_tool(&self) -> Option<Tool> {
         if self.tool != Tool::Select {

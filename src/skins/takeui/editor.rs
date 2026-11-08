@@ -50,6 +50,7 @@ pub fn editor(ui: &mut Ui, t: &Tokens, ed: &mut Editor, shared: &mut Shared) -> 
         .frame(Frame::new().fill(t.surf))
         .show(ui, |ui| panel(ui, t, ed, shared, &mut acts));
     egui::CentralPanel::no_frame().show(ui, |ui| acts.extend(ed.canvas(ui, t, shared)));
+    object_bar(ui, t, ed, shared, &mut acts);
     chrome::resize_edges(ui);
     acts
 }
@@ -394,6 +395,70 @@ fn status_bar(ui: &mut Ui, t: &Tokens, ed: &Editor) {
             );
         });
     });
+}
+
+/// The bar over the selected object (its colour, Duplicate, Bring to front, Delete), as in
+/// "Editor · escuro": above it, or below when there is no room, inside the canvas; hidden while
+/// something is drawn or dragged.
+fn object_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Vec<EditorAction>) {
+    let Some(sel) = ed.selection_on_screen(shared) else {
+        return;
+    };
+    // 4 x 28 px buttons 2 apart, 4 px inside.
+    let size = vec2(4.0 + 4.0 * 28.0 + 3.0 * 2.0 + 4.0, 36.0);
+    // The handles stand up to 6 px outside the object.
+    let at =
+        crate::engine::placement::object_bar(sel.expand(6.0), size, ed.canvas_area().shrink(8.0));
+    let color = shared.settings.draw.color;
+    egui::Area::new(egui::Id::unique("takeui-object-bar"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(at.min)
+        .show(ui.ctx(), |ui| {
+            Frame::new()
+                .fill(t.surf)
+                .stroke(Stroke::new(1.0, t.border))
+                .corner_radius(10)
+                .inner_margin(4)
+                .shadow(egui::Shadow {
+                    offset: [0, 8],
+                    blur: 24,
+                    spread: 0,
+                    color: Color32::from_black_alpha(64),
+                })
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                    ui.horizontal(|ui| {
+                        let dot = Color32::from_rgb(color[0], color[1], color[2]);
+                        let pick = kit::bar_button(ui, t, kit::BarItem::Color(dot), tr(Msg::Color));
+                        egui::Popup::from_toggle_button_response(&pick)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                            .show(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    palette(ui, t, color, acts);
+                                });
+                            });
+                        let duplicate = format!("{} ({})", tr(Msg::Duplicate), cmd("D"));
+                        for (icon, tip, act) in [
+                            (Ico::CopyPlus, duplicate.as_str(), EditorAction::Duplicate),
+                            (
+                                Ico::BringFront,
+                                tr(Msg::BringToFront),
+                                EditorAction::ToFront,
+                            ),
+                            (
+                                Ico::Trash,
+                                &format!("{} (Del)", tr(Msg::Delete)),
+                                EditorAction::Delete,
+                            ),
+                        ] {
+                            if kit::bar_button(ui, t, kit::BarItem::Icon(icon), tip).clicked() {
+                                acts.push(act);
+                            }
+                        }
+                    });
+                });
+        });
 }
 
 /// The palette's colours and the custom colour, for the tool bar and the panel.
@@ -1061,6 +1126,76 @@ mod tests {
             ],
         );
         assert_eq!(p.cursor, egui::CursorIcon::Grabbing, "while it drags");
+    }
+
+    /// The centre of `icon` painted over the canvas (the panel has its own Duplicate and Delete).
+    fn on_canvas(painted: &[(String, Rect)], icon: Ico) -> Option<Pos2> {
+        let g = crate::ui::icon::glyph(icon).to_string();
+        painted
+            .iter()
+            .find(|(s, r)| *s == g && r.right() < SIZE.0 - PANEL && r.top() > BAR_HEIGHT + TOOL_BAR)
+            .map(|(_, r)| r.center())
+    }
+
+    #[test]
+    fn the_object_bar_acts_on_the_selection() {
+        let (mut ed, mut shared) = editor();
+        let ctx = egui::Context::default();
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(EditorAction::Select(rect, false), &ctx, None, &mut shared);
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let dup = on_canvas(&painted, Ico::CopyPlus).expect("Duplicate on the object bar");
+        run_editor(&mut ed, &mut shared, SIZE, true, click(dup));
+        assert_eq!(ed.an.doc.objs().len(), 4, "a copy");
+        assert_eq!(ed.an.doc.selected().len(), 1);
+        assert_ne!(ed.an.doc.selected()[0], rect, "the copy is selected");
+
+        ed.apply(EditorAction::Select(rect, false), &ctx, None, &mut shared);
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let front = on_canvas(&painted, Ico::BringFront).expect("Bring to front");
+        run_editor(&mut ed, &mut shared, SIZE, true, click(front));
+        assert_eq!(ed.an.doc.objs().last().map(|o| o.id), Some(rect));
+        assert_eq!(ed.an.doc.selected(), &[rect], "the selection stays");
+
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let del = on_canvas(&painted, Ico::Trash).expect("Delete");
+        run_editor(&mut ed, &mut shared, SIZE, true, click(del));
+        assert_eq!(ed.an.doc.objs().len(), 3);
+        assert!(ed.an.doc.objs().iter().all(|o| o.id != rect));
+    }
+
+    #[test]
+    fn the_object_bar_hides_while_dragging() {
+        let (mut ed, mut shared) = editor();
+        let rect = ed.an.doc.objs()[0].id;
+        ed.apply(
+            EditorAction::Select(rect, false),
+            &egui::Context::default(),
+            None,
+            &mut shared,
+        );
+        let (_, painted, _) = run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        assert!(on_canvas(&painted, Ico::CopyPlus).is_some());
+        // Grab the rectangle's top edge (picture y 100, between x 100 and 300) and move it.
+        let view = ed.view().expect("the canvas view");
+        let at = view.to_screen(pos2(200.0, 100.0));
+        let (_, painted, _) = run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![
+                vec![Event::PointerMoved(at)],
+                vec![press(at, true)],
+                vec![Event::PointerMoved(at + vec2(30.0, 20.0))],
+                vec![Event::PointerMoved(at + vec2(60.0, 40.0))],
+            ],
+        );
+        assert!(ed.an.dragging.is_some(), "the object is being dragged");
+        assert!(
+            on_canvas(&painted, Ico::CopyPlus).is_none(),
+            "hidden mid-drag"
+        );
     }
 
     #[test]

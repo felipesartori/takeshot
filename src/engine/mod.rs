@@ -4,5 +4,6 @@ pub mod annotator;
 pub mod cursor;
 pub mod doc;
 pub mod model;
+pub mod placement;
 pub mod presets;
 pub mod render;

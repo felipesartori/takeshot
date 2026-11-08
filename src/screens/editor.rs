@@ -194,6 +194,9 @@ pub struct Editor {
     preview_target: f32,
     /// The file name the title bar shows.
     name: String,
+    /// How picture pixels map to the screen, and the canvas's rect, from the last frame drawn.
+    view: Option<View>,
+    canvas_area: Rect,
     preview_src: Option<(u32, RgbaImage)>,
     lay: Option<Layout>,
     canvas_px: egui::Vec2,
@@ -227,6 +230,8 @@ impl Editor {
                 "Takeshot {}.png",
                 chrono::Local::now().format("%Y-%m-%d %H-%M-%S")
             ),
+            view: None,
+            canvas_area: Rect::NOTHING,
             preview_src: None,
             lay: None,
             canvas_px: vec2(1.0, 1.0),
@@ -467,6 +472,29 @@ impl Editor {
         self.pan
     }
 
+    /// How picture pixels map to the screen in the last frame drawn.
+    pub fn view(&self) -> Option<View> {
+        self.view
+    }
+
+    /// The canvas's rect in the last frame drawn.
+    pub fn canvas_area(&self) -> Rect {
+        self.canvas_area
+    }
+
+    /// The selection's bounds on screen, while nothing is being drawn or dragged.
+    pub fn selection_on_screen(&self, shared: &Shared) -> Option<Rect> {
+        if self.an.busy() {
+            return None;
+        }
+        let view = self.view?;
+        let b = self.an.selection_bounds(&text_measure(&shared.fonts))?;
+        Some(Rect::from_min_max(
+            view.to_screen(b.min),
+            view.to_screen(b.max),
+        ))
+    }
+
     /// One frame of the editor: the skin draws the bars and panels and calls `canvas` for the
     /// picture; what the user asked for is carried out here, and the discard question shows when
     /// a close waits on it.
@@ -538,6 +566,8 @@ impl Editor {
         let ctx = ui.ctx().clone();
         let mut acts = Vec::new();
         let area = ui.max_rect();
+        self.canvas_area = area;
+        self.view = None;
         ui.painter().rect_filled(area, 0.0, t.canvas);
         let room = area.shrink(28.0);
         let avail = room.size();
@@ -581,6 +611,7 @@ impl Editor {
             origin: d.min + vec2(lay.img[0], lay.img[1]) * m / ppp,
             k: shown / ppp,
         };
+        self.view = Some(view);
         let img_rect = Rect::from_min_max(
             view.to_screen(pos2(0.0, 0.0)),
             view.to_screen(pos2(self.base.width() as f32, self.base.height() as f32)),

@@ -762,6 +762,34 @@ pub fn tab_bar<T: PartialEq + Copy>(
     resp
 }
 
+/// What a floating bar's button shows: an icon, or a colour (the object's).
+#[derive(Clone, Copy, Debug)]
+pub enum BarItem {
+    Icon(Ico),
+    Color(Color32),
+}
+
+/// A 28 x 28 button of a floating bar (radius 6): a 16 px icon, or a 16 px colour dot ringed in
+/// the border colour; hover only colours the background.
+pub fn bar_button(ui: &mut Ui, t: &Tokens, item: BarItem, tip: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter();
+    p.rect_filled(
+        rect,
+        CornerRadius::same(6),
+        mix(Color32::TRANSPARENT, t.raised, h),
+    );
+    match item {
+        BarItem::Icon(i) => draw_icon(p, rect.center(), i, 16.0, dim(mix(t.muted, t.text, h), ui)),
+        BarItem::Color(c) => {
+            p.circle_filled(rect.center(), 8.0, c);
+            p.circle_stroke(rect.center(), 7.5, Stroke::new(1.0, t.border));
+        }
+    }
+    resp.on_hover_text(tip)
+}
+
 /// What a row of the object list answered: the row, and the eye that hides or shows its object.
 pub struct ObjectRow {
     pub row: Response,
@@ -1778,6 +1806,16 @@ mod tests {
                     tab_bar(ui, &t, &mut tab, &[(0, "Object"), (1, "Style")])
                 }),
                 29.0,
+            ),
+            (
+                "bar_button icon",
+                Box::new(|ui| bar_button(ui, &t, BarItem::Icon(Ico::Trash), "Delete")),
+                28.0,
+            ),
+            (
+                "bar_button colour",
+                Box::new(|ui| bar_button(ui, &t, BarItem::Color(Color32::RED), "Colour")),
+                28.0,
             ),
         ];
         for (name, f, height) in &cases {
