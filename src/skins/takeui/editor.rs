@@ -1071,6 +1071,56 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_moves_the_text_being_typed() {
+        let (mut ed, mut shared) = editor();
+        ed.an.tool = Tool::Text;
+        ed.an.draft = Some(TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: "Pico".into(),
+            started: 1.0,
+            caret: None,
+        });
+        run_editor(&mut ed, &mut shared, SIZE, true, vec![]);
+        let view = ed.view().expect("the canvas view");
+        // Just left of the text: on its dashed frame, outside the letters.
+        let at = view.to_screen(pos2(500.0, 500.0)) + vec2(-6.0, 6.0);
+        let (_, p) = crate::skins::takeui::testing::drive_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![vec![Event::PointerMoved(at)], vec![]],
+        );
+        assert_eq!(
+            p.cursor,
+            egui::CursorIcon::Move,
+            "the frame shows the move cross"
+        );
+        run_editor(
+            &mut ed,
+            &mut shared,
+            SIZE,
+            true,
+            vec![
+                vec![Event::PointerMoved(at)],
+                vec![press(at, true)],
+                vec![Event::PointerMoved(at + vec2(20.0, 15.0))],
+                vec![Event::PointerMoved(at + vec2(40.0, 30.0))],
+                vec![press(at + vec2(40.0, 30.0), false)],
+                vec![],
+                vec![Event::Text("X".into())],
+            ],
+        );
+        let d = ed.an.draft.as_ref().expect("still typing");
+        let moved = d.pos - pos2(500.0, 500.0);
+        assert!(
+            (moved - vec2(40.0, 30.0) / view.k).length() < 1.0,
+            "{moved:?}"
+        );
+        assert_eq!(d.text, "PicoX", "typing goes on");
+    }
+
+    #[test]
     fn typing_edits_at_the_caret() {
         let left = || key(Key::ArrowLeft, Modifiers::NONE);
         let (ed, _) = type_into(

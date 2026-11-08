@@ -34,6 +34,8 @@ impl View {
 pub struct TextDraft {
     pub pos: Pos2,
     pub text: String,
+    /// Names the draft's text field: each draft opened gets its own number, so the field keeps its
+    /// caret while the draft moves and a reopened text never takes another's state.
     pub started: f64,
     /// Where the caret goes when the field opens (a character index); `None` leaves it to the
     /// field (the end).
@@ -88,6 +90,8 @@ pub struct Annotator {
     pub dragging: Option<Drag>,
     /// Revision and left-out objects of the last baked picture.
     baked: Option<(u64, Vec<ObjId>)>,
+    /// Drafts opened so far (`TextDraft::started`).
+    drafts: u32,
 }
 
 impl Annotator {
@@ -108,6 +112,7 @@ impl Annotator {
             draft: None,
             dragging: None,
             baked: None,
+            drafts: 0,
         }
     }
 
@@ -221,11 +226,11 @@ impl Annotator {
                     self.commit_draft(opts);
                     // The text being typed takes the options: nothing else may follow them.
                     self.doc.select(None, false);
-                    let now = ui.input(|i| i.time);
+                    self.drafts += 1;
                     self.draft = Some(TextDraft {
                         pos: view.to_img(p),
                         text: String::new(),
-                        started: now,
+                        started: self.drafts as f64,
                         caret: None,
                     });
                 }
@@ -635,10 +640,11 @@ impl Annotator {
         opts.color = color;
         self.doc.select(None, false);
         let caret = caret_at(&text, font, size, p_img - pos, m);
+        self.drafts += 1;
         self.draft = Some(TextDraft {
             pos,
             text,
-            started: 0.0,
+            started: self.drafts as f64,
             caret: Some(caret),
         });
         true
@@ -725,13 +731,16 @@ impl Annotator {
             );
             ui.painter().layout_job(job)
         };
-        // One field per draft (a text reopened where another was keeps its own state).
-        let id = egui::Id::unique((
-            "takeshot-text-draft",
-            d.started.to_bits(),
-            d.pos.x.to_bits(),
-            d.pos.y.to_bits(),
-        ));
+        let id = egui::Id::unique(("takeshot-text-draft", d.started.to_bits()));
+        // The dashed frame is a handle: dragging it moves the text, and typing goes on. It is laid
+        // before the field, so over the letters the field wins.
+        let grab = ui.interact(field.expand(8.0), id.with("frame"), egui::Sense::drag());
+        if grab.dragged() {
+            d.pos += grab.drag_delta() / view.k;
+        }
+        if grab.hovered() || grab.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+        }
         if let Some(i) = d.caret.take() {
             let mut state =
                 egui::widgets::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
