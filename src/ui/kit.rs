@@ -673,7 +673,7 @@ pub fn window_control(ui: &mut Ui, t: &Tokens, c: WindowControl, maximized: bool
     resp.on_hover_text(tr(tip))
 }
 
-/// 34 × 34 tool. `filled_active` paints the active tool in primary (Coral UI) instead of tint (TakeUI).
+/// 34 × 34 tool. The active tool is filled in primary in Coral UI and tinted in TakeUI.
 /// `None` draws the numbered-step tool: a circle with "1".
 pub fn tool_button(
     ui: &mut Ui,
@@ -681,11 +681,10 @@ pub fn tool_button(
     icon: Option<Ico>,
     active: bool,
     tip: &str,
-    filled_active: bool,
 ) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::click());
     let h = hover_mix(ui, &resp);
-    let (bg, fg) = match (active, filled_active) {
+    let (bg, fg) = match (active, t.theme == ThemeId::Coral) {
         (true, true) => (t.primary, t.on_primary),
         (true, false) => (t.tint, t.accent),
         (false, _) => (
@@ -1284,38 +1283,6 @@ pub fn nav_pill(ui: &mut Ui, t: &Tokens, icon: Ico, label: &str, active: bool) -
         13.0,
         Weight::Medium,
         dim(fg, ui),
-    );
-    resp
-}
-
-/// Coral UI side navigation: full width, height 34.
-pub fn nav_item(ui: &mut Ui, t: &Tokens, icon: Ico, label: &str, active: bool) -> Response {
-    let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
-    let h = hover_mix(ui, &resp);
-    let p = ui.painter();
-    let bg = if active {
-        t.raised
-    } else {
-        mix(Color32::TRANSPARENT, t.raised, h)
-    };
-    p.rect_filled(rect, CornerRadius::same(t.radius), bg);
-    let ic = if active { t.accent } else { t.muted };
-    draw_icon(
-        p,
-        pos2(rect.left() + 10.0 + 8.5, rect.center().y),
-        icon,
-        17.0,
-        dim(ic, ui),
-    );
-    draw_text(
-        p,
-        pos2(rect.left() + 37.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        13.0,
-        Weight::Medium,
-        dim(t.text, ui),
     );
     resp
 }
@@ -2004,15 +1971,11 @@ mod tests {
             ),
             (
                 "tool_button",
-                Box::new(|ui| tool_button(ui, &t, Some(Ico::Arrow), false, "Arrow", false)),
+                Box::new(|ui| tool_button(ui, &t, Some(Ico::Arrow), false, "Arrow")),
             ),
             (
                 "nav_pill",
                 Box::new(|ui| nav_pill(ui, &t, Ico::Home, "Home", false)),
-            ),
-            (
-                "nav_item",
-                Box::new(|ui| nav_item(ui, &t, Ico::Grid, "Home", false)),
             ),
             (
                 "section_item",
@@ -2053,6 +2016,37 @@ mod tests {
                     run.alloc
                 );
             }
+        }
+    }
+
+    /// The fills of the rectangles one frame of `draw` paints.
+    fn fills(t: &Tokens, draw: impl Fn(&mut egui::Ui)) -> Vec<Color32> {
+        fn walk(s: &egui::Shape, out: &mut Vec<Color32>) {
+            match s {
+                egui::Shape::Rect(r) => out.push(r.fill),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        crate::system::fonts::FontLib::load().install(&ctx);
+        crate::ui::style::apply(&ctx, t);
+        let mut full = ctx.run_ui(egui::RawInput::default(), |ui| draw(ui));
+        full.textures_delta.clear();
+        let mut out = Vec::new();
+        full.shapes.iter().for_each(|c| walk(&c.shape, &mut out));
+        out
+    }
+
+    #[test]
+    fn the_active_tool_is_filled_in_coral_and_tinted_in_takeui() {
+        for (theme, want) in [(ThemeId::Coral, true), (ThemeId::TakeUi, false)] {
+            let t = tokens(theme, true);
+            let painted = fills(&t, |ui| {
+                tool_button(ui, &t, Some(Ico::Rect), true, "Rect");
+            });
+            let bg = if want { t.primary } else { t.tint };
+            assert!(painted.contains(&bg), "{theme:?}: {painted:?}");
         }
     }
 }

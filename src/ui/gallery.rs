@@ -189,19 +189,11 @@ impl Gallery {
         } else {
             Msg::ModeLight
         });
-        let brand = match tk.theme {
-            ThemeId::TakeUi => font(26.0, Weight::Brand),
-            ThemeId::Coral => font(26.0, Weight::Bold),
-        };
-        let word = match tk.theme {
-            ThemeId::TakeUi => "Takeshot",
-            ThemeId::Coral => "takeshot",
-        };
         ui.horizontal(|ui| {
             if let Some(m) = &self.mark {
                 ui.add(egui::Image::new(m).fit_to_exact_size(vec2(28.0, 28.0)));
             }
-            ui.label(RichText::new(word).font(brand).color(tk.text));
+            ui.label(brand::wordmark(tk.theme, 26.0).color(tk.text));
             ui.add_space(16.0);
             let title = tf(Msg::GalleryHeading, &[&format!("{theme_name} {mode_name}")]);
             ui.label(
@@ -242,9 +234,8 @@ impl Gallery {
         }
 
         heading(ui, tk, Msg::SecTools);
-        let filled = tk.theme == ThemeId::Coral;
         ui.horizontal(|ui| {
-            kit::tool_button(ui, tk, Some(Ico::Select), true, "V", filled);
+            kit::tool_button(ui, tk, Some(Ico::Select), true, "V");
             for i in [
                 Ico::Pen,
                 Ico::Line,
@@ -253,9 +244,9 @@ impl Gallery {
                 Ico::Ellipse,
                 Ico::Text,
             ] {
-                kit::tool_button(ui, tk, Some(i), false, "", filled);
+                kit::tool_button(ui, tk, Some(i), false, "");
             }
-            kit::tool_button(ui, tk, None, false, "N", filled);
+            kit::tool_button(ui, tk, None, false, "N");
             ui.add_space(8.0);
             kit::icon_button(ui, tk, Ico::Undo, false, "Ctrl+Z");
             kit::icon_button(ui, tk, Ico::Pin, true, "Ctrl+T");
@@ -272,20 +263,13 @@ impl Gallery {
                 &tf(Msg::ShortcutReady, &["PrtSc"]),
             );
         });
+        ui.allocate_ui(vec2(196.0, 80.0), |ui| {
+            ui.vertical(|ui| {
+                kit::section_item(ui, tk, Ico::Sliders, t(Msg::GeneralSection), true);
+                kit::section_item(ui, tk, Ico::Keyboard, t(Msg::ShortcutsSection), false);
+            });
+        });
         ui.horizontal(|ui| {
-            ui.allocate_ui(vec2(220.0, 120.0), |ui| {
-                ui.vertical(|ui| {
-                    kit::nav_item(ui, tk, Ico::Grid, t(Msg::Home), true);
-                    kit::nav_item(ui, tk, Ico::Palette, t(Msg::Style), false);
-                    kit::nav_item(ui, tk, Ico::Settings2, t(Msg::Settings), false);
-                });
-            });
-            ui.allocate_ui(vec2(196.0, 120.0), |ui| {
-                ui.vertical(|ui| {
-                    kit::section_item(ui, tk, Ico::Sliders, t(Msg::GeneralSection), true);
-                    kit::section_item(ui, tk, Ico::Keyboard, t(Msg::ShortcutsSection), false);
-                });
-            });
             kit::status_chip(
                 ui,
                 tk,

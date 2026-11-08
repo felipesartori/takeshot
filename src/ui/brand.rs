@@ -1,6 +1,7 @@
 //! Brand images embedded in the binary: the app icon per theme, tray icons and the mark.
 //! The PNGs come from `cargo run --example brand`, which renders the SVG masters in assets/brand/.
 
+use crate::ui::style::{Weight, font};
 use crate::ui::tokens::ThemeId;
 
 macro_rules! png {
@@ -15,6 +16,17 @@ fn decode(bytes: &[u8]) -> (Vec<u8>, u32, u32) {
         .to_rgba8();
     let (w, h) = img.dimensions();
     (img.into_raw(), w, h)
+}
+
+/// The product name as each theme writes it, `size` px: "Takeshot" in Quicksand in TakeUI,
+/// "takeshot" in Roboto Bold with tight tracking in Coral UI. The caller sets the colour.
+pub fn wordmark(theme: ThemeId, size: f32) -> egui::RichText {
+    match theme {
+        ThemeId::TakeUi => egui::RichText::new("Takeshot").font(font(size, Weight::Brand)),
+        ThemeId::Coral => egui::RichText::new("takeshot")
+            .font(font(size, Weight::Bold))
+            .extra_letter_spacing(-0.03 * size),
+    }
 }
 
 /// App icon for the window, taskbar and Dock, in the active theme (the .exe keeps the TakeUI icon).

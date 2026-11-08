@@ -293,7 +293,7 @@ fn tool_bar(ui: &mut Ui, t: &Tokens, ed: &Editor, shared: &Shared, acts: &mut Ve
         ui.spacing_mut().item_spacing.x = 2.0;
         for tool in [Tool::Select].into_iter().chain(Tool::DRAWING) {
             let tip = format!("{} ({})", tr(tool_name(tool)), tool.key_name());
-            if kit::tool_button(ui, t, tool_icon(tool), ed.an.tool == tool, &tip, false).clicked() {
+            if kit::tool_button(ui, t, tool_icon(tool), ed.an.tool == tool, &tip).clicked() {
                 acts.push(EditorAction::SetTool(tool));
             }
         }

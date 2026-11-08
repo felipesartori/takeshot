@@ -7,9 +7,8 @@ use crate::system::instance::Page;
 use crate::ui::chrome::{self, BAR_HEIGHT};
 use crate::ui::i18n::{Msg, t as tr};
 use crate::ui::kit::{self, Ico};
-use crate::ui::style::{Weight, font};
 use crate::ui::tokens::{Tokens, UiMode};
-use egui::{Align, Frame, Layout, Margin, RichText, Stroke, Ui, vec2};
+use egui::{Align, Frame, Layout, Margin, Stroke, Ui, vec2};
 
 pub fn main_window(
     ui: &mut Ui,
@@ -65,11 +64,7 @@ fn title_bar(
         let mark = home.mark(ui.ctx(), t);
         ui.add(egui::Image::new((mark, vec2(22.0, 22.0))));
         ui.add_space(12.0);
-        ui.label(
-            RichText::new("Takeshot")
-                .font(font(17.0, Weight::Brand))
-                .color(t.text),
-        );
+        ui.label(crate::ui::brand::wordmark(t.theme, 17.0).color(t.text));
         ui.add_space(28.0);
         for (page, icon, msg) in [
             (Page::Start, Ico::Home, Msg::Home),
@@ -146,6 +141,22 @@ mod tests {
         let name =
             painted_at(&painted, &["Takeshot"], |r| r.center().y < BAR_HEIGHT).expect("the name");
         assert!((name.y - BAR_HEIGHT / 2.0).abs() <= 1.5, "{name:?}");
+    }
+
+    #[test]
+    fn the_title_bar_shows_the_theme_s_wordmark() {
+        use crate::ui::tokens::ThemeId;
+        for (theme, word, other) in [
+            (ThemeId::TakeUi, "Takeshot", "takeshot"),
+            (ThemeId::Coral, "takeshot", "Takeshot"),
+        ] {
+            let (mut home, mut shared) = Home::for_tests(vec![]);
+            shared.settings.ui_theme = theme;
+            let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+            let in_bar = |w: &str| painted_at(&painted, &[w], |r| r.center().y < BAR_HEIGHT);
+            assert!(in_bar(word).is_some(), "{theme:?}: {word}");
+            assert!(in_bar(other).is_none(), "{theme:?}: not {other}");
+        }
     }
 
     #[test]

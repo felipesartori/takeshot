@@ -133,7 +133,7 @@ fn main_bar(ui: &mut Ui, t: &Tokens, ov: &Overlay, acts: &mut Vec<CaptureAction>
         ui.spacing_mut().item_spacing.x = 2.0;
         for tool in [Tool::Select].into_iter().chain(Tool::DRAWING) {
             let tip = format!("{} ({})", tr(tool_name(tool)), tool.key_name());
-            if kit::tool_button(ui, t, tool_icon(tool), ov.an.tool == tool, &tip, false).clicked() {
+            if kit::tool_button(ui, t, tool_icon(tool), ov.an.tool == tool, &tip).clicked() {
                 acts.push(CaptureAction::SetTool(tool));
             }
         }
@@ -156,7 +156,7 @@ fn main_bar(ui: &mut Ui, t: &Tokens, ov: &Overlay, acts: &mut Vec<CaptureAction>
             ),
             (Ico::Copy, keys(Msg::Copy, "Ctrl+C"), CaptureAction::Copy),
         ] {
-            if kit::tool_button(ui, t, Some(icon), false, &tip, false).clicked() {
+            if kit::tool_button(ui, t, Some(icon), false, &tip).clicked() {
                 acts.push(act);
             }
         }
@@ -175,7 +175,7 @@ fn main_bar(ui: &mut Ui, t: &Tokens, ov: &Overlay, acts: &mut Vec<CaptureAction>
             acts.push(CaptureAction::Edit);
         }
         let close = format!("{} (Esc)", tr(Msg::CloseWord));
-        if kit::tool_button(ui, t, Some(Ico::Close), false, &close, false).clicked() {
+        if kit::tool_button(ui, t, Some(Ico::Close), false, &close).clicked() {
             acts.push(CaptureAction::Close);
         }
     });
