@@ -1,6 +1,7 @@
-//! The capture's bars: the main bar under the area (tools, undo, redo, pin, save, copy, Edit,
-//! close), the options bar under it for a drawing tool or a selected object, and the hint before
-//! an area is chosen, as in "Captura (PrtSc) · escuro". Behaviour is in `screens::overlay`.
+//! The capture's bars, as on page C of the design: the tools in a column beside the area, the
+//! options of the tool or the selected object in a panel next to them, the actions (pin, save,
+//! edit, copy, close) in a row under the area, and the hint before an area is chosen. Behaviour is
+//! in `screens::overlay`.
 
 use super::{divider, tool_icon};
 use crate::Shared;
@@ -81,7 +82,7 @@ fn hint(ctx: &egui::Context, t: &Tokens) {
         });
 }
 
-/// The main bar and, with a drawing tool or a selected object, the options bar, placed by
+/// The tools, the options (with a drawing tool or a selected object) and the actions, placed by
 /// `capture_bars` from their sizes in the last frame.
 fn bars(
     ctx: &egui::Context,
@@ -92,99 +93,140 @@ fn bars(
     screen: Rect,
     acts: &mut Vec<CaptureAction>,
 ) {
-    let main_id = egui::Id::unique("takeui-capture-main");
-    let opts_id = egui::Id::unique("takeui-capture-options");
+    let tools_id = egui::Id::unique("takeshot-capture-tools");
+    let opts_id = egui::Id::unique("takeshot-capture-options");
+    let actions_id = egui::Id::unique("takeshot-capture-actions");
     let size = |id: egui::Id, default: egui::Vec2| {
         ctx.data(|d| d.get_temp::<egui::Vec2>(id))
             .unwrap_or(default)
     };
     let bar_tool = ov.an.bar_tool();
-    let (main_at, opts_at) = capture_bars(
+    let at = capture_bars(
         area,
-        size(main_id, vec2(674.0, 42.0)),
-        bar_tool.map(|_| size(opts_id, vec2(552.0, 40.0))),
+        size(tools_id, vec2(46.0, 450.0)),
+        bar_tool.map(|_| size(opts_id, vec2(222.0, 240.0))),
+        size(actions_id, vec2(380.0, 42.0)),
         screen,
     );
-    let shown = egui::Area::new(main_id)
-        .order(egui::Order::Foreground)
-        .fixed_pos(main_at.min)
-        .show(ctx, |ui| {
-            bar_frame(t)
-                .inner_margin(4)
-                .show(ui, |ui| main_bar(ui, t, ov, acts))
-        });
-    ctx.data_mut(|d| d.insert_temp(main_id, shown.response.rect.size()));
-    if let (Some(tool), Some(at)) = (bar_tool, opts_at) {
-        let shown = egui::Area::new(opts_id)
+    let part = |id: egui::Id, at: Rect, margin: i8, body: &mut dyn FnMut(&mut Ui)| {
+        let shown = egui::Area::new(id)
             .order(egui::Order::Foreground)
             .fixed_pos(at.min)
             .show(ctx, |ui| {
-                bar_frame(t)
-                    .inner_margin(egui::Margin::symmetric(10, 6))
-                    .show(ui, |ui| options_bar(ui, t, ov, shared, tool, acts))
+                bar_frame(t).inner_margin(margin).show(ui, |ui| body(ui))
             });
-        ctx.data_mut(|d| d.insert_temp(opts_id, shown.response.rect.size()));
+        // The frame as drawn: the area's own rect can stay wider than its content.
+        ctx.data_mut(|d| d.insert_temp(id, shown.inner.response.rect.size()));
+    };
+    part(tools_id, at.tools, 5, &mut |ui| tools_bar(ui, t, ov, acts));
+    if let (Some(tool), Some(o)) = (bar_tool, at.options) {
+        part(opts_id, o, 12, &mut |ui| {
+            options_panel(ui, t, ov, shared, tool, acts)
+        });
     }
+    part(actions_id, at.actions, 4, &mut |ui| {
+        actions_bar(ui, t, acts)
+    });
 }
 
-/// Tools, undo and redo, pin, save, copy, Edit (primary) and close; 34 px buttons 2 apart.
-fn main_bar(ui: &mut Ui, t: &Tokens, ov: &Overlay, acts: &mut Vec<CaptureAction>) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
+/// The tools in one column, then undo and redo; 34 px buttons 2 apart.
+fn tools_bar(ui: &mut Ui, t: &Tokens, ov: &Overlay, acts: &mut Vec<CaptureAction>) {
+    ui.vertical_centered(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
         for tool in [Tool::Select].into_iter().chain(Tool::DRAWING) {
             let tip = format!("{} ({})", tr(tool_name(tool)), tool.key_name());
             if kit::tool_button(ui, t, tool_icon(tool), ov.an.tool == tool, &tip).clicked() {
                 acts.push(CaptureAction::SetTool(tool));
             }
         }
-        ui.add_space(2.0);
-        divider(ui, t, 22.0);
-        ui.add_space(4.0);
+        ui.add_space(3.0);
+        let (line, _) = ui.allocate_exact_size(vec2(24.0, 1.0), egui::Sense::hover());
+        ui.painter().rect_filled(line, 0.0, t.border);
+        ui.add_space(3.0);
         let keys = |name: Msg, k: &str| format!("{} ({k})", tr(name));
         for (icon, tip, act) in [
             (Ico::Undo, keys(Msg::Undo, "Ctrl+Z"), CaptureAction::Undo),
             (Ico::Redo, keys(Msg::Redo, "Ctrl+Y"), CaptureAction::Redo),
-            (
-                Ico::Pin,
-                keys(Msg::PinOnScreen, "Ctrl+T"),
-                CaptureAction::Pin,
-            ),
-            (
-                Ico::Download,
-                keys(Msg::Save, "Ctrl+S"),
-                CaptureAction::Save,
-            ),
-            (Ico::Copy, keys(Msg::Copy, "Ctrl+C"), CaptureAction::Copy),
         ] {
             if kit::tool_button(ui, t, Some(icon), false, &tip).clicked() {
                 acts.push(act);
             }
         }
-        ui.add_space(2.0);
+    });
+}
+
+/// Pin, Save and Edit with their names, Copy (primary) and close, in one row.
+fn actions_bar(ui: &mut Ui, t: &Tokens, acts: &mut Vec<CaptureAction>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let keys = |name: Msg, k: &str| format!("{} ({k})", tr(name));
+        for (icon, label, tip, act) in [
+            (
+                Ico::Pin,
+                Msg::PinOnScreen,
+                keys(Msg::PinOnScreen, "Ctrl+T"),
+                CaptureAction::Pin,
+            ),
+            (
+                Ico::Download,
+                Msg::Save,
+                keys(Msg::Save, "Ctrl+S"),
+                CaptureAction::Save,
+            ),
+            (
+                Ico::Edit,
+                Msg::Edit,
+                keys(Msg::EditTip, "Enter"),
+                CaptureAction::Edit,
+            ),
+        ] {
+            if kit::bar_text(ui, t, icon, tr(label), false, false, &tip).clicked() {
+                acts.push(act);
+            }
+        }
         if kit::button(
             ui,
             t,
             BtnKind::Primary,
-            Some(Ico::Edit),
-            tr(Msg::Edit),
+            Some(Ico::Copy),
+            tr(Msg::Copy),
             None,
         )
-        .on_hover_text(format!("{} (Enter)", tr(Msg::EditTip)))
+        .on_hover_text(keys(Msg::Copy, "Ctrl+C"))
         .clicked()
         {
-            acts.push(CaptureAction::Edit);
+            acts.push(CaptureAction::Copy);
         }
+        divider(ui, t, 20.0);
         let close = format!("{} (Esc)", tr(Msg::CloseWord));
-        if kit::tool_button(ui, t, Some(Ico::Close), false, &close).clicked() {
+        if kit::bar_button(ui, t, kit::BarItem::Icon(Ico::Close), &close).clicked() {
             acts.push(CaptureAction::Close);
         }
     });
 }
 
-/// The tool's or the selected object's name, then its options: colours, widths, Fill for
-/// rectangles and ellipses, font and background for text, Blur or Pixelate for blur; with an
-/// object selected, Duplicate and Delete.
-fn options_bar(
+/// A slider's drag is one undo step: grabbed, it opens a gesture; let go, it closes it.
+fn gesture(
+    r: egui::Response,
+    v: f32,
+    acts: &mut Vec<CaptureAction>,
+    set: impl Fn(f32) -> CaptureAction,
+) {
+    if r.drag_started() {
+        acts.push(CaptureAction::Gesture(true));
+    }
+    if r.changed() {
+        acts.push(set(v));
+    }
+    if r.drag_stopped() {
+        acts.push(CaptureAction::Gesture(false));
+    }
+}
+
+/// The tool's or the selected object's name, then its options, one under the other: colours,
+/// widths, Corners for rectangles, Fill for rectangles and ellipses, font and background for
+/// text, Blur or Pixelate for blur; with an object selected, Duplicate and Delete.
+fn options_panel(
     ui: &mut Ui,
     t: &Tokens,
     ov: &Overlay,
@@ -201,68 +243,76 @@ fn options_bar(
             .unwrap_or_default(),
         _ => tr(tool_name(tool)).to_string(),
     };
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let mut job =
-            egui::text::LayoutJob::simple_singleline(name, font(12.0, Weight::Medium), t.muted);
-        job.wrap = egui::text::TextWrapping::truncate_at_width(160.0);
-        ui.label(job);
-        ui.add_space(4.0);
-        if tool != Tool::Blur
-            && let Some(c) = super::palette(ui, t, opts.color)
-        {
-            if ui.input(|i| i.pointer.any_down()) {
-                acts.push(CaptureAction::Gesture(true));
-            }
-            acts.push(CaptureAction::SetColor(c));
-        }
-        match tool {
-            Tool::Text => {
-                divider(ui, t, 20.0);
-                let names: Vec<(usize, &str)> = shared
-                    .fonts
-                    .list
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| (i, f.name.as_str()))
-                    .collect();
-                let mut f = opts.font;
-                if kit::select(ui, t, "takeui-capture-font", &mut f, &names, 150.0).changed() {
-                    acts.push(CaptureAction::SetFont(f));
+    ui.set_width(198.0);
+    ui.spacing_mut().item_spacing.y = 10.0;
+    let mut job = egui::text::LayoutJob::simple_singleline(name, font(13.0, Weight::Bold), t.text);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(198.0);
+    ui.label(job);
+    if tool != Tool::Blur {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            if let Some(c) = super::palette(ui, t, opts.color) {
+                if ui.input(|i| i.pointer.any_down()) {
+                    acts.push(CaptureAction::Gesture(true));
                 }
-                let size = opts.font_size.round();
-                kit::combo(
-                    ui,
-                    t,
-                    "takeui-capture-size",
-                    &format!("{size} px"),
-                    52.0,
-                    28.0,
-                    |ui| {
-                        for s in [12.0, 16.0, 20.0, 24.0, 32.0, 48.0, 64.0, 96.0] {
-                            if ui.selectable_label(size == s, format!("{s} px")).clicked() {
-                                acts.push(CaptureAction::SetFontSize(s));
-                            }
+                acts.push(CaptureAction::SetColor(c));
+            }
+        });
+    }
+    let small = |ui: &mut Ui, m: Msg| {
+        ui.label(
+            egui::RichText::new(tr(m))
+                .font(font(12.0, Weight::Regular))
+                .color(t.muted),
+        );
+    };
+    match tool {
+        Tool::Text => {
+            let names: Vec<(usize, &str)> = shared
+                .fonts
+                .list
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (i, f.name.as_str()))
+                .collect();
+            let mut f = opts.font;
+            if kit::select(ui, t, "takeshot-capture-font", &mut f, &names, 198.0).changed() {
+                acts.push(CaptureAction::SetFont(f));
+            }
+            let size = opts.font_size.round();
+            kit::combo(
+                ui,
+                t,
+                "takeshot-capture-size",
+                &format!("{size} px"),
+                198.0,
+                28.0,
+                |ui| {
+                    for s in [12.0, 16.0, 20.0, 24.0, 32.0, 48.0, 64.0, 96.0] {
+                        if ui.selectable_label(size == s, format!("{s} px")).clicked() {
+                            acts.push(CaptureAction::SetFontSize(s));
                         }
-                    },
-                );
-                let mut boxed = opts.text_box;
-                if kit::checkbox(ui, t, &mut boxed, tr(Msg::TextBackground)).clicked() {
-                    acts.push(CaptureAction::SetTextBox(boxed));
-                }
+                    }
+                },
+            );
+            let mut boxed = opts.text_box;
+            if kit::checkbox(ui, t, &mut boxed, tr(Msg::TextBackground)).clicked() {
+                acts.push(CaptureAction::SetTextBox(boxed));
             }
-            Tool::Blur => {
-                let mut m = opts.blur_mode;
-                let items = [
-                    (BlurMode::Blur, tr(Msg::ToolBlur)),
-                    (BlurMode::Pixelate, tr(Msg::Pixelate)),
-                ];
-                if kit::segmented(ui, t, &mut m, &items).changed() {
-                    acts.push(CaptureAction::SetBlurMode(m));
-                }
+        }
+        Tool::Blur => {
+            let mut m = opts.blur_mode;
+            let items = [
+                (BlurMode::Blur, tr(Msg::ToolBlur)),
+                (BlurMode::Pixelate, tr(Msg::Pixelate)),
+            ];
+            if kit::segmented(ui, t, &mut m, &items).changed() {
+                acts.push(CaptureAction::SetBlurMode(m));
             }
-            _ => {
-                divider(ui, t, 20.0);
+        }
+        _ => {
+            small(ui, Msg::Width);
+            ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 for w in WIDTHS {
                     let tip = format!("{w} px");
@@ -270,18 +320,22 @@ fn options_bar(
                         acts.push(CaptureAction::SetWidth(w));
                     }
                 }
-                ui.spacing_mut().item_spacing.x = 6.0;
-            }
+            });
         }
-        if matches!(tool, Tool::Rect | Tool::Ellipse) {
-            divider(ui, t, 20.0);
-            let mut fill = opts.filled;
-            if kit::checkbox(ui, t, &mut fill, tr(Msg::Fill)).clicked() {
-                acts.push(CaptureAction::SetFill(fill));
-            }
+    }
+    if tool == Tool::Rect {
+        let mut v = opts.radius;
+        let r = kit::slider_row(ui, t, tr(Msg::Corners), &mut v, 0.0..=40.0, "px");
+        gesture(r, v, acts, |v| CaptureAction::SetRadius(v.round()));
+    }
+    if matches!(tool, Tool::Rect | Tool::Ellipse) {
+        let mut fill = opts.filled;
+        if kit::checkbox(ui, t, &mut fill, tr(Msg::Fill)).clicked() {
+            acts.push(CaptureAction::SetFill(fill));
         }
-        if !doc.selected().is_empty() {
-            divider(ui, t, 20.0);
+    }
+    if !doc.selected().is_empty() {
+        ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             for (icon, tip, act) in [
                 (
@@ -299,8 +353,8 @@ fn options_bar(
                     acts.push(act);
                 }
             }
-        }
-    });
+        });
+    }
 }
 
 #[cfg(test)]
@@ -402,6 +456,110 @@ mod tests {
             .expect("Copy");
         let (acts, _) = run_capture(&mut ov, &mut shared, click(at));
         assert!(acts.contains(&CaptureAction::Copy), "{acts:?}");
+    }
+
+    #[test]
+    fn the_tools_stand_in_a_column_beside_the_area() {
+        // The area is (100,100)-(900,700) on a 1600 x 900 screen.
+        let (mut ov, mut shared) = capture(Tool::Select);
+        let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
+        let glyph = |t: Tool| {
+            let g = crate::ui::icon::glyph(crate::views::tool_icon(t).unwrap()).to_string();
+            p.texts
+                .iter()
+                .find(|(s, _)| *s == g)
+                .map(|(_, r)| r.center())
+                .unwrap_or_else(|| panic!("{t:?}"))
+        };
+        let (select, pen, blur) = (glyph(Tool::Select), glyph(Tool::Pen), glyph(Tool::Blur));
+        assert!(select.x > 900.0, "right of the area: {select:?}");
+        assert!((select.x - blur.x).abs() < 0.5 && select.y < pen.y && pen.y < blur.y);
+        assert!(select.y < 100.0 + 40.0, "from the area's top: {select:?}");
+    }
+
+    #[test]
+    fn the_actions_end_at_the_area_s_right_edge() {
+        let (mut ov, mut shared) = capture(Tool::Select);
+        let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
+        for m in [Msg::PinOnScreen, Msg::Save, Msg::Edit, Msg::Copy] {
+            let r = p
+                .texts
+                .iter()
+                .find(|(s, _)| s == tr(m))
+                .map(|(_, r)| *r)
+                .unwrap_or_else(|| panic!("{m:?}"));
+            assert!(
+                r.top() > 700.0 && r.right() < 900.0,
+                "{m:?} under the area: {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rectangle_offers_its_corners_in_the_capture() {
+        let (mut ov, mut shared) = capture(Tool::Rect);
+        let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
+        assert!(
+            p.texts.iter().any(|(s, _)| s == tr(Msg::Corners)),
+            "{:?}",
+            p.texts
+        );
+        let (mut ov, mut shared) = capture(Tool::Ellipse);
+        let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
+        assert!(
+            !p.texts.iter().any(|(s, _)| s == tr(Msg::Corners)),
+            "not for an ellipse"
+        );
+    }
+
+    #[test]
+    fn the_options_panel_keeps_its_width() {
+        // 198 px inside 12 px margins: the colours wrap in rows instead of widening it.
+        let (mut ov, mut shared) = capture(Tool::Arrow);
+        let (_, p) = run_capture(&mut ov, &mut shared, vec![]);
+        let name = p
+            .texts
+            .iter()
+            .find(|(s, _)| s == tr(Msg::ToolArrow))
+            .map(|(_, r)| *r)
+            .expect("the panel's title");
+        // The smallest block around the title that is bigger than a control (the frame fades in,
+        // so its colour is not yet the surface).
+        let panel = p
+            .blocks
+            .iter()
+            .filter(|(r, _)| r.contains(name.center()) && r.width() > 120.0 && r.height() > 120.0)
+            .map(|(r, _)| *r)
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .expect("the panel");
+        assert!(panel.width() <= 224.0, "{panel:?}");
+    }
+
+    #[test]
+    fn a_wide_area_keeps_the_tools_and_options_outside() {
+        // 230 px left on each side: the tools go right, the options left, neither over the area.
+        let (ov, mut shared) = capture(Tool::Arrow);
+        let area = Rect::from_min_max(pos2(250.0, 100.0), pos2(1350.0, 700.0));
+        let mut ov = ov.with_area(area);
+        let (_, p) = run_capture(&mut ov, &mut shared, vec![vec![], vec![]]);
+        let at = |s: &str| {
+            p.texts
+                .iter()
+                .find(|(x, _)| x == s)
+                .map(|(_, r)| *r)
+                .unwrap_or_else(|| panic!("{s}"))
+        };
+        let select =
+            at(&crate::ui::icon::glyph(crate::views::tool_icon(Tool::Select).unwrap()).to_string());
+        assert!(
+            select.left() > area.right(),
+            "tools right of the area: {select:?}"
+        );
+        let title = at(tr(Msg::ToolArrow));
+        assert!(
+            title.right() < area.left(),
+            "options left of the area: {title:?}"
+        );
     }
 
     #[test]

@@ -31,6 +31,8 @@ pub enum CaptureAction {
     Close,
     SetColor([u8; 4]),
     SetWidth(f32),
+    /// A rectangle's corner radius, in picture px.
+    SetRadius(f32),
     SetFill(bool),
     SetFont(usize),
     SetFontSize(f32),
@@ -197,6 +199,7 @@ impl Overlay {
                 o.color = [c[0], c[1], c[2], o.color[3]];
             }),
             CaptureAction::SetWidth(w) => restyle(self, shared, &|o| o.width = w),
+            CaptureAction::SetRadius(r) => restyle(self, shared, &|o| o.radius = r),
             CaptureAction::SetFill(on) => restyle(self, shared, &|o| o.filled = on),
             CaptureAction::SetFont(f) => restyle(self, shared, &|o| o.font = f),
             CaptureAction::SetFontSize(s) => restyle(self, shared, &|o| o.font_size = s),
