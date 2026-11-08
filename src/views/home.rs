@@ -1319,6 +1319,47 @@ mod tests {
     }
 
     #[test]
+    fn down_goes_to_the_card_below_across_days() {
+        let now = SystemTime::now();
+        let day = Duration::from_secs(24 * 3600);
+        let entries: Vec<_> = (0..12u32)
+            .map(|i| entry(&format!("{i:02}.png"), now - day * i))
+            .collect();
+        let (mut home, mut shared) = Home::for_tests(entries);
+        shared.settings.home_details = false;
+        home.apply(
+            MainAction::Select(PathBuf::from("00.png")),
+            &egui::Context::default(),
+            &mut shared,
+        );
+        let down = egui::Event::Key {
+            key: egui::Key::ArrowDown,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (_, painted) = run(
+            &mut home,
+            &mut shared,
+            (1160.0, 740.0),
+            true,
+            vec![vec![down]],
+        );
+        let below = home
+            .selected()
+            .expect("a choice")
+            .to_string_lossy()
+            .to_string();
+        let at = |n: &str| painted_at(&painted, &[n], |_| true).unwrap_or_else(|| panic!("{n}"));
+        let (a, b) = (at("00.png"), at(&below));
+        assert!(
+            (a.x - b.x).abs() < 1.0 && b.y > a.y,
+            "{below} at {b:?} is right under 00.png at {a:?}"
+        );
+    }
+
+    #[test]
     fn keys_move_and_act_on_the_chosen_capture() {
         let now = SystemTime::now();
         let entries = vec![
