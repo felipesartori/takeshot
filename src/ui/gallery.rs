@@ -265,7 +265,12 @@ impl Gallery {
             kit::nav_pill(ui, tk, Ico::Palette, t(Msg::Style), false);
             kit::nav_pill(ui, tk, Ico::Settings, t(Msg::Settings), false);
             ui.add_space(8.0);
-            kit::status_chip(ui, tk, true);
+            kit::status_chip(
+                ui,
+                tk,
+                kit::ChipState::Ready,
+                &tf(Msg::ShortcutReady, &["PrtSc"]),
+            );
         });
         ui.horizontal(|ui| {
             ui.allocate_ui(vec2(220.0, 120.0), |ui| {
@@ -281,7 +286,13 @@ impl Gallery {
                     kit::section_item(ui, tk, Ico::Keyboard, t(Msg::ShortcutsSection), false);
                 });
             });
-            kit::status_chip(ui, tk, false);
+            kit::status_chip(
+                ui,
+                tk,
+                kit::ChipState::Busy,
+                &tf(Msg::ShortcutBusy, &["PrtSc"]),
+            );
+            kit::status_chip(ui, tk, kit::ChipState::Off, t(Msg::ShortcutsOff));
         });
 
         heading(ui, tk, Msg::SecMenu);

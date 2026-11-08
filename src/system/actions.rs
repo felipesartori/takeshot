@@ -130,9 +130,17 @@ pub fn show_in_folder(path: &Path) {
 
 #[cfg(windows)]
 fn reveal(path: &Path) {
+    use std::os::windows::process::CommandExt;
+    // Raw, so only the path is quoted: Explorer does not read a quoted "/select,…" as a selection.
     let _ = std::process::Command::new("explorer")
-        .arg(format!("/select,{}", path.display()))
+        .raw_arg(explorer_select_arg(path))
         .spawn();
+}
+
+/// Explorer's argument to open a folder with `path` selected: `/select,"<path>"`.
+#[cfg(any(windows, test))]
+fn explorer_select_arg(path: &Path) -> String {
+    format!("/select,\"{}\"", path.display())
 }
 
 #[cfg(target_os = "macos")]
@@ -171,4 +179,20 @@ pub fn open_folder(path: &Path) {
     #[cfg(all(unix, not(target_os = "macos")))]
     let cmd = "xdg-open";
     let _ = std::process::Command::new(cmd).arg(path).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explorer_gets_the_path_quoted_after_select() {
+        // Quoting the whole "/select,…" (what Command::arg does for a path with spaces) makes
+        // Explorer open the default folder instead of selecting the file.
+        let p = Path::new(r"D:\Captures\Takeshot 2026-11-07 14-32-05.png");
+        assert_eq!(
+            explorer_select_arg(p),
+            r#"/select,"D:\Captures\Takeshot 2026-11-07 14-32-05.png""#
+        );
+    }
 }

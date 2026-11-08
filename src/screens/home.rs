@@ -651,6 +651,28 @@ fn open_clipboard(shared: &mut Shared) {
 }
 
 /// The status line under the navigation: which keys capture, or why they do not.
+/// The status chip's state and short text: the area shortcut ready or in use, or the shortcuts
+/// off or unavailable (never "in use" for those).
+pub(crate) fn chip(
+    status: Option<&Status>,
+    settings: &crate::system::settings::Settings,
+) -> (crate::ui::kit::ChipState, String) {
+    use crate::ui::kit::ChipState;
+    match status {
+        Some(Status::Ready) | None if settings.hotkeys => (
+            ChipState::Ready,
+            tf(Msg::ShortcutReady, &[&label(&settings.hotkey_area)]),
+        ),
+        Some(Status::Busy { keys }) => {
+            (ChipState::Busy, tf(Msg::ShortcutBusy, &[&keys.join(" + ")]))
+        }
+        Some(Status::Unavailable(_)) => (ChipState::Off, tr(Msg::ShortcutsUnavailable).to_string()),
+        Some(Status::Ready) | Some(Status::Off) | None => {
+            (ChipState::Off, tr(Msg::ShortcutsOff).to_string())
+        }
+    }
+}
+
 pub(crate) fn hotkey_text(
     status: Option<&Status>,
     settings: &crate::system::settings::Settings,
@@ -673,6 +695,33 @@ pub(crate) fn hotkey_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_status_chip_tells_off_and_unavailable_from_busy() {
+        use crate::ui::kit::ChipState;
+        let _lang = crate::ui::i18n::lang_lock();
+        let s = crate::system::settings::Settings::default();
+        let area = label(&s.hotkey_area);
+        assert_eq!(
+            chip(Some(&Status::Ready), &s),
+            (ChipState::Ready, tf(Msg::ShortcutReady, &[&area]))
+        );
+        let busy = Status::Busy {
+            keys: vec!["PrtSc".into()],
+        };
+        assert_eq!(
+            chip(Some(&busy), &s),
+            (ChipState::Busy, tf(Msg::ShortcutBusy, &["PrtSc"]))
+        );
+        assert_eq!(
+            chip(Some(&Status::Off), &s),
+            (ChipState::Off, tr(Msg::ShortcutsOff).to_string())
+        );
+        assert_eq!(
+            chip(Some(&Status::Unavailable("no display".into())), &s),
+            (ChipState::Off, tr(Msg::ShortcutsUnavailable).to_string())
+        );
+    }
 
     #[test]
     fn leaving_shortcuts_stops_waiting_for_keys() {

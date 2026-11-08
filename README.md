@@ -33,7 +33,7 @@ Ferramenta de captura de tela para Windows, macOS e Linux: captura instantânea 
 
 **Saída**
 - Sempre PNG sem perdas na resolução original da tela. Nada de envio para nuvem nem busca de imagem.
-- Copiar ou salvar direto da captura pode aplicar o estilo completo, só os cantos arredondados ou nada (em Ajustes).
+- Copiar ou salvar direto da captura pode aplicar o estilo completo, só os cantos arredondados ou nada (em Estilo).
 
 **Extras**
 - Fixar uma captura por cima das outras janelas (arrastar move, roda do mouse dá zoom, duplo clique fecha).

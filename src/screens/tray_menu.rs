@@ -132,8 +132,13 @@ pub struct MainOutcome {
     pub plain_hovered: bool,
 }
 
-/// The main menu: a header with the PrtSc status, then the entries.
-pub fn main_body(ui: &mut Ui, t: &Tokens, entries: &[TrayEntry], ready: bool) -> MainOutcome {
+/// The main menu: a header with the shortcut status chip, then the entries.
+pub fn main_body(
+    ui: &mut Ui,
+    t: &Tokens,
+    entries: &[TrayEntry],
+    chip: (kit::ChipState, &str),
+) -> MainOutcome {
     let mut out = MainOutcome {
         chosen: None,
         sub: None,
@@ -149,7 +154,7 @@ pub fn main_body(ui: &mut Ui, t: &Tokens, entries: &[TrayEntry], ready: bool) ->
                 .color(t.text),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            kit::status_chip(ui, t, ready);
+            kit::status_chip(ui, t, chip.0, chip.1);
         });
     });
     for e in entries {
@@ -317,7 +322,7 @@ impl TrayMenu {
         ctx: &egui::Context,
         t: &Tokens,
         entries: &[TrayEntry],
-        ready: bool,
+        chip: (kit::ChipState, &str),
         thumb: &dyn Fn(&Path) -> Option<TextureId>,
     ) -> MenuOutcome {
         let Some(at) = self.at else {
@@ -372,7 +377,7 @@ impl TrayMenu {
                 esc |= ui.input(|i| i.key_pressed(egui::Key::Escape));
                 let mut out = (None, false);
                 egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-                    let r = main_body(ui, t, entries, ready);
+                    let r = main_body(ui, t, entries, chip);
                     chosen = chosen.take().or(r.chosen);
                     out = (r.sub, r.plain_hovered);
                 });
@@ -436,6 +441,8 @@ impl TrayMenu {
 
 #[cfg(test)]
 mod tests {
+    /// The status chip the menu tests show.
+    const READY: (kit::ChipState, &str) = (kit::ChipState::Ready, "PrtSc ready");
     use super::*;
     use crate::system::hotkeys::Shot;
     use crate::system::tray::tray_entries;
@@ -510,7 +517,7 @@ mod tests {
                 .focused = Some(focused);
             let mut out = MenuOutcome::Open;
             let mut full = ctx.run_ui(input, |ui| {
-                out = menu.show(ui.ctx(), &t, &entries, true, &|_| None);
+                out = menu.show(ui.ctx(), &t, &entries, READY, &|_| None);
             });
             full.textures_delta.clear();
             let vp = &full.viewport_output[&egui::ViewportId::ROOT];
@@ -555,7 +562,7 @@ mod tests {
         };
         let mut last = None;
         let step = |ui: &mut egui::Ui, menu: &mut TrayMenu, last: &mut Option<MenuOutcome>| {
-            let o = menu.show(ui.ctx(), &t, &entries, true, &|_| None);
+            let o = menu.show(ui.ctx(), &t, &entries, READY, &|_| None);
             if !matches!(o, MenuOutcome::Open) {
                 *last = Some(o);
             }
@@ -666,7 +673,7 @@ mod tests {
             TrayEntry::Item { label, .. } => label.clone(),
             _ => unreachable!(),
         };
-        let body = |ui: &mut egui::Ui| main_body(ui, &t, &entries, true).chosen;
+        let body = |ui: &mut egui::Ui| main_body(ui, &t, &entries, READY).chosen;
         let (none, painted) = drive(body, vec![]);
         assert!(none.is_none());
         let at = center_of(&painted, &label);

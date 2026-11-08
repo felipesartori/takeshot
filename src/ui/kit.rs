@@ -1210,9 +1210,19 @@ pub fn menu_item(
     resp
 }
 
-/// "PrtSc ready" with a green dot, or "PrtSc in use by another app" in the warning colour.
-pub fn status_chip(ui: &mut Ui, t: &Tokens, ok: bool) -> Response {
-    let label = tr(if ok { Msg::PrtScReady } else { Msg::PrtScBusy });
+/// What the shortcut status chip shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChipState {
+    /// The shortcuts work: a green dot.
+    Ready,
+    /// Another app holds one: the warning colour.
+    Busy,
+    /// Switched off or refused by the system: a faint dot.
+    Off,
+}
+
+/// The shortcut status in a pill: a dot in the state's colour and `label` ("PrtSc ready").
+pub fn status_chip(ui: &mut Ui, t: &Tokens, state: ChipState, label: &str) -> Response {
     let lw = text_size(ui, label, 12.0, Weight::Medium).x;
     let (rect, resp) =
         ui.allocate_exact_size(vec2(10.0 + 7.0 + 6.0 + lw + 10.0, 26.0), Sense::hover());
@@ -1223,9 +1233,12 @@ pub fn status_chip(ui: &mut Ui, t: &Tokens, ok: bool) -> Response {
         Stroke::new(1.0, t.border),
         StrokeKind::Inside,
     );
-    let dot = if ok { t.green } else { t.warn };
+    let (dot, fg) = match state {
+        ChipState::Ready => (t.green, t.muted),
+        ChipState::Busy => (t.warn, t.warn),
+        ChipState::Off => (t.faint, t.muted),
+    };
     p.circle_filled(pos2(rect.left() + 13.5, rect.center().y), 3.5, dot);
-    let fg = if ok { t.muted } else { t.warn };
     draw_text(
         p,
         pos2(rect.left() + 23.0, rect.center().y),

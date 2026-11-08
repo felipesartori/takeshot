@@ -4,7 +4,7 @@
 
 use crate::Shared;
 use crate::screens::about::AboutInfo;
-use crate::screens::home::{Home, MainAction, SettingsSection, hotkey_text};
+use crate::screens::home::{Home, MainAction, SettingsSection, chip, hotkey_text};
 use crate::system::hotkeys::{Shot, Status, default_keys, label};
 use crate::system::settings::{OnClose, TrayClick};
 use crate::ui::i18n::{LangPref, Msg, t as tr, tf};
@@ -395,8 +395,9 @@ fn shortcuts(
         let text = match &status {
             Ok(s) | Err(s) => s.clone(),
         };
+        let (state, chip_text) = chip(home.hotkey_status.as_ref(), &shared.settings);
         kit::setting_row(ui, t, tr(Msg::ShortcutStatus), Some(&text), |ui| {
-            kit::status_chip(ui, t, status.is_ok());
+            kit::status_chip(ui, t, state, &chip_text);
         });
         let prtsc_busy = matches!(&home.hotkey_status, Some(Status::Busy { keys }) if keys.iter().any(|k| k.contains("PrtSc")));
         if cfg!(windows) {

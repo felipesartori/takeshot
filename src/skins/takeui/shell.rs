@@ -2,7 +2,7 @@
 //! the window buttons) over a rounded content panel, as in "A · Janela principal" of the design.
 
 use crate::Shared;
-use crate::screens::home::{Home, MainAction, hotkey_text};
+use crate::screens::home::{Home, MainAction, chip, hotkey_text};
 use crate::system::instance::Page;
 use crate::ui::chrome::{self, BAR_HEIGHT};
 use crate::ui::i18n::{Msg, t as tr};
@@ -103,11 +103,12 @@ fn title_bar(
                 acts.push(MainAction::SetMode(next));
             }
             ui.add_space(12.0);
-            let status = hotkey_text(home.hotkey_status.as_ref(), &shared.settings);
-            let tip = match &status {
-                Ok(s) | Err(s) => s.clone(),
+            let status = home.hotkey_status.as_ref();
+            let tip = match hotkey_text(status, &shared.settings) {
+                Ok(s) | Err(s) => s,
             };
-            kit::status_chip(ui, t, status.is_ok()).on_hover_text(tip);
+            let (state, text) = chip(status, &shared.settings);
+            kit::status_chip(ui, t, state, &text).on_hover_text(tip);
         });
     });
 }

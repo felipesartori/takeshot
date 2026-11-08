@@ -1,6 +1,6 @@
 //! TakeUI's Estilo: the live preview with the direct-copy choice under it, and the style controls
-//! in collapsible sections on the right, as in "Estilo · escuro" of the design. `controls` is also
-//! what the editor's Style tab shows.
+//! in collapsible sections on the right, as in "Estilo · escuro" of the design. `controls` is meant
+//! for the editor's Style tab too (plan 5b); the current editor still draws its own panel.
 
 use crate::Shared;
 use crate::engine::presets::PRESETS;
@@ -79,34 +79,60 @@ fn preview_side(
 ) {
     let area = ui.max_rect();
     ui.spacing_mut().item_spacing.y = 4.0;
-    ui.horizontal(|ui| {
+    // Title and subtitle with Restore default on their right, or the button under them when the
+    // row does not fit (as Início's header). The button's width is remembered from the frame before.
+    let (title, sub) = (tr(Msg::Style), tr(Msg::StyleSubtitle));
+    let texts_w = {
+        let p = ui.painter();
+        let w = |s: &str, f| p.layout_no_wrap(s.to_string(), f, t.text).size().x;
+        w(title, font(22.0, Weight::Bold)).max(w(sub, font(13.0, Weight::Regular)))
+    };
+    let restore_id = egui::Id::unique("takeui-style-restore");
+    let restore_w = ui
+        .ctx()
+        .data(|d| d.get_temp::<f32>(restore_id))
+        .unwrap_or(160.0);
+    let titles = |ui: &mut Ui| {
         ui.vertical(|ui| {
             ui.label(
-                RichText::new(tr(Msg::Style))
+                RichText::new(title)
                     .font(font(22.0, Weight::Bold))
                     .color(t.text),
             );
             ui.label(
-                RichText::new(tr(Msg::StyleSubtitle))
+                RichText::new(sub)
                     .font(font(13.0, Weight::Regular))
                     .color(t.muted),
             );
         });
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if kit::button(
-                ui,
-                t,
-                BtnKind::Secondary,
-                Some(Ico::RotateCcw),
-                tr(Msg::RestoreDefault),
-                None,
-            )
-            .clicked()
-            {
-                acts.push(MainAction::RestoreStyle);
-            }
-        });
-    });
+    };
+    let mut restore = |ui: &mut Ui| {
+        let r = kit::button(
+            ui,
+            t,
+            BtnKind::Secondary,
+            Some(Ico::RotateCcw),
+            tr(Msg::RestoreDefault),
+            None,
+        );
+        if r.clicked() {
+            acts.push(MainAction::RestoreStyle);
+        }
+        r.rect.width()
+    };
+    let w = if area.width() >= texts_w + 16.0 + restore_w {
+        ui.horizontal(|ui| {
+            titles(ui);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| restore(ui))
+                .inner
+        })
+        .inner
+    } else {
+        titles(ui);
+        ui.add_space(8.0);
+        restore(ui)
+    };
+    ui.ctx().data_mut(|d| d.insert_temp(restore_id, w));
     ui.add_space(16.0 - 4.0);
     let label = tr(Msg::DirectStyleLabel);
     let label_w = ui
@@ -479,6 +505,38 @@ mod tests {
         let restore =
             painted_at(&painted, &every(Msg::RestoreDefault), |_| true).expect("Restore default");
         assert!(restore.x < line.left(), "{restore:?} over the preview");
+    }
+
+    #[test]
+    fn no_text_runs_into_another_at_any_width() {
+        // Restore default used to sit over the wrapped subtitle between 900 and ~1100 px.
+        let _lang = lang_lock();
+        let before = lang();
+        for l in [Lang::Pt, Lang::En] {
+            set_lang(l);
+            for w in (900..=1240).step_by(20) {
+                let (mut home, mut shared) = Home::for_tests(vec![]);
+                home.open(Page::Style);
+                let (_, painted, blocks) = run_painted(
+                    &mut home,
+                    &mut shared,
+                    (w as f32, 740.0),
+                    true,
+                    vec![vec![]],
+                );
+                let b = content_box(&blocks, &shared.tokens(None));
+                let texts: Vec<_> = painted.iter().filter(|(_, r)| r.top() > b.top()).collect();
+                for (i, (s, r)) in texts.iter().enumerate() {
+                    for (o, q) in &texts[i + 1..] {
+                        assert!(
+                            !r.shrink(0.5).intersects(q.shrink(0.5)),
+                            "{l:?} at {w}: {s:?} {r:?} runs into {o:?} {q:?}"
+                        );
+                    }
+                }
+            }
+        }
+        set_lang(before);
     }
 
     #[test]

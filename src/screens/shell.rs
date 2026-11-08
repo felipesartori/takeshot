@@ -10,7 +10,7 @@ use crate::screens::home::Home;
 use crate::screens::tray_menu::{MenuOutcome, TrayMenu};
 use crate::screens::widgets;
 use crate::system::actions;
-use crate::system::hotkeys::{Shot, Status, effective_status, label, should_offer_priority};
+use crate::system::hotkeys::{Shot, effective_status, label, should_offer_priority};
 use crate::system::instance::Page;
 use crate::system::resident::{
     Resident, ResidentEvent, XAction, hide_command, left_click, on_wayland, on_x, remembered,
@@ -307,8 +307,13 @@ impl Shell {
         if !std::mem::replace(&mut self.started, true) && !self.hosted && !self.main_open {
             ctx.send_viewport_cmd_to(ViewportId::ROOT, hide_command(on_wayland()));
         }
-        if cfg!(windows) && resident.priority_on() != shared.settings.prtsc_priority {
-            resident.set_priority(shared.settings.prtsc_priority);
+        let hook = crate::system::resident::wants_hook(&shared.settings);
+        if cfg!(windows) && resident.priority_on() != hook {
+            resident.set_priority(hook);
+        }
+        // The Settings switch acts at once, like the priority above.
+        if resident.hotkeys.enabled() != shared.settings.hotkeys {
+            resident.hotkeys.set_enabled(shared.settings.hotkeys);
         }
         let raw = resident.hotkeys.status().clone();
         home.hotkey_status = Some(effective_status(&raw, resident.priority_on()));
@@ -347,9 +352,12 @@ impl Shell {
             if self.menu.is_open() {
                 let t = Self::theme(&ctx, shared);
                 let entries = self.entries(shared);
-                let ready = matches!(home.hotkey_status, Some(Status::Ready));
+                let (state, text) =
+                    crate::screens::home::chip(home.hotkey_status.as_ref(), &shared.settings);
                 let thumb = |p: &std::path::Path| home.thumbnail(p);
-                if let MenuOutcome::Chosen(a) = self.menu.show(&ctx, &t, &entries, ready, &thumb) {
+                if let MenuOutcome::Chosen(a) =
+                    self.menu.show(&ctx, &t, &entries, (state, &text), &thumb)
+                {
                     self.run(&ctx, a, home, shared);
                 }
             }

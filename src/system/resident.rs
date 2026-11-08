@@ -137,7 +137,7 @@ impl Resident {
             hook: None,
             tray,
         };
-        r.set_priority(settings.prtsc_priority);
+        r.set_priority(wants_hook(settings));
         r
     }
 
@@ -176,10 +176,31 @@ impl Resident {
     }
 }
 
+/// Whether the PrtSc priority hook should run: asked for, and the global shortcuts switched on.
+pub fn wants_hook(settings: &Settings) -> bool {
+    settings.prtsc_priority && settings.hotkeys
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::system::settings::{OnClose, TrayClick};
+
+    #[test]
+    fn the_prtsc_hook_needs_the_shortcuts_on() {
+        // Turning the global shortcuts off frees PrtSc, priority or not.
+        let mut s = Settings {
+            prtsc_priority: true,
+            hotkeys: true,
+            ..Settings::default()
+        };
+        assert!(wants_hook(&s));
+        s.hotkeys = false;
+        assert!(!wants_hook(&s));
+        s.hotkeys = true;
+        s.prtsc_priority = false;
+        assert!(!wants_hook(&s));
+    }
 
     #[test]
     fn x_follows_the_remembered_choice() {

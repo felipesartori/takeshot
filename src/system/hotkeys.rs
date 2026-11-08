@@ -179,6 +179,10 @@ pub struct Hotkeys {
     /// Ids the event handler maps to Area and Full; they change when a shortcut is rebound.
     ids: Arc<[AtomicU32; 2]>,
     status: Status,
+    /// The Settings switch; off leaves the keys free for other apps.
+    enabled: bool,
+    /// Why the system refused global shortcuts, if it did.
+    refused: Option<String>,
 }
 
 fn slot(s: Shot) -> usize {
@@ -189,7 +193,8 @@ fn slot(s: Shot) -> usize {
 }
 
 impl Hotkeys {
-    /// Registers the shortcuts from `settings` and calls `on_shot` on the hotkey thread when one fires.
+    /// Registers the shortcuts from `settings` (when switched on) and calls `on_shot` on the hotkey
+    /// thread when one fires. The manager is made either way, so the switch can act at once.
     pub fn start(settings: &Settings, on_shot: impl Fn(Shot) + Send + Sync + 'static) -> Self {
         let mut h = Self {
             manager: None,
@@ -197,14 +202,14 @@ impl Hotkeys {
             registered: [None, None],
             ids: Arc::new([AtomicU32::new(0), AtomicU32::new(0)]),
             status: Status::Off,
+            enabled: settings.hotkeys,
+            refused: None,
         };
-        if !settings.hotkeys {
-            return h;
-        }
         let manager = match GlobalHotKeyManager::new() {
             Ok(m) => m,
             Err(e) => {
-                h.status = Status::Unavailable(e.to_string());
+                h.refused = Some(e.to_string());
+                h.refresh_status();
                 return h;
             }
         };
@@ -220,10 +225,28 @@ impl Hotkeys {
             }
         }));
         h.manager = Some(manager);
-        for s in [Shot::Area, Shot::Full] {
-            let keys = h.keys[slot(s)].clone();
-            let _ = h.register(s, &keys);
+        if h.enabled {
+            for s in [Shot::Area, Shot::Full] {
+                let keys = h.keys[slot(s)].clone();
+                let _ = h.register(s, &keys);
+            }
         }
+        h.refresh_status();
+        h
+    }
+
+    /// A set of shortcuts the system refused, for tests of what does not need the system.
+    #[cfg(test)]
+    fn refused(keys: [&str; 2], enabled: bool, error: &str) -> Self {
+        let mut h = Self {
+            manager: None,
+            keys: keys.map(str::to_string),
+            registered: [None, None],
+            ids: Arc::new([AtomicU32::new(0), AtomicU32::new(0)]),
+            status: Status::Off,
+            enabled,
+            refused: Some(error.to_string()),
+        };
         h.refresh_status();
         h
     }
@@ -232,9 +255,35 @@ impl Hotkeys {
         &self.status
     }
 
-    /// Swaps the shortcut of a capture; on failure the old one stays registered.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Turns the global shortcuts on or off now: off unregisters them, on registers them again.
+    pub fn set_enabled(&mut self, on: bool) {
+        if on == self.enabled {
+            return;
+        }
+        self.enabled = on;
+        for s in [Shot::Area, Shot::Full] {
+            if on {
+                let keys = self.keys[slot(s)].clone();
+                let _ = self.register(s, &keys);
+            } else if let (Some(m), Some(hk)) = (&self.manager, self.registered[slot(s)].take()) {
+                let _ = m.unregister(hk);
+            }
+        }
+        self.refresh_status();
+    }
+
+    /// Swaps the shortcut of a capture; on failure the old one stays registered. While the
+    /// shortcuts are off the new keys are only kept.
     pub fn rebind(&mut self, s: Shot, keys: &str) -> Result<(), String> {
         HotKey::from_str(keys).map_err(|e| e.to_string())?;
+        if !self.enabled {
+            self.keys[slot(s)] = keys.to_string();
+            return Ok(());
+        }
         let old = self.keys[slot(s)].clone();
         if let (Some(m), Some(hk)) = (&self.manager, self.registered[slot(s)].take()) {
             let _ = m.unregister(hk);
@@ -258,14 +307,17 @@ impl Hotkeys {
     }
 
     fn refresh_status(&mut self) {
-        if self.manager.is_none() {
-            return;
-        }
-        let reg = [
-            (self.keys[0].as_str(), self.registered[0].is_some()),
-            (self.keys[1].as_str(), self.registered[1].is_some()),
-        ];
-        self.status = status(&reg, snipping_tool_owns_prtsc());
+        self.status = if !self.enabled {
+            Status::Off
+        } else if let Some(e) = &self.refused {
+            Status::Unavailable(e.clone())
+        } else {
+            let reg = [
+                (self.keys[0].as_str(), self.registered[0].is_some()),
+                (self.keys[1].as_str(), self.registered[1].is_some()),
+            ];
+            status(&reg, snipping_tool_owns_prtsc())
+        };
     }
 }
 
@@ -287,6 +339,20 @@ mod tests {
     }
     use global_hotkey::hotkey::HotKey;
     use std::str::FromStr;
+
+    #[test]
+    fn the_switch_applies_at_once() {
+        // Without a system manager (as on Wayland) the switch still reports what was chosen.
+        let mut h = Hotkeys::refused(["PrintScreen", "shift+PrintScreen"], true, "no display");
+        assert_eq!(h.status(), &Status::Unavailable("no display".into()));
+        h.set_enabled(false);
+        assert!(!h.enabled());
+        assert_eq!(h.status(), &Status::Off);
+        // A shortcut changed while they are off is kept for when they come back.
+        assert_eq!(h.rebind(Shot::Area, "F9"), Ok(()));
+        h.set_enabled(true);
+        assert_eq!(h.status(), &Status::Unavailable("no display".into()));
+    }
 
     #[test]
     fn labels_read_like_the_keyboard() {
