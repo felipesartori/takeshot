@@ -71,6 +71,8 @@ pub enum MainAction {
     SetMode(UiMode),
     /// Início as a grid or a list.
     SetHomeView(crate::system::settings::HomeView),
+    /// Show or hide Início's detail panel.
+    SetHomeDetails(bool),
     About,
     Window(WindowControl),
 }
@@ -106,6 +108,12 @@ pub struct Home {
     filter: Period,
     query: String,
     selected: Option<PathBuf>,
+    /// The keys moved the choice: the gallery brings it into view.
+    reveal: bool,
+    /// A capture to choose by name once the folder is read (`--select`).
+    pending_select: Option<String>,
+    /// Cards in a gallery row (1 in the list), for the up and down keys.
+    cols: usize,
     folder_missing: bool,
     thumbs: Thumbs,
     textures: HashMap<PathBuf, Thumbnail>,
@@ -157,6 +165,9 @@ impl Home {
             filter: Period::All,
             query: String::new(),
             selected: None,
+            reveal: false,
+            pending_select: None,
+            cols: 1,
             folder_missing: false,
             thumbs: Thumbs::new(ctx),
             textures: HashMap::new(),
@@ -248,6 +259,38 @@ impl Home {
 
     pub fn selected(&self) -> Option<&Path> {
         self.selected.as_deref()
+    }
+
+    /// Chooses the capture named `name` now, or when the folder's listing brings it.
+    pub fn select_by_name(&mut self, name: &str) {
+        self.pending_select = Some(name.to_string());
+        self.take_pending_select();
+    }
+
+    fn take_pending_select(&mut self) {
+        let Some(name) = &self.pending_select else {
+            return;
+        };
+        if let Some(e) = self.entries.iter().find(|e| e.name == *name) {
+            self.selected = Some(e.path.clone());
+            self.pending_select = None;
+        }
+    }
+
+    /// The chosen capture, when it is in the list.
+    pub fn selected_entry(&self) -> Option<Entry> {
+        let s = self.selected.as_deref()?;
+        self.entries.iter().find(|e| e.path == s).cloned()
+    }
+
+    /// The gallery's columns, for the up and down keys.
+    pub fn set_columns(&mut self, cols: usize) {
+        self.cols = cols.max(1);
+    }
+
+    /// Whether the keys moved the choice since the last call: the gallery scrolls to it.
+    pub fn take_reveal(&mut self) -> bool {
+        std::mem::take(&mut self.reveal)
     }
 
     pub fn folder_missing(&self) -> bool {
@@ -366,6 +409,7 @@ impl Home {
         {
             self.selected = None;
         }
+        self.take_pending_select();
         self.refilter();
     }
 
@@ -502,8 +546,55 @@ impl Home {
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O)) {
                 acts.push(MainAction::OpenImage);
             }
+            if self.page == Page::Start && !egui::Popup::is_any_open(&ctx) {
+                self.gallery_keys(ui, &mut acts);
+            }
         }
         acts
+    }
+
+    /// The gallery's keys: the arrows move the choice (up and down by a row), Enter opens it in
+    /// the editor, Ctrl+C copies it and Delete sends it to the trash.
+    fn gallery_keys(&mut self, ui: &Ui, acts: &mut Vec<MainAction>) {
+        use egui::{Key, Modifiers};
+        let step = ui.input(|i| {
+            let cols = self.cols as isize;
+            [
+                (Key::ArrowLeft, -1),
+                (Key::ArrowRight, 1),
+                (Key::ArrowUp, -cols),
+                (Key::ArrowDown, cols),
+            ]
+            .into_iter()
+            .find(|(k, _)| i.key_pressed(*k))
+            .map(|(_, d)| d)
+        });
+        if let Some(d) = step
+            && !self.shown.is_empty()
+        {
+            let at = self
+                .selected
+                .as_deref()
+                .and_then(|s| self.shown.iter().position(|&i| self.entries[i].path == s));
+            let next = match at {
+                Some(p) => (p as isize + d).clamp(0, self.shown.len() as isize - 1) as usize,
+                None => 0,
+            };
+            self.selected = Some(self.entries[self.shown[next]].path.clone());
+            self.reveal = true;
+        }
+        let Some(path) = self.selected.clone() else {
+            return;
+        };
+        if ui.input(|i| i.key_pressed(Key::Enter)) {
+            acts.push(MainAction::Edit(path.clone()));
+        }
+        if ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::C)) {
+            acts.push(MainAction::Copy(path.clone()));
+        }
+        if ui.input(|i| i.key_pressed(Key::Delete)) {
+            acts.push(MainAction::Trash(path));
+        }
     }
 
     /// Carries out what the user asked for. Resident matters (About) go to `requests`.
@@ -544,6 +635,10 @@ impl Home {
             MainAction::Select(p) => self.selected = Some(p),
             MainAction::SetHomeView(v) => {
                 shared.settings.home_view = v;
+                shared.settings_dirty = true;
+            }
+            MainAction::SetHomeDetails(on) => {
+                shared.settings.home_details = on;
                 shared.settings_dirty = true;
             }
             MainAction::Section(s) => {
@@ -826,6 +921,22 @@ mod tests {
         assert_eq!(off.contains("prioridade"), cfg!(windows), "{off}");
         assert!(!on.contains("prioridade"), "already on: {on}");
         set_lang(Lang::En);
+    }
+
+    #[test]
+    fn a_capture_chosen_by_name_waits_for_the_folder() {
+        use std::time::SystemTime;
+        let e = |n: &str| Entry {
+            path: PathBuf::from(n),
+            name: n.into(),
+            modified: SystemTime::now(),
+            bytes: 1,
+        };
+        let (mut home, _) = Home::for_tests(vec![]);
+        home.select_by_name("b.png");
+        assert_eq!(home.selected(), None, "not read yet");
+        home.set_entries(vec![e("a.png"), e("b.png")]);
+        assert_eq!(home.selected(), Some(Path::new("b.png")));
     }
 
     #[test]

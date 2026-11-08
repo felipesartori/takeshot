@@ -13,6 +13,7 @@
 //!   --theme takeui|coral --mode light|dark|system --lang en|pt|auto   override settings for this run only (every window)
 //!   --native-titlebar      the system's title bar instead of the theme's (also TAKESHOT_NATIVE_TITLEBAR=1)
 //!   --captures-dir path    the gallery reads this folder for this run only
+//!   --select name          Início starts with this capture chosen (for screenshots)
 
 mod engine;
 mod screens;
@@ -44,6 +45,8 @@ pub struct RunOverrides {
     pub mode: Option<ui::tokens::UiMode>,
     /// `--captures-dir`: the gallery reads this folder instead of the saved one.
     pub captures_dir: Option<String>,
+    /// `--select`: Início starts with this capture chosen.
+    pub select: Option<String>,
 }
 
 impl Shared {
@@ -133,6 +136,7 @@ struct Args {
     /// The main window's page to open on (`--page inicio|estilo|ajustes`).
     page: Option<system::instance::Page>,
     captures_dir: Option<String>,
+    select: Option<String>,
 }
 
 /// What `--page` names: a page of the main window, or the component gallery.
@@ -173,6 +177,7 @@ fn parse_args() -> Args {
         lang: None,
         page: None,
         captures_dir: None,
+        select: None,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut full = false;
@@ -189,6 +194,10 @@ fn parse_args() -> Args {
             "--native-titlebar" => ui::chrome::init(true),
             "--captures-dir" => {
                 a.captures_dir = v.get(i + 1).cloned();
+                i += 1;
+            }
+            "--select" => {
+                a.select = v.get(i + 1).cloned();
                 i += 1;
             }
             "--full" => full = true,
@@ -275,6 +284,9 @@ fn main_home(
     let mut h = home::Home::new(ctx, shared);
     if let Some(p) = page {
         h.open(p);
+    }
+    if let Some(name) = &shared.overrides.select {
+        h.select_by_name(name);
     }
     h
 }
@@ -690,6 +702,7 @@ fn main() -> eframe::Result {
                     theme: args.theme,
                     mode: args.mode,
                     captures_dir: args.captures_dir.clone(),
+                    select: args.select.clone(),
                 },
             };
             shared.logo.sync(ctx, &shared.settings.watermark);

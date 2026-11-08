@@ -66,12 +66,45 @@ pub fn start_page(
         UiBuilder::new()
             .max_rect(filters)
             .layout(Layout::left_to_right(Align::Center)),
-        |ui| filter_row(ui, t, home, shared.settings.home_view, acts),
+        |ui| {
+            filter_row(
+                ui,
+                t,
+                home,
+                shared.settings.home_view,
+                shared.settings.home_details,
+                acts,
+            )
+        },
     );
+    // The detail panel takes the right side down to the box's bottom, behind a line.
+    let details = shared.settings.home_details;
+    let panel = Rect::from_min_max(
+        pos2(b.right() - PANEL_W, filters.bottom()),
+        pos2(inner.right(), inner.bottom()),
+    );
+    let right = if details {
+        panel.left() - 1.0 - 24.0
+    } else {
+        b.right() - 24.0
+    };
     let rest = Rect::from_min_max(
         pos2(b.left() + 24.0, filters.bottom()),
-        pos2(b.right() - 24.0, inner.bottom()),
+        pos2(right.max(b.left() + 24.0), inner.bottom()),
     );
+    if details {
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                pos2(panel.left() - 1.0, panel.top()),
+                pos2(panel.left(), panel.bottom()),
+            ),
+            0.0,
+            t.border,
+        );
+        ui.scope_builder(UiBuilder::new().max_rect(panel.shrink(16.0)), |ui| {
+            detail_panel(ui, t, home, acts)
+        });
+    }
     ui.scope_builder(UiBuilder::new().max_rect(rest), |ui| {
         if home.folder_missing() {
             empty(
@@ -104,6 +137,7 @@ fn filter_row(
     t: &Tokens,
     home: &mut Home,
     view: HomeView,
+    details: bool,
     acts: &mut Vec<MainAction>,
 ) {
     ui.spacing_mut().item_spacing.x = 2.0;
@@ -130,6 +164,9 @@ fn filter_row(
         .clicked()
         {
             acts.push(MainAction::OpenFolder);
+        }
+        if kit::icon_button(ui, t, Ico::PanelRight, details, tr(Msg::Details)).clicked() {
+            acts.push(MainAction::SetHomeDetails(!details));
         }
         let mut v = view;
         let items = [
@@ -263,6 +300,8 @@ fn capture_buttons(
 /// The grid; only the rows on screen are laid out and ask for thumbnails.
 /// A day's title row in the gallery.
 const HEAD_H: f32 = 40.0;
+/// The detail panel's width, its line included.
+const PANEL_W: f32 = 268.0;
 /// The column titles over the list.
 const TITLES_H: f32 = 30.0;
 
@@ -330,6 +369,26 @@ fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, view: HomeView, acts: &mut 
     };
     let (cols, card) = grid(width);
     let (rows, total) = layout(&groups, view, cols, card.y);
+    home.set_columns(if view == HomeView::Grid { cols } else { 1 });
+    let reveal = home.take_reveal();
+    let chosen = home.selected().map(|p| p.to_path_buf());
+    let chosen_row = |row: Row| match (row, &chosen) {
+        (Row::Item(i), Some(p)) => home.entry(i).path == *p,
+        (Row::Cards(g, start), Some(p)) => groups[g]
+            .items
+            .iter()
+            .skip(start)
+            .take(cols)
+            .any(|&i| home.entry(i).path == *p),
+        _ => false,
+    };
+    let reveal_at = if reveal {
+        rows.iter()
+            .find(|(row, _, _)| chosen_row(*row))
+            .map(|&(_, y, h)| (y, h))
+    } else {
+        None
+    };
     if view == HomeView::List {
         column_titles(ui, t, width);
     }
@@ -338,6 +397,12 @@ fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, view: HomeView, acts: &mut 
         .show_viewport(ui, |ui, viewport| {
             ui.set_height(total);
             let origin = ui.max_rect().min;
+            if let Some((y, h)) = reveal_at {
+                ui.scroll_to_rect(
+                    Rect::from_min_size(origin + vec2(0.0, y), vec2(width, h)),
+                    None,
+                );
+            }
             for &(row, y, h) in &rows {
                 if y + h < viewport.min.y || y > viewport.max.y {
                     continue;
@@ -391,16 +456,19 @@ fn day_head(ui: &mut Ui, t: &Tokens, group: &DayGroup, now: chrono::DateTime<chr
 /// The list's column titles, on the columns of its rows.
 fn column_titles(ui: &mut Ui, t: &Tokens, width: f32) {
     let (r, _) = ui.allocate_exact_size(vec2(width, TITLES_H), egui::Sense::hover());
-    let x = kit::list_columns(width);
+    let c = kit::list_columns(width);
     let p = ui.painter();
-    for (i, m) in [
-        (1, Msg::ColName),
-        (2, Msg::ColTime),
-        (3, Msg::ColDimensions),
-        (4, Msg::ColSize),
+    for (at, m) in [
+        (Some(c.name), Msg::ColName),
+        (c.cells[0], Msg::ColTime),
+        (c.cells[1], Msg::ColDimensions),
+        (c.cells[2], Msg::ColSize),
     ] {
+        let Some(at) = at else {
+            continue;
+        };
         p.text(
-            pos2(r.left() + x[i], r.center().y),
+            pos2(r.left() + at, r.center().y),
             egui::Align2::LEFT_CENTER,
             tr(m).to_uppercase(),
             font(11.0, Weight::Medium),
@@ -518,6 +586,149 @@ fn item_answers(
             }
         }
     });
+}
+
+/// The chosen capture's preview, name, day and time, dimensions, size and folder, then Copy,
+/// Open in the editor, Show in folder, Pin and Delete; a hint when nothing is chosen.
+fn detail_panel(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
+    let area = ui.max_rect();
+    let Some(e) = home.selected_entry() else {
+        ui.painter().text(
+            area.center(),
+            egui::Align2::CENTER_CENTER,
+            tr(Msg::DetailsEmpty),
+            font(12.0, Weight::Regular),
+            t.faint,
+        );
+        return;
+    };
+    let w = area.width();
+    ui.spacing_mut().item_spacing.y = 12.0;
+    let (thumb, dims) = home.card_thumb(&e.path);
+    let (pic, _) = ui.allocate_exact_size(vec2(w, (w * 0.62).round()), egui::Sense::hover());
+    kit::thumb(ui.painter(), t, pic, thumb);
+    let now = chrono::Local::now();
+    let day = crate::screens::home::day_label(crate::system::library::day_of(e.modified, now), now);
+    let line = |s: &str, size: f32, weight: Weight, c: egui::Color32| {
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(s.to_string(), font(size, weight), c);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(w);
+        job
+    };
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 3.0;
+        ui.label(line(&e.name, 13.0, Weight::Bold, t.text));
+        ui.label(line(
+            &tf(Msg::DayAtTime, &[&day, &time_of(&e)]),
+            12.0,
+            Weight::Regular,
+            t.muted,
+        ));
+    });
+    let folder = e
+        .path
+        .parent()
+        .map(|p| {
+            let parts: Vec<_> = p.components().rev().take(2).collect();
+            parts
+                .iter()
+                .rev()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(std::path::MAIN_SEPARATOR_STR)
+        })
+        .unwrap_or_default();
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let dims_text = dims.map(|[a, b]| format!("{a} × {b}")).unwrap_or_default();
+        for (m, v) in [
+            (Msg::ColDimensions, dims_text.as_str()),
+            (Msg::ColSize, &human_size(e.bytes)),
+            (Msg::CapturesFolder, folder.as_str()),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(tr(m))
+                        .font(font(12.0, Weight::Regular))
+                        .color(t.muted),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(line(v, 12.0, Weight::Regular, t.text));
+                });
+            });
+        }
+    });
+    let (rule, _) = ui.allocate_exact_size(vec2(w, 1.0), egui::Sense::hover());
+    ui.painter().rect_filled(rule, 0.0, t.border);
+    let path = e.path.clone();
+    let copy_keys = if cfg!(target_os = "macos") {
+        "Cmd+C"
+    } else {
+        "Ctrl+C"
+    };
+    if kit::wide_button(
+        ui,
+        t,
+        BtnKind::Primary,
+        Some(Ico::Copy),
+        tr(Msg::Copy),
+        Some(copy_keys),
+        w,
+    )
+    .clicked()
+    {
+        acts.push(MainAction::Copy(path.clone()));
+    }
+    if kit::wide_button(
+        ui,
+        t,
+        BtnKind::Secondary,
+        Some(Ico::Edit),
+        tr(Msg::EditInEditor),
+        Some("Enter"),
+        w,
+    )
+    .clicked()
+    {
+        acts.push(MainAction::Edit(path.clone()));
+    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        if kit::wide_button(
+            ui,
+            t,
+            BtnKind::Ghost,
+            Some(Ico::FolderOpen),
+            tr(Msg::ShowInFolder),
+            None,
+            w - 32.0 - 8.0,
+        )
+        .clicked()
+        {
+            acts.push(MainAction::ShowInFolder(path.clone()));
+        }
+        if kit::icon_button(ui, t, Ico::Pin, false, tr(Msg::PinOnScreen)).clicked() {
+            acts.push(MainAction::Pin(path.clone()));
+        }
+    });
+    // Delete at the panel's foot, away from the others.
+    let foot = Rect::from_min_size(pos2(area.left(), area.bottom() - 32.0), vec2(w, 32.0));
+    if ui.available_rect_before_wrap().bottom() > foot.top() {
+        ui.scope_builder(UiBuilder::new().max_rect(foot), |ui| {
+            if kit::button(
+                ui,
+                t,
+                BtnKind::DangerGhost,
+                Some(Ico::Trash),
+                tr(Msg::Delete),
+                Some("Del"),
+            )
+            .clicked()
+            {
+                acts.push(MainAction::Trash(path.clone()));
+            }
+        });
+    }
 }
 
 /// The card's tooltip: size, file size, folder and date.
@@ -664,6 +875,8 @@ mod tests {
         let now = SystemTime::now();
         let few = (0..5).map(|i| entry(&format!("{i}.png"), now)).collect();
         let (mut home, mut shared) = Home::for_tests(few);
+        // The grid alone, without the detail panel.
+        shared.settings.home_details = false;
         let (_, _, blocks) =
             run_painted(&mut home, &mut shared, (1160.0, 740.0), true, vec![vec![]]);
         let t = shared.tokens(None);
@@ -928,7 +1141,9 @@ mod tests {
             &mut shared,
         );
         let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
-        let row = painted_at(&painted, &["a.png"], |_| true).expect("the row");
+        // The row, not the detail panel's copy of the name.
+        let row = painted_at(&painted, &["a.png"], |r| r.right() < 1160.0 - 8.0 - 268.0)
+            .expect("the row");
         let copy = painted_at(
             &painted,
             &[crate::ui::icon::glyph(Ico::Copy).to_string().as_str()],
@@ -940,6 +1155,195 @@ mod tests {
             acts.contains(&MainAction::Copy(PathBuf::from("a.png"))),
             "{acts:?}"
         );
+    }
+
+    fn glyph_at(
+        painted: &[(String, egui::Rect)],
+        icon: Ico,
+        inside: impl Fn(egui::Rect) -> bool,
+    ) -> Option<egui::Pos2> {
+        painted_at(
+            painted,
+            &[crate::ui::icon::glyph(icon).to_string().as_str()],
+            inside,
+        )
+    }
+
+    #[test]
+    fn the_detail_panel_acts_on_the_selection() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let ctx = egui::Context::default();
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        assert!(
+            painted_at(&painted, &every(Msg::DetailsEmpty), |_| true).is_some(),
+            "nothing chosen yet"
+        );
+        home.apply(
+            MainAction::Select(PathBuf::from("a.png")),
+            &ctx,
+            &mut shared,
+        );
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let in_panel = |r: egui::Rect| r.left() > 1160.0 - 8.0 - 268.0;
+        for (msg, act) in [
+            (Msg::Copy, MainAction::Copy(PathBuf::from("a.png"))),
+            (Msg::EditInEditor, MainAction::Edit(PathBuf::from("a.png"))),
+            (
+                Msg::ShowInFolder,
+                MainAction::ShowInFolder(PathBuf::from("a.png")),
+            ),
+            (Msg::Delete, MainAction::Trash(PathBuf::from("a.png"))),
+        ] {
+            let at = painted_at(&painted, &every(msg), in_panel)
+                .unwrap_or_else(|| panic!("{msg:?} in the panel"));
+            let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, click(at));
+            assert!(acts.contains(&act), "{msg:?}: {acts:?}");
+        }
+        let pin = glyph_at(&painted, Ico::Pin, in_panel).expect("Pin in the panel");
+        let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, click(pin));
+        assert!(
+            acts.contains(&MainAction::Pin(PathBuf::from("a.png"))),
+            "{acts:?}"
+        );
+        assert!(
+            painted_at(&painted, &["a.png"], in_panel).is_some(),
+            "the name in the panel"
+        );
+    }
+
+    #[test]
+    fn the_details_choice_is_kept() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let toggle = glyph_at(&painted, Ico::PanelRight, |_| true).expect("the Details toggle");
+        let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, click(toggle));
+        assert!(
+            acts.contains(&MainAction::SetHomeDetails(false)),
+            "{acts:?}"
+        );
+        shared.settings_dirty = false;
+        home.apply(
+            MainAction::SetHomeDetails(false),
+            &egui::Context::default(),
+            &mut shared,
+        );
+        assert!(!shared.settings.home_details && shared.settings_dirty);
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        assert!(
+            painted_at(&painted, &every(Msg::DetailsEmpty), |_| true).is_none(),
+            "no panel"
+        );
+    }
+
+    #[test]
+    fn keys_move_and_act_on_the_chosen_capture() {
+        let now = SystemTime::now();
+        let entries = vec![
+            entry("a.png", now),
+            entry("b.png", now),
+            entry("c.png", now),
+        ];
+        let (mut home, mut shared) = Home::for_tests(entries);
+        shared.settings.home_view = HomeView::List;
+        let ctx = egui::Context::default();
+        home.apply(
+            MainAction::Select(PathBuf::from("a.png")),
+            &ctx,
+            &mut shared,
+        );
+        let key = |k: egui::Key, m: egui::Modifiers| egui::Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: m,
+        };
+        let none = egui::Modifiers::NONE;
+        run(
+            &mut home,
+            &mut shared,
+            (1160.0, 740.0),
+            true,
+            vec![vec![key(egui::Key::ArrowDown, none)]],
+        );
+        assert_eq!(home.selected(), Some(std::path::Path::new("b.png")), "down");
+        for (k, m, act) in [
+            (
+                egui::Key::Enter,
+                none,
+                MainAction::Edit(PathBuf::from("b.png")),
+            ),
+            (
+                egui::Key::C,
+                egui::Modifiers::COMMAND,
+                MainAction::Copy(PathBuf::from("b.png")),
+            ),
+            (
+                egui::Key::Delete,
+                none,
+                MainAction::Trash(PathBuf::from("b.png")),
+            ),
+        ] {
+            let (acts, _) = run(
+                &mut home,
+                &mut shared,
+                (1160.0, 740.0),
+                true,
+                vec![vec![key(k, m)]],
+            );
+            assert!(acts.contains(&act), "{k:?}: {acts:?}");
+        }
+        run(
+            &mut home,
+            &mut shared,
+            (1160.0, 740.0),
+            true,
+            vec![vec![key(egui::Key::ArrowUp, none)]],
+        );
+        assert_eq!(home.selected(), Some(std::path::Path::new("a.png")), "up");
+    }
+
+    #[test]
+    fn the_home_fits_at_the_minimum_size_with_details() {
+        use crate::ui::i18n::{Lang, set_lang};
+        let long = format!("{}.png", "nome-de-captura-comprido-".repeat(6));
+        for lang in [Lang::Pt, Lang::En] {
+            set_lang(lang);
+            for view in [HomeView::Grid, HomeView::List] {
+                let (mut home, mut shared) = Home::for_tests(vec![entry(&long, SystemTime::now())]);
+                shared.settings.home_view = view;
+                home.apply(
+                    MainAction::Select(PathBuf::from(&long)),
+                    &egui::Context::default(),
+                    &mut shared,
+                );
+                let (_, painted, blocks) =
+                    run_painted(&mut home, &mut shared, (900.0, 600.0), true, vec![]);
+                let b = content_box(&blocks, &shared.tokens(None));
+                for (s, r) in &painted {
+                    assert!(
+                        r.right() <= b.right() + 0.5 && r.left() >= b.left() - 0.5,
+                        "{lang:?} {view:?}: {s:?} at {r:?} outside {b:?}"
+                    );
+                }
+                let panel_left = b.right() - 268.0;
+                let gallery_texts: Vec<_> = painted
+                    .iter()
+                    .filter(|(_, r)| r.top() > 200.0 && r.right() < panel_left)
+                    .collect();
+                assert!(
+                    !gallery_texts.is_empty(),
+                    "{lang:?} {view:?}: the gallery beside the panel"
+                );
+                for (s, r) in &gallery_texts {
+                    assert!(
+                        r.right() <= panel_left,
+                        "{lang:?} {view:?}: {s:?} runs into the panel"
+                    );
+                }
+            }
+        }
+        set_lang(Lang::En);
     }
 
     #[test]

@@ -276,6 +276,8 @@ pub struct Settings {
     pub draw: DrawOpts,
     /// Início as a grid of cards or a list.
     pub home_view: HomeView,
+    /// Início's detail panel is shown.
+    pub home_details: bool,
     pub ui_theme: ThemeId,
     pub ui_mode: UiMode,
     pub lang: LangPref,
@@ -306,6 +308,7 @@ impl Default for Settings {
             watermark: Watermark::default(),
             draw: DrawOpts::default(),
             home_view: HomeView::Grid,
+            home_details: true,
             ui_theme: ThemeId::default(),
             ui_mode: UiMode::default(),
             lang: LangPref::default(),

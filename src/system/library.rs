@@ -102,6 +102,19 @@ pub enum Day {
     Date(NaiveDate),
 }
 
+/// The local day `t` falls on, seen from `now`.
+pub fn day_of(t: SystemTime, now: DateTime<Local>) -> Day {
+    let today = now.date_naive();
+    let date = DateTime::<Local>::from(t).date_naive();
+    if date == today {
+        Day::Today
+    } else if Some(date) == today.pred_opt() {
+        Day::Yesterday
+    } else {
+        Day::Date(date)
+    }
+}
+
 /// One day's captures in the gallery, in the order they are shown.
 #[derive(Clone, PartialEq, Debug)]
 pub struct DayGroup {
@@ -112,17 +125,9 @@ pub struct DayGroup {
 /// The entries at `shown` (newest first) in groups by their local day: today, yesterday, then
 /// dates; a day with nothing shown has no group.
 pub fn group_by_day(entries: &[Entry], shown: &[usize], now: DateTime<Local>) -> Vec<DayGroup> {
-    let today = now.date_naive();
     let mut groups: Vec<DayGroup> = Vec::new();
     for &i in shown {
-        let date = DateTime::<Local>::from(entries[i].modified).date_naive();
-        let day = if date == today {
-            Day::Today
-        } else if Some(date) == today.pred_opt() {
-            Day::Yesterday
-        } else {
-            Day::Date(date)
-        };
+        let day = day_of(entries[i].modified, now);
         match groups.last_mut() {
             Some(g) if g.day == day => g.items.push(i),
             _ => groups.push(DayGroup {

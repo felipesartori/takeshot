@@ -64,6 +64,8 @@ pub enum BtnKind {
     Secondary,
     Ghost,
     Danger,
+    /// Red text on the surface, outlined: a destructive action that is not the main one.
+    DangerGhost,
 }
 
 const KBD_PAD: f32 = 5.0;
@@ -109,6 +111,23 @@ pub fn kbd(ui: &mut Ui, t: &Tokens, keys: &str, on_primary: bool) -> Response {
     resp
 }
 
+/// The width of `button`'s content: icon, label and shortcut with their gaps.
+fn button_content(ui: &Ui, icon: Option<Ico>, label: &str, kbd: Option<&str>) -> (f32, f32) {
+    let label_w = if label.is_empty() {
+        0.0
+    } else {
+        text_size(ui, label, 13.0, Weight::Medium).x
+    };
+    let mut w = label_w;
+    if icon.is_some() {
+        w += 16.0 + if label.is_empty() { 0.0 } else { 7.0 };
+    }
+    if let Some(k) = kbd {
+        w += 7.0 + kbd_width(ui, k);
+    }
+    (w, label_w)
+}
+
 /// Height 32, 12 px side padding, 7 px gaps: [icon] label [shortcut].
 pub fn button(
     ui: &mut Ui,
@@ -118,31 +137,54 @@ pub fn button(
     label: &str,
     kbd: Option<&str>,
 ) -> Response {
-    let label_w = if label.is_empty() {
-        0.0
-    } else {
-        text_size(ui, label, 13.0, Weight::Medium).x
-    };
-    let mut w = 24.0 + label_w;
-    if icon.is_some() {
-        w += 16.0 + if label.is_empty() { 0.0 } else { 7.0 };
-    }
-    if let Some(k) = kbd {
-        w += 7.0 + kbd_width(ui, k);
-    }
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
-    let h = hover_mix(ui, &resp);
+    let (content, _) = button_content(ui, icon, label, kbd);
+    let (rect, resp) = ui.allocate_exact_size(vec2(24.0 + content, 32.0), Sense::click());
+    paint_button(ui, t, rect, &resp, kind, icon, label, kbd);
+    resp
+}
+
+/// `button` stretched to `width` (never narrower than its content), the content centred.
+pub fn wide_button(
+    ui: &mut Ui,
+    t: &Tokens,
+    kind: BtnKind,
+    icon: Option<Ico>,
+    label: &str,
+    kbd: Option<&str>,
+    width: f32,
+) -> Response {
+    let (content, _) = button_content(ui, icon, label, kbd);
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(width.max(24.0 + content), 32.0), Sense::click());
+    paint_button(ui, t, rect, &resp, kind, icon, label, kbd);
+    resp
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_button(
+    ui: &Ui,
+    t: &Tokens,
+    rect: Rect,
+    resp: &Response,
+    kind: BtnKind,
+    icon: Option<Ico>,
+    label: &str,
+    kbd: Option<&str>,
+) {
+    let (content, label_w) = button_content(ui, icon, label, kbd);
+    let h = hover_mix(ui, resp);
     let pressed = resp.is_pointer_button_down_on();
     let (rest, over, down, fg) = match kind {
         BtnKind::Primary => (t.primary, t.primary_hover, t.primary_press, t.on_primary),
         BtnKind::Secondary => (t.raised, t.hover, t.press, t.text),
         BtnKind::Ghost => (t.surf, t.raised, t.hover, t.text),
         BtnKind::Danger => (t.danger, t.danger, t.danger, Color32::WHITE),
+        BtnKind::DangerGhost => (t.surf, t.raised, t.hover, t.danger),
     };
     let bg = if pressed { down } else { mix(rest, over, h) };
     let p = ui.painter();
     p.rect_filled(rect, CornerRadius::same(t.radius), dim(bg, ui));
-    if kind == BtnKind::Ghost {
+    if matches!(kind, BtnKind::Ghost | BtnKind::DangerGhost) {
         p.rect_stroke(
             rect,
             CornerRadius::same(t.radius),
@@ -151,7 +193,7 @@ pub fn button(
         );
     }
     let fg = dim(fg, ui);
-    let mut x = rect.left() + 12.0;
+    let mut x = rect.center().x - content / 2.0;
     if let Some(i) = icon {
         draw_icon(p, pos2(x + 8.0, rect.center().y), i, 16.0, fg);
         x += 16.0 + if label.is_empty() { 0.0 } else { 7.0 };
@@ -173,7 +215,6 @@ pub fn button(
         let r = Rect::from_min_size(pos2(x + 7.0, rect.center().y - 9.0), vec2(kw, 18.0));
         paint_kbd(ui, t, r, k, kind == BtnKind::Primary);
     }
-    resp
 }
 
 /// 32 × 32 square with a 17 px icon; active uses the theme's tint.
@@ -519,8 +560,9 @@ pub fn card_action_rects(card: Rect) -> [(CardAction, Rect); 4] {
 }
 
 /// A capture in the gallery: picture, name and size. Hover lifts the background and shows copy,
-/// edit, show in folder and trash over the picture; selected draws a 2 px primary ring. The size
-/// is the caller's (the grid's column width) and never depends on hover.
+/// edit, show in folder and trash over the picture; selected takes the theme's mark (a ring in
+/// TakeUI, corner ticks in Coral UI). The size is the caller's (the grid's column width) and never
+/// depends on hover.
 pub fn capture_card(
     ui: &mut Ui,
     t: &Tokens,
@@ -555,12 +597,9 @@ pub fn capture_card(
         t.faint,
     );
     if selected {
-        p.rect_stroke(
-            rect,
-            radius,
-            Stroke::new(2.0, t.primary),
-            StrokeKind::Inside,
-        );
+        // The theme's mark (ring or corner ticks), drawn on the card's own edge so a scroll
+        // area's clip never cuts it.
+        selection_marker(&p, t, rect.shrink(5.0));
     }
     let mut action = None;
     if resp.contains_pointer() {
@@ -612,18 +651,64 @@ fn paint_thumb(p: &Painter, t: &Tokens, pic: Rect, thumb: CardThumb, radius: u8,
     }
 }
 
+/// A picture fitted in `pic` on the input colour, 8 px corners (the detail panel's preview).
+pub fn thumb(p: &Painter, t: &Tokens, pic: Rect, thumb: CardThumb) {
+    paint_thumb(p, t, pic, thumb, 8, 24.0);
+}
+
 /// A list row's height.
 pub const ROW_H: f32 = 48.0;
 
-/// Where a list row's columns start from its left edge, for a row `width` wide: picture, name,
-/// time, dimensions, size and the buttons. The name takes what the others leave.
-pub fn list_columns(width: f32) -> [f32; 6] {
+/// Where a list row's parts start from its left edge. A column that does not fit is `None`:
+/// dimensions go first, then size, then time, so the name keeps 160 px.
+#[derive(Clone, Copy, Debug)]
+pub struct ListCols {
+    pub thumb: f32,
+    pub name: f32,
+    pub name_w: f32,
+    /// Time, dimensions and size.
+    pub cells: [Option<f32>; 3],
+    pub buttons: f32,
+}
+
+/// The columns of a list row `width` wide.
+pub fn list_columns(width: f32) -> ListCols {
     let (pad, gap) = (12.0, 12.0);
+    let widths = [70.0, 110.0, 80.0];
     let buttons = width - pad - (4.0 * 32.0 + 3.0 * 2.0);
-    let size = buttons - gap - 80.0;
-    let dims = size - gap - 110.0;
-    let time = dims - gap - 70.0;
-    [pad, pad + 56.0 + gap, time, dims, size, buttons]
+    let name = pad + 56.0 + gap;
+    let mut show = [true; 3];
+    let room = |show: &[bool; 3]| {
+        let cells: f32 = show
+            .iter()
+            .zip(widths)
+            .filter(|(s, _)| **s)
+            .map(|(_, w)| w + gap)
+            .sum();
+        buttons - gap - cells - name
+    };
+    for drop in [1, 2, 0] {
+        if room(&show) >= 160.0 {
+            break;
+        }
+        show[drop] = false;
+    }
+    let mut x = buttons - gap;
+    let mut cells = [None; 3];
+    for i in [2, 1, 0] {
+        if show[i] {
+            x -= widths[i];
+            cells[i] = Some(x);
+            x -= gap;
+        }
+    }
+    ListCols {
+        thumb: pad,
+        name,
+        name_w: (x - name).max(0.0),
+        cells,
+        buttons,
+    }
 }
 
 /// A capture as a list row, `width` × 48: picture, name (cut with "…" to its column), then time,
@@ -647,36 +732,39 @@ pub fn capture_row(
         mix(Color32::TRANSPARENT, t.raised, h)
     };
     p.rect_filled(rect, CornerRadius::same(6), bg);
-    let x = list_columns(width).map(|c| rect.left() + c);
-    let pic = Rect::from_min_size(pos2(x[0], rect.center().y - 18.0), vec2(56.0, 36.0));
+    let c = list_columns(width);
+    let pic = Rect::from_min_size(
+        pos2(rect.left() + c.thumb, rect.center().y - 18.0),
+        vec2(56.0, 36.0),
+    );
     paint_thumb(&p, t, pic, thumb, 4, 16.0);
     let cell = |s: &str, size: f32, w: Weight, c: Color32, room: f32| {
         let mut job = egui::text::LayoutJob::simple_singleline(s.to_string(), font(size, w), c);
         job.wrap = egui::text::TextWrapping::truncate_at_width(room.max(1.0));
         ui.painter().layout_job(job)
     };
-    let name_g = cell(
-        name,
-        13.0,
-        Weight::Medium,
-        dim(t.text, ui),
-        x[2] - 12.0 - x[1],
-    );
+    let name_g = cell(name, 13.0, Weight::Medium, dim(t.text, ui), c.name_w);
     p.galley(
-        pos2(x[1], rect.center().y - name_g.size().y / 2.0),
+        pos2(
+            rect.left() + c.name,
+            rect.center().y - name_g.size().y / 2.0,
+        ),
         name_g,
         t.text,
     );
     for (i, s) in cols.iter().enumerate() {
+        let Some(at) = c.cells[i] else {
+            continue;
+        };
         let g = cell(
             s,
             12.0,
             Weight::Regular,
             dim(t.muted, ui),
-            x[i + 3] - 12.0 - x[i + 2],
+            [70.0, 110.0, 80.0][i],
         );
         p.galley(
-            pos2(x[i + 2], rect.center().y - g.size().y / 2.0),
+            pos2(rect.left() + at, rect.center().y - g.size().y / 2.0),
             g,
             t.muted,
         );
@@ -693,7 +781,10 @@ pub fn capture_row(
         .enumerate()
         {
             let r = Rect::from_min_size(
-                pos2(x[5] + i as f32 * 34.0, rect.center().y - 16.0),
+                pos2(
+                    rect.left() + c.buttons + i as f32 * 34.0,
+                    rect.center().y - 16.0,
+                ),
                 vec2(32.0, 32.0),
             );
             let b = ui.interact(r, resp.id.with(("row-action", a as u8)), Sense::click());
@@ -1804,6 +1895,60 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_card_is_marked_the_theme_s_way() {
+        // Coral UI: four corner ticks in coral; TakeUI: a ring in purple.
+        for (theme, ticks) in [(ThemeId::Coral, true), (ThemeId::TakeUi, false)] {
+            let t = tokens(theme, true);
+            let ctx = egui::Context::default();
+            crate::system::fonts::FontLib::load().install(&ctx);
+            crate::ui::style::apply(&ctx, &t);
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 300.0))),
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                ui.add_space(20.0);
+                capture_card(
+                    ui,
+                    &t,
+                    vec2(220.0, 180.0),
+                    CardThumb::Loading,
+                    "a.png",
+                    "1 KB",
+                    true,
+                );
+            });
+            full.textures_delta.clear();
+            let mut filled = Vec::new();
+            let mut stroked = Vec::new();
+            fn walk(s: &egui::Shape, f: &mut Vec<(Rect, Color32)>, st: &mut Vec<Color32>) {
+                match s {
+                    egui::Shape::Rect(r) => {
+                        f.push((r.rect, r.fill));
+                        st.push(r.stroke.color);
+                    }
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, f, st)),
+                    _ => {}
+                }
+            }
+            full.shapes
+                .iter()
+                .for_each(|c| walk(&c.shape, &mut filled, &mut stroked));
+            let tick_count = filled
+                .iter()
+                .filter(|(r, c)| *c == t.primary && r.width().min(r.height()) == 2.0)
+                .count();
+            if ticks {
+                assert_eq!(tick_count, 8, "{theme:?}: eight tick bars");
+                assert!(!stroked.contains(&t.primary), "{theme:?}: no ring");
+            } else {
+                assert_eq!(tick_count, 0, "{theme:?}: no ticks");
+                assert!(stroked.contains(&t.primary), "{theme:?}: the ring");
+            }
+        }
+    }
+
+    #[test]
     fn the_toast_follows_the_theme() {
         for theme in [ThemeId::TakeUi, ThemeId::Coral] {
             for dark in [true, false] {
@@ -2138,6 +2283,21 @@ mod tests {
                 "bar_button colour",
                 Box::new(|ui| bar_button(ui, &t, BarItem::Color(Color32::RED), "Colour")),
                 28.0,
+            ),
+            (
+                "wide_button",
+                Box::new(|ui| {
+                    wide_button(
+                        ui,
+                        &t,
+                        BtnKind::DangerGhost,
+                        Some(Ico::Trash),
+                        "Delete",
+                        Some("Del"),
+                        236.0,
+                    )
+                }),
+                32.0,
             ),
             (
                 "capture_row",
