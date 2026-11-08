@@ -242,6 +242,14 @@ pub enum TrayClick {
     CaptureArea,
 }
 
+/// How Início shows the captures.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub enum HomeView {
+    #[default]
+    Grid,
+    List,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -266,6 +274,8 @@ pub struct Settings {
     pub style: Style,
     pub watermark: Watermark,
     pub draw: DrawOpts,
+    /// Início as a grid of cards or a list.
+    pub home_view: HomeView,
     pub ui_theme: ThemeId,
     pub ui_mode: UiMode,
     pub lang: LangPref,
@@ -295,6 +305,7 @@ impl Default for Settings {
             style: Style::default(),
             watermark: Watermark::default(),
             draw: DrawOpts::default(),
+            home_view: HomeView::Grid,
             ui_theme: ThemeId::default(),
             ui_mode: UiMode::default(),
             lang: LangPref::default(),

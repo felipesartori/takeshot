@@ -34,6 +34,8 @@ pub enum Ico {
     Search,
     Home,
     Grid,
+    List,
+    PanelRight,
     Palette,
     Settings,
     Settings2,
@@ -100,6 +102,8 @@ pub const ALL: &[Ico] = &[
     Ico::Search,
     Ico::Home,
     Ico::Grid,
+    Ico::List,
+    Ico::PanelRight,
     Ico::Palette,
     Ico::Settings,
     Ico::Settings2,
@@ -168,6 +172,8 @@ pub fn glyph(i: Ico) -> char {
         Ico::Search => 0xe151,          // search
         Ico::Home => 0xe0f5,            // house
         Ico::Grid => 0xe0ff,            // layout-grid
+        Ico::List => 0xe106,            // list
+        Ico::PanelRight => 0xe431,      // panel-right
         Ico::Palette => 0xe1dd,         // palette
         Ico::Settings => 0xe154,        // settings
         Ico::Settings2 => 0xe245,       // settings-2
@@ -260,6 +266,8 @@ mod tests {
         (Ico::Search, "search"),
         (Ico::Home, "house"),
         (Ico::Grid, "layout-grid"),
+        (Ico::List, "list"),
+        (Ico::PanelRight, "panel-right"),
         (Ico::Palette, "palette"),
         (Ico::Settings, "settings"),
         (Ico::Settings2, "settings-2"),

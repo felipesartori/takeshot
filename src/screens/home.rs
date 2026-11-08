@@ -69,6 +69,8 @@ pub enum MainAction {
     Pin(PathBuf),
     Trash(PathBuf),
     SetMode(UiMode),
+    /// Início as a grid or a list.
+    SetHomeView(crate::system::settings::HomeView),
     About,
     Window(WindowControl),
 }
@@ -98,6 +100,8 @@ pub struct Home {
     /// The positions in `entries` the filter and the search let through, and the filters' counts,
     /// worked out when the list, the filter or the search changes.
     shown: Vec<usize>,
+    /// `shown` in groups by day.
+    groups: Vec<library::DayGroup>,
     counts: [usize; 3],
     filter: Period,
     query: String,
@@ -148,6 +152,7 @@ impl Home {
             autostart: false,
             entries: Vec::new(),
             shown: Vec::new(),
+            groups: Vec::new(),
             counts: [0; 3],
             filter: Period::All,
             query: String::new(),
@@ -232,9 +237,9 @@ impl Home {
         self.counts
     }
 
-    /// The captures on screen (positions for `entry`), newest first.
-    pub fn shown(&self) -> &[usize] {
-        &self.shown
+    /// The shown captures in groups by day.
+    pub fn groups(&self) -> &[library::DayGroup] {
+        &self.groups
     }
 
     pub fn entry(&self, i: usize) -> &Entry {
@@ -367,6 +372,7 @@ impl Home {
     fn refilter(&mut self) {
         let now = chrono::Local::now();
         self.shown = library::visible(&self.entries, self.filter, &self.query, now);
+        self.groups = library::group_by_day(&self.entries, &self.shown, now);
         self.counts = library::counts(&self.entries, now);
     }
 
@@ -536,6 +542,10 @@ impl Home {
                 self.refilter();
             }
             MainAction::Select(p) => self.selected = Some(p),
+            MainAction::SetHomeView(v) => {
+                shared.settings.home_view = v;
+                shared.settings_dirty = true;
+            }
             MainAction::Section(s) => {
                 self.section = s;
                 self.capturing = None;
@@ -653,6 +663,28 @@ fn open_clipboard(shared: &mut Shared) {
 /// The status line under the navigation: which keys capture, or why they do not.
 /// The status chip's state and short text: the area shortcut ready or in use, or the shortcuts
 /// off or unavailable (never "in use" for those).
+/// A gallery group's title: Today, Yesterday, or the date ("5 de novembro", "November 5"), with
+/// the year when it is not this one.
+pub(crate) fn day_label(day: library::Day, now: chrono::DateTime<chrono::Local>) -> String {
+    use chrono::Datelike;
+    match day {
+        library::Day::Today => tr(Msg::Today).to_string(),
+        library::Day::Yesterday => tr(Msg::Yesterday).to_string(),
+        library::Day::Date(d) => {
+            let month = tr(Msg::Months)
+                .split('|')
+                .nth(d.month0() as usize)
+                .unwrap_or_default();
+            let day = d.day().to_string();
+            if d.year() == now.year() {
+                tf(Msg::DayMonth, &[&day, month])
+            } else {
+                tf(Msg::DayMonthYear, &[&day, month, &d.year().to_string()])
+            }
+        }
+    }
+}
+
 pub(crate) fn chip(
     status: Option<&Status>,
     settings: &crate::system::settings::Settings,
@@ -742,6 +774,25 @@ pub(crate) fn hotkey_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_day_reads_in_the_user_s_language() {
+        use crate::system::library::Day;
+        use crate::ui::i18n::{Lang, set_lang};
+        use chrono::{NaiveDate, TimeZone};
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 11, 8, 15, 0, 0)
+            .unwrap();
+        let date = |y, m, d| Day::Date(NaiveDate::from_ymd_opt(y, m, d).unwrap());
+        set_lang(Lang::Pt);
+        assert_eq!(day_label(Day::Today, now), "Hoje");
+        assert_eq!(day_label(Day::Yesterday, now), "Ontem");
+        assert_eq!(day_label(date(2026, 11, 5), now), "5 de novembro");
+        assert_eq!(day_label(date(2025, 12, 20), now), "20 de dezembro de 2025");
+        set_lang(Lang::En);
+        assert_eq!(day_label(date(2026, 11, 5), now), "November 5");
+        assert_eq!(day_label(date(2025, 12, 20), now), "December 20, 2025");
+    }
 
     #[test]
     fn a_rebind_saves_the_keys_or_explains_in_the_user_s_words() {

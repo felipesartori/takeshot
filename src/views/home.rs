@@ -4,7 +4,8 @@
 use crate::Shared;
 use crate::screens::home::{Home, MainAction};
 use crate::system::hotkeys::{Shot, label};
-use crate::system::library::Period;
+use crate::system::library::{DayGroup, Period};
+use crate::system::settings::HomeView;
 use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{self, BtnKind, CARD_TEXT_H, CardAction, Ico};
 use crate::ui::style::{Weight, font};
@@ -65,7 +66,7 @@ pub fn start_page(
         UiBuilder::new()
             .max_rect(filters)
             .layout(Layout::left_to_right(Align::Center)),
-        |ui| filter_row(ui, t, home, acts),
+        |ui| filter_row(ui, t, home, shared.settings.home_view, acts),
     );
     let rest = Rect::from_min_max(
         pos2(b.left() + 24.0, filters.bottom()),
@@ -92,13 +93,19 @@ pub fn start_page(
                 None,
             );
         } else {
-            gallery(ui, t, home, acts);
+            gallery(ui, t, home, shared.settings.home_view, acts);
         }
     });
 }
 
 /// The period pills on the left; search and the folder on the right.
-fn filter_row(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
+fn filter_row(
+    ui: &mut Ui,
+    t: &Tokens,
+    home: &mut Home,
+    view: HomeView,
+    acts: &mut Vec<MainAction>,
+) {
     ui.spacing_mut().item_spacing.x = 2.0;
     let [all, today, week] = home.counts();
     for (p, msg, n) in [
@@ -123,6 +130,14 @@ fn filter_row(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainActio
         .clicked()
         {
             acts.push(MainAction::OpenFolder);
+        }
+        let mut v = view;
+        let items = [
+            (HomeView::Grid, Ico::Grid, tr(Msg::GridView)),
+            (HomeView::List, Ico::List, tr(Msg::ListView)),
+        ];
+        if kit::icon_segmented(ui, t, &mut v, &items).changed() {
+            acts.push(MainAction::SetHomeView(v));
         }
         let mut q = home.query().to_string();
         if kit::text_field(
@@ -246,81 +261,263 @@ fn capture_buttons(
 }
 
 /// The grid; only the rows on screen are laid out and ask for thumbnails.
-fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
-    let shown = home.shown().to_vec();
-    // The scroll bar takes its room beside the cards, and only when they overflow.
+/// A day's title row in the gallery.
+const HEAD_H: f32 = 40.0;
+/// The column titles over the list.
+const TITLES_H: f32 = 30.0;
+
+/// One row of the gallery: a day's title, a row of cards (group, first item) or a list row.
+#[derive(Clone, Copy)]
+enum Row {
+    Head(usize),
+    Cards(usize, usize),
+    Item(usize),
+}
+
+/// The gallery's rows with where each starts and how tall it is, for `cols` cards of `card_h`
+/// (or the list), and the height they take together.
+fn layout(
+    groups: &[DayGroup],
+    view: HomeView,
+    cols: usize,
+    card_h: f32,
+) -> (Vec<(Row, f32, f32)>, f32) {
+    let mut rows = Vec::new();
+    let mut y = 0.0;
+    for (g, group) in groups.iter().enumerate() {
+        rows.push((Row::Head(g), y, HEAD_H));
+        y += HEAD_H;
+        match view {
+            HomeView::Grid => {
+                for start in (0..group.items.len()).step_by(cols.max(1)) {
+                    rows.push((Row::Cards(g, start), y, card_h));
+                    y += card_h + GAP;
+                }
+            }
+            HomeView::List => {
+                for &i in &group.items {
+                    rows.push((Row::Item(i), y, kit::ROW_H));
+                    y += kit::ROW_H + 2.0;
+                }
+                y += GAP - 2.0;
+            }
+        }
+    }
+    (rows, y)
+}
+
+/// The captures in groups by day, as cards or list rows. Only the rows in view are drawn, so only
+/// they ask for thumbnails.
+fn gallery(ui: &mut Ui, t: &Tokens, home: &mut Home, view: HomeView, acts: &mut Vec<MainAction>) {
+    let groups = home.groups().to_vec();
+    let now = chrono::Local::now();
     let avail = ui.available_size();
+    let room = avail.y
+        - if view == HomeView::List {
+            TITLES_H
+        } else {
+            0.0
+        };
+    // The scroll bar takes its room beside the rows, and only when they overflow.
     let height = |w: f32| {
         let (cols, card) = grid(w);
-        let rows = shown.len().div_ceil(cols) as f32;
-        rows * card.y + (rows - 1.0).max(0.0) * GAP
+        layout(&groups, view, cols, card.y).1
     };
-    let width = if height(avail.x) > avail.y {
+    let width = if height(avail.x) > room {
         avail.x - ui.spacing().scroll.allocated_width()
     } else {
         avail.x
     };
     let (cols, card) = grid(width);
-    let rows = shown.len().div_ceil(cols);
-    ui.spacing_mut().item_spacing.y = GAP;
+    let (rows, total) = layout(&groups, view, cols, card.y);
+    if view == HomeView::List {
+        column_titles(ui, t, width);
+    }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, card.y, rows, |ui, range| {
-            for row in range {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = GAP;
-                    for &i in shown.iter().skip(row * cols).take(cols) {
-                        let e = home.entry(i).clone();
-                        let (thumb, dims) = home.card_thumb(&e.path);
-                        let size = human_size(e.bytes);
-                        let meta = match dims {
-                            Some([w, h]) => {
-                                tf(Msg::CaptureMeta, &[&w.to_string(), &h.to_string(), &size])
-                            }
-                            None => size,
-                        };
-                        let selected = home.selected() == Some(e.path.as_path());
-                        let r = kit::capture_card(ui, t, card, thumb, &e.name, &meta, selected);
-                        if let Some(a) = r.action {
-                            acts.push(match a {
-                                CardAction::Copy => MainAction::Copy(e.path.clone()),
-                                CardAction::Edit => MainAction::Edit(e.path.clone()),
-                                CardAction::Folder => MainAction::ShowInFolder(e.path.clone()),
-                                CardAction::Trash => MainAction::Trash(e.path.clone()),
-                            });
-                        } else if r.resp.double_clicked() {
-                            acts.push(MainAction::Edit(e.path.clone()));
-                        } else if r.resp.clicked() {
-                            acts.push(MainAction::Select(e.path.clone()));
-                        }
-                        let resp = r.resp.on_hover_text(details(&e, &meta));
-                        resp.context_menu(|ui| {
-                            for (icon, msg, act) in [
-                                (Ico::Copy, Msg::Copy, MainAction::Copy(e.path.clone())),
-                                (
-                                    Ico::Edit,
-                                    Msg::EditInEditor,
-                                    MainAction::Edit(e.path.clone()),
-                                ),
-                                (
-                                    Ico::FolderOpen,
-                                    Msg::ShowInFolder,
-                                    MainAction::ShowInFolder(e.path.clone()),
-                                ),
-                                (Ico::Pin, Msg::PinOnScreen, MainAction::Pin(e.path.clone())),
-                                (Ico::Trash, Msg::Delete, MainAction::Trash(e.path.clone())),
-                            ] {
-                                if kit::menu_item(ui, t, Some(icon), tr(msg), None, false).clicked()
-                                {
-                                    acts.push(act);
-                                    ui.close();
+        .show_viewport(ui, |ui, viewport| {
+            ui.set_height(total);
+            let origin = ui.max_rect().min;
+            for &(row, y, h) in &rows {
+                if y + h < viewport.min.y || y > viewport.max.y {
+                    continue;
+                }
+                let r = Rect::from_min_size(origin + vec2(0.0, y), vec2(width, h));
+                let key = match row {
+                    Row::Head(g) | Row::Cards(g, _) => (g, y as i64),
+                    Row::Item(i) => (i, -1),
+                };
+                ui.scope_builder(
+                    UiBuilder::new().max_rect(r).id_salt(("gallery-row", key)),
+                    |ui| match row {
+                        Row::Head(g) => day_head(ui, t, &groups[g], now),
+                        Row::Cards(g, start) => {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = GAP;
+                                for &i in groups[g].items.iter().skip(start).take(cols) {
+                                    card_item(ui, t, home, i, card, acts);
                                 }
-                            }
-                        });
-                    }
-                });
+                            });
+                        }
+                        Row::Item(i) => list_item(ui, t, home, i, width, acts),
+                    },
+                );
             }
         });
+}
+
+/// A day's title and how many captures it has.
+fn day_head(ui: &mut Ui, t: &Tokens, group: &DayGroup, now: chrono::DateTime<chrono::Local>) {
+    let r = ui.max_rect();
+    let p = ui.painter();
+    let label = crate::screens::home::day_label(group.day, now);
+    let at = pos2(r.left(), r.center().y);
+    let shown = p.text(
+        at,
+        egui::Align2::LEFT_CENTER,
+        label,
+        font(13.0, Weight::Bold),
+        t.text,
+    );
+    p.text(
+        pos2(shown.right() + 8.0, at.y),
+        egui::Align2::LEFT_CENTER,
+        group.items.len().to_string(),
+        font(12.0, Weight::Regular),
+        t.faint,
+    );
+}
+
+/// The list's column titles, on the columns of its rows.
+fn column_titles(ui: &mut Ui, t: &Tokens, width: f32) {
+    let (r, _) = ui.allocate_exact_size(vec2(width, TITLES_H), egui::Sense::hover());
+    let x = kit::list_columns(width);
+    let p = ui.painter();
+    for (i, m) in [
+        (1, Msg::ColName),
+        (2, Msg::ColTime),
+        (3, Msg::ColDimensions),
+        (4, Msg::ColSize),
+    ] {
+        p.text(
+            pos2(r.left() + x[i], r.center().y),
+            egui::Align2::LEFT_CENTER,
+            tr(m).to_uppercase(),
+            font(11.0, Weight::Medium),
+            t.faint,
+        );
+    }
+    p.rect_filled(
+        Rect::from_min_max(pos2(r.left(), r.bottom() - 1.0), r.max),
+        0.0,
+        t.line,
+    );
+}
+
+/// "1920 × 1080 · 412 KB" once the thumbnail knows the size, else the file size.
+fn meta_of(dims: Option<[u32; 2]>, size: &str) -> String {
+    match dims {
+        Some([w, h]) => tf(Msg::CaptureMeta, &[&w.to_string(), &h.to_string(), size]),
+        None => size.to_string(),
+    }
+}
+
+/// A capture's time of day ("14:32").
+fn time_of(e: &crate::system::library::Entry) -> String {
+    chrono::DateTime::<chrono::Local>::from(e.modified)
+        .format("%H:%M")
+        .to_string()
+}
+
+/// One capture as a card.
+fn card_item(
+    ui: &mut Ui,
+    t: &Tokens,
+    home: &mut Home,
+    i: usize,
+    card: egui::Vec2,
+    acts: &mut Vec<MainAction>,
+) {
+    let e = home.entry(i).clone();
+    let (thumb, dims) = home.card_thumb(&e.path);
+    let meta = meta_of(dims, &human_size(e.bytes));
+    let line = format!("{} · {meta}", time_of(&e));
+    let selected = home.selected() == Some(e.path.as_path());
+    let r = kit::capture_card(ui, t, card, thumb, &e.name, &line, selected);
+    item_answers(t, &e, &meta, r, acts);
+}
+
+/// One capture as a list row.
+fn list_item(
+    ui: &mut Ui,
+    t: &Tokens,
+    home: &mut Home,
+    i: usize,
+    width: f32,
+    acts: &mut Vec<MainAction>,
+) {
+    let e = home.entry(i).clone();
+    let (thumb, dims) = home.card_thumb(&e.path);
+    let dims_text = dims.map(|[w, h]| format!("{w} × {h}")).unwrap_or_default();
+    let size = human_size(e.bytes);
+    let selected = home.selected() == Some(e.path.as_path());
+    let r = kit::capture_row(
+        ui,
+        t,
+        width,
+        thumb,
+        &e.name,
+        [&time_of(&e), &dims_text, &size],
+        selected,
+    );
+    let meta = meta_of(dims, &size);
+    item_answers(t, &e, &meta, r, acts);
+}
+
+/// What a card or a row asked for: its buttons, a double click (edit), a click (select), and the
+/// same actions in its right-click menu.
+fn item_answers(
+    t: &Tokens,
+    e: &crate::system::library::Entry,
+    meta: &str,
+    r: kit::CardResponse,
+    acts: &mut Vec<MainAction>,
+) {
+    if let Some(a) = r.action {
+        acts.push(match a {
+            CardAction::Copy => MainAction::Copy(e.path.clone()),
+            CardAction::Edit => MainAction::Edit(e.path.clone()),
+            CardAction::Folder => MainAction::ShowInFolder(e.path.clone()),
+            CardAction::Trash => MainAction::Trash(e.path.clone()),
+        });
+    } else if r.resp.double_clicked() {
+        acts.push(MainAction::Edit(e.path.clone()));
+    } else if r.resp.clicked() {
+        acts.push(MainAction::Select(e.path.clone()));
+    }
+    let resp = r.resp.on_hover_text(details(e, meta));
+    resp.context_menu(|ui| {
+        for (icon, msg, act) in [
+            (Ico::Copy, Msg::Copy, MainAction::Copy(e.path.clone())),
+            (
+                Ico::Edit,
+                Msg::EditInEditor,
+                MainAction::Edit(e.path.clone()),
+            ),
+            (
+                Ico::FolderOpen,
+                Msg::ShowInFolder,
+                MainAction::ShowInFolder(e.path.clone()),
+            ),
+            (Ico::Pin, Msg::PinOnScreen, MainAction::Pin(e.path.clone())),
+            (Ico::Trash, Msg::Delete, MainAction::Trash(e.path.clone())),
+        ] {
+            if kit::menu_item(ui, t, Some(icon), tr(msg), None, false).clicked() {
+                acts.push(act);
+                ui.close();
+            }
+        }
+    });
 }
 
 /// The card's tooltip: size, file size, folder and date.
@@ -394,7 +591,9 @@ fn empty(
 mod tests {
     use crate::screens::home::{Home, MainAction};
     use crate::system::library::{Entry, Period};
-    use crate::ui::i18n::{Msg, every};
+    use crate::system::settings::HomeView;
+    use crate::ui::i18n::{Msg, every, t as tr};
+    use crate::ui::kit::Ico;
     use crate::views::testing::{click, content_box, double_click, painted_at, run, run_painted};
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
@@ -650,16 +849,121 @@ mod tests {
     #[test]
     fn only_visible_rows_ask_for_thumbnails() {
         let now = SystemTime::now();
-        let entries = (0..2000)
-            .map(|i| entry(&format!("n{i}.png"), now - Duration::from_secs(i)))
-            .collect();
-        let (mut home, mut shared) = Home::for_tests(entries);
-        run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
-        let asked = home.thumb_requests();
-        assert!(asked > 0, "the visible cards ask");
-        assert!(
-            asked <= 40,
-            "{asked} thumbnails asked for a 1160 × 740 window"
+        for (view, most) in [(HomeView::Grid, 40), (HomeView::List, 20)] {
+            let entries = (0..2000)
+                .map(|i| entry(&format!("n{i}.png"), now - Duration::from_secs(i * 60)))
+                .collect();
+            let (mut home, mut shared) = Home::for_tests(entries);
+            shared.settings.home_view = view;
+            run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+            let asked = home.thumb_requests();
+            assert!(asked > 0, "{view:?}: the visible items ask");
+            assert!(
+                asked <= most,
+                "{view:?}: {asked} thumbnails asked for a 1160 × 740 window"
+            );
+        }
+    }
+
+    #[test]
+    fn the_gallery_is_grouped_by_day() {
+        let now = SystemTime::now();
+        let day = Duration::from_secs(24 * 3600);
+        let entries = vec![
+            entry("a.png", now),
+            entry("b.png", now),
+            entry("c.png", now - day - day),
+        ];
+        for view in [HomeView::Grid, HomeView::List] {
+            let (mut home, mut shared) = Home::for_tests(entries.clone());
+            shared.settings.home_view = view;
+            let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+            // Below the filters, which have a Today pill too.
+            let today = painted_at(&painted, &[tr(Msg::Today)], |r| r.top() > 200.0)
+                .expect("the Today group");
+            let count = painted
+                .iter()
+                .find(|(s, r)| s == "2" && (r.center().y - today.y).abs() < 2.0)
+                .is_some();
+            assert!(count, "{view:?}: Today's count beside it");
+            let a = painted_at(&painted, &["a.png"], |_| true).expect("a.png");
+            let c = painted_at(&painted, &["c.png"], |_| true).expect("c.png");
+            assert!(
+                today.y < a.y && a.y < c.y,
+                "{view:?}: Today first, then the older day"
+            );
+        }
+    }
+
+    #[test]
+    fn the_list_cuts_long_names() {
+        let long = format!("{}.png", "captura-com-um-nome-muito-longo-".repeat(8));
+        let (mut home, mut shared) = Home::for_tests(vec![entry(&long, SystemTime::now())]);
+        shared.settings.home_view = HomeView::List;
+        let (_, painted, blocks) =
+            run_painted(&mut home, &mut shared, (900.0, 600.0), true, vec![]);
+        let b = content_box(&blocks, &shared.tokens(None));
+        let name = painted
+            .iter()
+            .find(|(s, _)| s.starts_with("captura-com"))
+            .expect("the name");
+        // Cut to its column (the whole name is over 1500 px).
+        assert!(name.1.width() < 420.0, "{:?}", name.1);
+        for (s, r) in &painted {
+            assert!(
+                r.right() <= b.right() + 0.5,
+                "{s:?} at {r:?} runs past the box {b:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_list_row_buttons_act() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        shared.settings.home_view = HomeView::List;
+        let ctx = egui::Context::default();
+        home.apply(
+            MainAction::Select(PathBuf::from("a.png")),
+            &ctx,
+            &mut shared,
         );
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let row = painted_at(&painted, &["a.png"], |_| true).expect("the row");
+        let copy = painted_at(
+            &painted,
+            &[crate::ui::icon::glyph(Ico::Copy).to_string().as_str()],
+            |r| (r.center().y - row.y).abs() < 12.0,
+        )
+        .expect("Copy on the chosen row");
+        let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, click(copy));
+        assert!(
+            acts.contains(&MainAction::Copy(PathBuf::from("a.png"))),
+            "{acts:?}"
+        );
+    }
+
+    #[test]
+    fn the_view_choice_is_kept() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let (_, painted) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![]);
+        let list = painted_at(
+            &painted,
+            &[crate::ui::icon::glyph(Ico::List).to_string().as_str()],
+            |_| true,
+        )
+        .expect("the list toggle");
+        let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, click(list));
+        assert!(
+            acts.contains(&MainAction::SetHomeView(HomeView::List)),
+            "{acts:?}"
+        );
+        shared.settings_dirty = false;
+        home.apply(
+            MainAction::SetHomeView(HomeView::List),
+            &egui::Context::default(),
+            &mut shared,
+        );
+        assert_eq!(shared.settings.home_view, HomeView::List);
+        assert!(shared.settings_dirty);
     }
 }

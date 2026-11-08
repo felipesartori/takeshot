@@ -539,21 +539,7 @@ pub fn capture_card(
         rect.min + vec2(6.0, 6.0),
         pos2(rect.right() - 6.0, rect.bottom() - CARD_TEXT_H),
     );
-    p.rect_filled(pic, CornerRadius::same(6), t.input);
-    match thumb {
-        CardThumb::Ready(id, px) if px.x > 0.0 && px.y > 0.0 => {
-            let k = (pic.width() / px.x).min(pic.height() / px.y);
-            let r = Rect::from_center_size(pic.center(), px * k);
-            p.image(
-                id,
-                r,
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-        }
-        CardThumb::Failed => draw_icon(&p, pic.center(), Ico::Images, 22.0, t.faint),
-        _ => {}
-    }
+    paint_thumb(&p, t, pic, thumb, 6, 22.0);
     let width = rect.width() - 16.0;
     let line = |s: &str, size: f32, w: Weight, c: Color32| {
         let mut job = egui::text::LayoutJob::simple_singleline(s.to_string(), font(size, w), c);
@@ -605,6 +591,170 @@ pub fn capture_card(
         }
     }
     CardResponse { resp, action }
+}
+
+/// A picture fitted in `pic` on the input colour (`radius` corners), or the broken-image icon.
+fn paint_thumb(p: &Painter, t: &Tokens, pic: Rect, thumb: CardThumb, radius: u8, icon: f32) {
+    p.rect_filled(pic, CornerRadius::same(radius), t.input);
+    match thumb {
+        CardThumb::Ready(id, px) if px.x > 0.0 && px.y > 0.0 => {
+            let k = (pic.width() / px.x).min(pic.height() / px.y);
+            let r = Rect::from_center_size(pic.center(), px * k);
+            p.image(
+                id,
+                r,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        CardThumb::Failed => draw_icon(p, pic.center(), Ico::Images, icon, t.faint),
+        _ => {}
+    }
+}
+
+/// A list row's height.
+pub const ROW_H: f32 = 48.0;
+
+/// Where a list row's columns start from its left edge, for a row `width` wide: picture, name,
+/// time, dimensions, size and the buttons. The name takes what the others leave.
+pub fn list_columns(width: f32) -> [f32; 6] {
+    let (pad, gap) = (12.0, 12.0);
+    let buttons = width - pad - (4.0 * 32.0 + 3.0 * 2.0);
+    let size = buttons - gap - 80.0;
+    let dims = size - gap - 110.0;
+    let time = dims - gap - 70.0;
+    [pad, pad + 56.0 + gap, time, dims, size, buttons]
+}
+
+/// A capture as a list row, `width` × 48: picture, name (cut with "…" to its column), then time,
+/// dimensions and size (`cols`) at `list_columns`; on hover or when chosen, the copy, edit, show
+/// in folder and trash buttons. A chosen row is tinted. The size never depends on hover.
+pub fn capture_row(
+    ui: &mut Ui,
+    t: &Tokens,
+    width: f32,
+    thumb: CardThumb,
+    name: &str,
+    cols: [&str; 3],
+    selected: bool,
+) -> CardResponse {
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
+    let h = hover_mix(ui, &resp);
+    let p = ui.painter().clone();
+    let bg = if selected {
+        t.tint
+    } else {
+        mix(Color32::TRANSPARENT, t.raised, h)
+    };
+    p.rect_filled(rect, CornerRadius::same(6), bg);
+    let x = list_columns(width).map(|c| rect.left() + c);
+    let pic = Rect::from_min_size(pos2(x[0], rect.center().y - 18.0), vec2(56.0, 36.0));
+    paint_thumb(&p, t, pic, thumb, 4, 16.0);
+    let cell = |s: &str, size: f32, w: Weight, c: Color32, room: f32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(s.to_string(), font(size, w), c);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room.max(1.0));
+        ui.painter().layout_job(job)
+    };
+    let name_g = cell(
+        name,
+        13.0,
+        Weight::Medium,
+        dim(t.text, ui),
+        x[2] - 12.0 - x[1],
+    );
+    p.galley(
+        pos2(x[1], rect.center().y - name_g.size().y / 2.0),
+        name_g,
+        t.text,
+    );
+    for (i, s) in cols.iter().enumerate() {
+        let g = cell(
+            s,
+            12.0,
+            Weight::Regular,
+            dim(t.muted, ui),
+            x[i + 3] - 12.0 - x[i + 2],
+        );
+        p.galley(
+            pos2(x[i + 2], rect.center().y - g.size().y / 2.0),
+            g,
+            t.muted,
+        );
+    }
+    let mut action = None;
+    if resp.contains_pointer() || selected {
+        for (i, a) in [
+            CardAction::Copy,
+            CardAction::Edit,
+            CardAction::Folder,
+            CardAction::Trash,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let r = Rect::from_min_size(
+                pos2(x[5] + i as f32 * 34.0, rect.center().y - 16.0),
+                vec2(32.0, 32.0),
+            );
+            let b = ui.interact(r, resp.id.with(("row-action", a as u8)), Sense::click());
+            let bh = hover_mix(ui, &b);
+            p.rect_filled(
+                r,
+                CornerRadius::same(t.radius),
+                mix(Color32::TRANSPARENT, t.hover, bh),
+            );
+            let (icon, tip) = match a {
+                CardAction::Copy => (Ico::Copy, Msg::Copy),
+                CardAction::Edit => (Ico::Edit, Msg::EditInEditor),
+                CardAction::Folder => (Ico::FolderOpen, Msg::ShowInFolder),
+                CardAction::Trash => (Ico::Trash, Msg::Delete),
+            };
+            draw_icon(&p, r.center(), icon, 16.0, mix(t.muted, t.text, bh));
+            if b.on_hover_text(tr(tip)).clicked() {
+                action = Some(a);
+            }
+        }
+    }
+    CardResponse { resp, action }
+}
+
+/// A choice between a few icons, 32 px tall: 30 × 28 parts 2 px apart inside, the chosen one on
+/// `seg_sel`; each answers with its tip on hover.
+pub fn icon_segmented<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    t: &Tokens,
+    value: &mut T,
+    items: &[(T, Ico, &str)],
+) -> Response {
+    let n = items.len() as f32;
+    let (rect, mut resp) = ui.allocate_exact_size(
+        vec2(4.0 + 30.0 * n + 2.0 * (n - 1.0).max(0.0), 32.0),
+        Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(t.radius), t.raised);
+    for (i, (v, icon, tip)) in items.iter().enumerate() {
+        let r = Rect::from_min_size(
+            pos2(rect.left() + 2.0 + i as f32 * 32.0, rect.top() + 2.0),
+            vec2(30.0, 28.0),
+        );
+        let item = ui.interact(r, resp.id.with(i), Sense::click());
+        let h = hover_mix(ui, &item);
+        let item = item.on_hover_text(*tip);
+        resp = resp.union(item.clone());
+        if item.clicked() && *value != *v {
+            *value = *v;
+            resp.mark_changed();
+        }
+        let sel = *value == *v;
+        let p = ui.painter();
+        if sel {
+            p.rect_filled(r, CornerRadius::same(6), t.seg_sel);
+        }
+        let fg = if sel { t.text } else { mix(t.muted, t.text, h) };
+        draw_icon(p, r.center(), *icon, 15.0, dim(fg, ui));
+    }
+    resp
 }
 
 /// A window button of the theme's title bar.
@@ -1988,6 +2138,35 @@ mod tests {
                 "bar_button colour",
                 Box::new(|ui| bar_button(ui, &t, BarItem::Color(Color32::RED), "Colour")),
                 28.0,
+            ),
+            (
+                "capture_row",
+                Box::new(|ui| {
+                    capture_row(
+                        ui,
+                        &t,
+                        600.0,
+                        CardThumb::Loading,
+                        "a.png",
+                        ["14:32", "1920 × 1080", "412 KB"],
+                        false,
+                    )
+                    .resp
+                }),
+                48.0,
+            ),
+            (
+                "icon_segmented",
+                Box::new(|ui| {
+                    let mut v = 0;
+                    icon_segmented(
+                        ui,
+                        &t,
+                        &mut v,
+                        &[(0, Ico::Grid, "Grid"), (1, Ico::List, "List")],
+                    )
+                }),
+                32.0,
             ),
             (
                 "bar_text",
