@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders the component gallery, the main window's pages (Início, Estilo, Ajustes), the editor and
-# the capture in the four theme/mode combinations into shots/, in Portuguese. The Início gallery
+# the capture and the copy notice in the four theme/mode combinations into shots/, in Portuguese. The Início gallery
 # shows design/screens as its captures, the editor and the capture the built-in sample picture;
 # never the user's own folder. Run after `cargo build --release`. Works in Git Bash, Linux and
 # macOS.
@@ -9,7 +9,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 exe="$root/target/release/takeshot"
 [ -x "$exe.exe" ] && exe="$exe.exe"
 mkdir -p "$root/shots"
-for page in componentes inicio estilo ajustes editor captura; do
+for page in componentes inicio estilo ajustes editor captura aviso; do
   for theme in takeui coral; do
     for mode in dark light; do
       out="$root/shots/$page-$theme-$mode.png"

@@ -110,10 +110,14 @@ enum Mode {
 
 enum Launch {
     Home,
-    Capture { full: bool },
+    Capture {
+        full: bool,
+    },
     Edit(Option<PathBuf>),
     Pin(PathBuf),
     Gallery,
+    /// The copy notice, for screenshots (`--page aviso`).
+    Notice,
 }
 
 struct Args {
@@ -139,6 +143,8 @@ pub enum PageArg {
     Editor,
     /// The capture overlay on the sample screen.
     Capture,
+    /// The notice shown after a copy.
+    Notice,
 }
 
 pub fn parse_page(s: &str) -> Option<PageArg> {
@@ -150,6 +156,7 @@ pub fn parse_page(s: &str) -> Option<PageArg> {
         "componentes" => PageArg::Gallery,
         "editor" => PageArg::Editor,
         "captura" => PageArg::Capture,
+        "aviso" => PageArg::Notice,
         _ => return None,
     })
 }
@@ -232,6 +239,7 @@ fn parse_args() -> Args {
                     Some(PageArg::Gallery) => a.launch = Launch::Gallery,
                     Some(PageArg::Main(p)) => a.page = Some(p),
                     Some(PageArg::Editor) => a.launch = Launch::Edit(None),
+                    Some(PageArg::Notice) => a.launch = Launch::Notice,
                     Some(PageArg::Capture) => {
                         capture = true;
                         a.sample = true;
@@ -378,7 +386,11 @@ impl eframe::App for App {
                 e.ui(ui, frame, &t, &mut self.shared)
             }
             Mode::Pin(p) => p.ui(ui, frame, &mut self.shared),
-            Mode::Notice(n) => n.ui(ui, frame, &mut self.shared),
+            Mode::Notice(n) => {
+                let t = self.shared.tokens(ctx.system_theme());
+                skins::begin_frame(&ctx, &t);
+                n.ui(ui, &t)
+            }
             Mode::Gallery(g) => {
                 let fill = g.tokens().shell;
                 egui::CentralPanel::no_frame()
@@ -612,6 +624,13 @@ fn main() -> eframe::Result {
                 .with_title("Takeshot · componentes")
                 .with_inner_size([1280.0, 900.0]);
         }
+        (Launch::Notice, _) => {
+            vp = vp
+                .with_title("Takeshot")
+                .with_decorations(false)
+                .with_resizable(false)
+                .with_inner_size(notice::NOTICE_SIZE);
+        }
         _ if resident_mode && screens::shell::HOSTED => {
             // An invisible host: tiny, transparent, click-through, off screen and off the taskbar.
             // Its own title, so the window lookups by "Takeshot" find only the main window.
@@ -731,6 +750,7 @@ fn main() -> eframe::Result {
                 Launch::Gallery => Mode::Gallery(Box::new(ui::gallery::Gallery::new(
                     ctx, theme, ui_mode, lang_pref,
                 ))),
+                Launch::Notice => Mode::Notice(Box::new(notice::Notice::copied())),
                 Launch::Home if resident_mode => {
                     let resident =
                         system::resident::Resident::start(ctx, &shared.settings, listener.take());
@@ -864,6 +884,7 @@ mod tests {
         assert!(matches!(parse_page("componentes"), Some(PageArg::Gallery)));
         assert!(matches!(parse_page("editor"), Some(PageArg::Editor)));
         assert!(matches!(parse_page("captura"), Some(PageArg::Capture)));
+        assert!(matches!(parse_page("aviso"), Some(PageArg::Notice)));
         assert!(parse_page("x").is_none());
     }
 }
