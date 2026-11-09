@@ -259,6 +259,9 @@ pub struct Settings {
     pub last_selection: Option<[f32; 4]>,
     pub quick_style: QuickStyle,
     pub open_editor_after_full: bool,
+    /// An area capture dims every monitor and the area is chosen on any of them; off, only the
+    /// monitor under the mouse.
+    pub capture_all_screens: bool,
     /// Show a short notice after copying and saving.
     pub show_bubbles: bool,
     pub hotkeys: bool,
@@ -296,6 +299,7 @@ impl Default for Settings {
             last_selection: None,
             quick_style: QuickStyle::Full,
             open_editor_after_full: false,
+            capture_all_screens: false,
             show_bubbles: true,
             hotkeys: true,
             hotkey_area: default_keys(Shot::Area).to_string(),
@@ -481,6 +485,7 @@ mod tests {
         assert_eq!(s.save_dir, "D:/caps");
         assert!(s.auto_save);
         assert!(!s.show_bubbles);
+        assert!(!s.capture_all_screens);
         assert_eq!(s.ui_theme, ThemeId::TakeUi);
         assert_eq!(s.ui_mode, UiMode::System);
         assert_eq!(s.lang, LangPref::Auto);

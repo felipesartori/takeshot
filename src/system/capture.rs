@@ -21,7 +21,29 @@ fn cursor() -> Option<(i32, i32)> {
 /// Capture the monitor under the mouse (or the primary one).
 pub fn grab() -> Result<Shot, String> {
     let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
-    let mon = cursor()
+    let mon = cursor_monitor(&monitors)
+        .or_else(|| monitors.into_iter().next())
+        .ok_or_else(|| "nenhum monitor encontrado".to_string())?;
+    shot_of(&mon)
+}
+
+/// Capture every monitor, the one under the mouse (or the primary one) first.
+pub fn grab_all() -> Result<Vec<Shot>, String> {
+    let mut monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
+    if let Some(first) = cursor_monitor(&monitors)
+        .and_then(|m| monitors.iter().position(|o| o.id().ok() == m.id().ok()))
+    {
+        monitors.swap(0, first);
+    }
+    if monitors.is_empty() {
+        return Err("nenhum monitor encontrado".to_string());
+    }
+    monitors.iter().map(shot_of).collect()
+}
+
+/// The monitor under the mouse, else the primary one.
+fn cursor_monitor(monitors: &[xcap::Monitor]) -> Option<xcap::Monitor> {
+    cursor()
         .and_then(|(x, y)| xcap::Monitor::from_point(x, y).ok())
         .or_else(|| {
             monitors
@@ -29,8 +51,9 @@ pub fn grab() -> Result<Shot, String> {
                 .find(|m| m.is_primary().unwrap_or(false))
                 .cloned()
         })
-        .or_else(|| monitors.into_iter().next())
-        .ok_or_else(|| "nenhum monitor encontrado".to_string())?;
+}
+
+fn shot_of(mon: &xcap::Monitor) -> Result<Shot, String> {
     let image = mon.capture_image().map_err(|e| e.to_string())?;
     Ok(Shot {
         image,

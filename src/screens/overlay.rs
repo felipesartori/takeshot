@@ -142,6 +142,21 @@ impl Overlay {
         self
     }
 
+    /// A window on another monitor: it leaves the keyboard focus to the one under the mouse and
+    /// starts with no area, since only one monitor holds the area.
+    pub fn beside(mut self) -> Self {
+        self.window_ready = 3;
+        self.sel = None;
+        self
+    }
+
+    /// Drops the area and what was drawn on it, as when the area moves to another monitor.
+    fn clear_area(&mut self) {
+        self.sel = None;
+        self.drag = Drag::None;
+        self.an = Annotator::new(self.an.tool);
+    }
+
     /// The area on `screen`, which shows the whole picture.
     pub fn area_on(&self, screen: Rect) -> Option<Rect> {
         let view = Self::view_on(screen, self.img_size());
@@ -820,6 +835,20 @@ impl Overlay {
 }
 
 /// The area handle (or `Move` inside the area) under screen point `p`.
+/// One capture window per monitor and a single area: the window that gains one becomes the
+/// active one and the others drop theirs. Returns the new active index.
+pub fn settle(overlays: &mut [&mut Overlay], active: usize) -> usize {
+    let Some(now) = (0..overlays.len()).find(|&i| i != active && overlays[i].sel.is_some()) else {
+        return active;
+    };
+    for (i, o) in overlays.iter_mut().enumerate() {
+        if i != now {
+            o.clear_area();
+        }
+    }
+    now
+}
+
 fn area_hit(sel: Option<Rect>, view: &View, p: Pos2) -> Option<Handle> {
     let s = sel?;
     let r = Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max));
@@ -956,6 +985,27 @@ mod tests {
             }]),
         );
         o
+    }
+
+    #[test]
+    fn a_new_area_on_another_monitor_clears_the_first() {
+        let ctx = egui::Context::default();
+        let sh = shared();
+        let area = Rect::from_min_size(pos2(10.0, 10.0), vec2(50.0, 50.0));
+        let mut a = capture(&ctx, &sh, Tool::Select).with_area(area);
+        let mut b = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh).beside();
+        assert!(b.sel.is_none());
+        // Nothing new: the first keeps its area.
+        assert_eq!(settle(&mut [&mut a, &mut b], 0), 0);
+        assert!(a.sel.is_some());
+        // An area drawn on the second monitor takes over.
+        b.sel = Some(area);
+        assert_eq!(settle(&mut [&mut a, &mut b], 0), 1);
+        assert!(a.sel.is_none() && b.sel.is_some());
+        assert!(
+            a.an.doc.objs().is_empty(),
+            "what was drawn goes with the area"
+        );
     }
 
     #[test]

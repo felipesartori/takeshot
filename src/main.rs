@@ -118,7 +118,13 @@ enum Mode {
         shell: Box<screens::shell::Shell>,
         resident: Box<system::resident::Resident>,
     },
-    Overlay(Box<overlay::Overlay>),
+    /// The capture: the monitor under the mouse in the root window, the other monitors (with
+    /// "every screen" on) in windows of their own; `active` is the one holding the area.
+    Overlay {
+        main: Box<overlay::Overlay>,
+        others: Vec<(egui::ViewportBuilder, overlay::Overlay)>,
+        active: usize,
+    },
     Editor(Box<editor::Editor>),
     Pin(Box<pin::Pin>),
     Notice(Box<notice::Notice>),
@@ -511,10 +517,29 @@ impl eframe::App for App {
                 }
                 Switch::None
             }
-            Mode::Overlay(o) => {
+            Mode::Overlay {
+                main,
+                others,
+                active,
+            } => {
                 let t = self.shared.tokens(ctx.system_theme());
                 views::begin_frame(&ctx, &t);
-                o.ui(ui, Some(frame), &t, &mut self.shared)
+                let mut sw = main.ui(ui, Some(frame), &t, &mut self.shared);
+                let shared = &mut self.shared;
+                for (i, (vp, o)) in others.iter_mut().enumerate() {
+                    let id = egui::ViewportId::from_hash_of(("capture", i));
+                    let s = ctx.show_viewport_immediate(id, vp.clone(), |ui, _| {
+                        o.ui(ui, None, &t, shared)
+                    });
+                    if matches!(sw, Switch::None) {
+                        sw = s;
+                    }
+                }
+                let mut all: Vec<&mut overlay::Overlay> = std::iter::once(&mut **main)
+                    .chain(others.iter_mut().map(|(_, o)| o))
+                    .collect();
+                *active = overlay::settle(&mut all, *active);
+                sw
             }
             Mode::Editor(e) => {
                 let t = self.shared.tokens(ctx.system_theme());
@@ -659,13 +684,22 @@ fn main() -> eframe::Result {
 
     // Grab the screen before any window of ours exists.
     let mut shot = None;
+    let mut other_shots = Vec::new();
     let mut capture_error = None;
-    if let Launch::Capture { .. } = args.launch {
+    if let Launch::Capture { full } = args.launch {
         if args.delay > 0.0 {
             std::thread::sleep(std::time::Duration::from_secs_f32(args.delay));
         }
         if args.sample || args.screenshot.is_some() {
             shot = Some(capture::sample_shot());
+        } else if !full && settings.capture_all_screens && !system::resident::on_wayland() {
+            match capture::grab_all() {
+                Ok(mut all) => {
+                    shot = Some(all.remove(0));
+                    other_shots = all;
+                }
+                Err(e) => capture_error = Some(e),
+            }
         } else {
             match capture::grab() {
                 Ok(s) => shot = Some(s),
@@ -747,16 +781,7 @@ fn main() -> eframe::Result {
                     .with_inner_size([1280.0, 720.0])
                     .with_decorations(false);
             } else {
-                vp = vp
-                    .with_title(ui::i18n::t(ui::i18n::Msg::CaptureWindowTitle))
-                    .with_decorations(false)
-                    .with_position(pos)
-                    .with_inner_size(size)
-                    .with_always_on_top()
-                    .with_resizable(false);
-                if !cfg!(target_os = "macos") {
-                    vp = vp.with_fullscreen(true);
-                }
+                vp = capture_viewport(vp, s);
             }
         }
         (Launch::Edit(_), _) => {
@@ -848,7 +873,19 @@ fn main() -> eframe::Result {
                     Some(s) => {
                         // The overlay holds the slot; the editor and the notice paths drop it here.
                         let o = overlay::Overlay::new(ctx, s, &shared).hold(capture_slot.take());
-                        Mode::Overlay(Box::new(if demo { o.demo() } else { o }))
+                        let theme = args.theme.unwrap_or(shared.settings.ui_theme);
+                        let others = std::mem::take(&mut other_shots)
+                            .into_iter()
+                            .map(|s| {
+                                let vp = capture_viewport(base_viewport(theme), &s);
+                                (vp, overlay::Overlay::new(ctx, s, &shared).beside())
+                            })
+                            .collect();
+                        Mode::Overlay {
+                            main: Box::new(if demo { o.demo() } else { o }),
+                            others,
+                            active: 0,
+                        }
                     }
                     None => {
                         shared.toast(ui::i18n::tf(
@@ -910,7 +947,7 @@ fn main() -> eframe::Result {
             let quit_request = Arc::new(std::sync::Mutex::new(None));
             let quit_close = Arc::new(AtomicBool::new(false));
             if screenshot.is_none()
-                && matches!(mode, Mode::Editor(_) | Mode::Pin(_) | Mode::Overlay(_))
+                && matches!(mode, Mode::Editor(_) | Mode::Pin(_) | Mode::Overlay { .. })
             {
                 let base = system::instance::endpoint();
                 let pid = std::process::id();
@@ -957,6 +994,26 @@ fn base_viewport(theme: ui::tokens::ThemeId) -> egui::ViewportBuilder {
     egui::ViewportBuilder::default()
         .with_icon(Arc::new(ui::brand::window_icon(theme)))
         .with_app_id("takeshot")
+}
+
+/// A capture window covering the monitor of `s`.
+fn capture_viewport(vp: egui::ViewportBuilder, s: &capture::Shot) -> egui::ViewportBuilder {
+    let k = s.scale;
+    let vp = vp
+        .with_title(ui::i18n::t(ui::i18n::Msg::CaptureWindowTitle))
+        .with_decorations(false)
+        .with_position(egui::pos2(s.x as f32 / k, s.y as f32 / k))
+        .with_inner_size(egui::vec2(
+            s.image.width() as f32 / k,
+            s.image.height() as f32 / k,
+        ))
+        .with_always_on_top()
+        .with_resizable(false);
+    if cfg!(target_os = "macos") {
+        vp
+    } else {
+        vp.with_fullscreen(true)
+    }
 }
 
 /// The main window: the theme's own bar, 1160 by 740.
