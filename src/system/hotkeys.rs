@@ -170,8 +170,23 @@ pub fn keys_from_egui(key: egui::Key, mods: egui::Modifiers) -> Option<String> {
 }
 
 /// A global shortcut needs Ctrl, Alt or the Command key, or an F key: a plain or Shift+ key
-/// would be taken from every app while typing. Change keeps waiting on such a key.
+/// would be taken from every app while typing. Change keeps waiting on such a key, and on a
+/// modifier itself (egui sends Shift, Ctrl, Alt and Cmd as keys), which only starts a shortcut.
 pub fn needs_modifier(key: egui::Key, mods: egui::Modifiers) -> bool {
+    use egui::Key as K;
+    if matches!(
+        key,
+        K::ShiftLeft
+            | K::ShiftRight
+            | K::ControlLeft
+            | K::ControlRight
+            | K::AltLeft
+            | K::AltRight
+            | K::SuperLeft
+            | K::SuperRight
+    ) {
+        return true;
+    }
     let f_key = key
         .name()
         .strip_prefix('F')
@@ -408,6 +423,13 @@ mod tests {
         assert!(!needs_modifier(Key::A, Modifiers::ALT));
         assert!(!needs_modifier(Key::F9, Modifiers::NONE));
         assert!(!needs_modifier(Key::F9, Modifiers::SHIFT));
+        // Cmd held, then Shift: still waiting for the key that ends the shortcut.
+        assert!(needs_modifier(Key::ShiftLeft, Modifiers::COMMAND));
+        assert!(needs_modifier(Key::SuperLeft, Modifiers::COMMAND));
+        assert!(!needs_modifier(
+            Key::Num9,
+            Modifiers::COMMAND | Modifiers::SHIFT
+        ));
     }
     use global_hotkey::hotkey::HotKey;
     use std::str::FromStr;
