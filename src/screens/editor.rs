@@ -895,7 +895,7 @@ fn keys(ui: &Ui, tool: Tool) -> Vec<EditorAction> {
     let mut acts = Vec::new();
     let cmd = Modifiers::COMMAND;
     ui.input_mut(|i| {
-        if i.consume_key(cmd, Key::C) {
+        if crate::engine::annotator::consume_command(i, Key::C) {
             acts.push(EditorAction::Copy);
         }
         if i.consume_key(cmd | Modifiers::SHIFT, Key::S) {

@@ -581,7 +581,7 @@ impl Home {
     /// The gallery's keys: the arrows move the choice (up and down by a row), Enter opens it in
     /// the editor, Ctrl+C copies it and Delete sends it to the trash.
     fn gallery_keys(&mut self, ui: &Ui, acts: &mut Vec<MainAction>) {
-        use egui::{Key, Modifiers};
+        use egui::Key;
         let step = ui.input(|i| {
             let cols = self.cols as isize;
             [
@@ -614,7 +614,7 @@ impl Home {
         if ui.input(|i| i.key_pressed(Key::Enter)) {
             acts.push(MainAction::Edit(path.clone()));
         }
-        if ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::C)) {
+        if ui.input_mut(|i| crate::engine::annotator::consume_command(i, Key::C)) {
             acts.push(MainAction::Copy(path.clone()));
         }
         if ui.input(|i| i.key_pressed(Key::Delete)) {

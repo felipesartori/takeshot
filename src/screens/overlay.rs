@@ -704,7 +704,7 @@ impl Overlay {
             self.sel = Some(Rect::from_min_size(Pos2::ZERO, self.img_size()));
         }
         if self.sel.is_some() {
-            if ui.input_mut(|i| i.consume_key(cmd, Key::C)) {
+            if ui.input_mut(|i| crate::engine::annotator::consume_command(i, Key::C)) {
                 return Some(self.act_copy(shared));
             }
             if ui.input_mut(|i| i.consume_key(cmd, Key::S)) {
@@ -719,7 +719,7 @@ impl Overlay {
                 return Some(self.open_editor(ctx, shared));
             }
         }
-        if ui.input_mut(|i| i.consume_key(cmd, Key::X)) {
+        if ui.input_mut(|i| crate::engine::annotator::consume_command(i, Key::X)) {
             return Some(Switch::Close);
         }
         if self.sel.is_none() && ui.input(|i| i.key_pressed(Key::C) && !i.modifiers.any()) {
