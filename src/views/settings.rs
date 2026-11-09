@@ -308,6 +308,14 @@ fn capture(ui: &mut Ui, t: &Tokens, shared: &mut Shared) {
             None,
             &mut s.open_editor_after_full,
         );
+        divider(ui, t);
+        switch_row(
+            ui,
+            t,
+            tr(Msg::HideOnCapture),
+            Some(tr(Msg::HideOnCaptureHint)),
+            &mut s.hide_on_capture,
+        );
         // Wayland gives a window no position, so the capture stays on one monitor there.
         if !crate::system::resident::on_wayland() {
             divider(ui, t);

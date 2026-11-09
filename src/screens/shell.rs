@@ -232,7 +232,7 @@ impl Shell {
     ) {
         match ev {
             ResidentEvent::Show(p) => self.show(ctx, home, p),
-            ResidentEvent::Shot(s) => self.capture(ctx, s),
+            ResidentEvent::Shot(s) => self.capture(ctx, s, shared),
             ResidentEvent::Tray(TrayEvent::LeftClick) => {
                 let e = left_click(shared.settings.tray_click);
                 self.handle(ctx, e, home, shared);
@@ -272,9 +272,9 @@ impl Shell {
         shared: &mut Shared,
     ) {
         match a {
-            TrayAction::Capture(s) => self.capture(ctx, s),
+            TrayAction::Capture(s) => self.capture(ctx, s, shared),
             TrayAction::CaptureIn3s => {
-                self.minimize_main(ctx);
+                self.minimize_main(ctx, shared);
                 let _ = actions::spawn_self(&["--capture", "--delay", "3"]);
             }
             TrayAction::Show(p) => self.show(ctx, home, p),
@@ -351,14 +351,15 @@ impl Shell {
         }
     }
 
-    fn minimize_main(&self, ctx: &egui::Context) {
-        if self.main_open {
+    /// Out of the picture before a capture, unless Settings keep Takeshot in it.
+    fn minimize_main(&self, ctx: &egui::Context, shared: &Shared) {
+        if self.main_open && shared.settings.hide_on_capture {
             ctx.send_viewport_cmd_to(self.main_viewport(), Cmd::Minimized(true));
         }
     }
 
-    fn capture(&self, ctx: &egui::Context, s: Shot) {
-        self.minimize_main(ctx);
+    fn capture(&self, ctx: &egui::Context, s: Shot, shared: &Shared) {
+        self.minimize_main(ctx, shared);
         let args: &[&str] = match s {
             Shot::Area => &["--capture", "--wait"],
             Shot::Full => &["--capture", "--full", "--wait"],

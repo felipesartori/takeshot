@@ -768,7 +768,9 @@ impl Home {
     fn capture(&mut self, ctx: &egui::Context, shared: &mut Shared, args: &[&str]) {
         // The new capture shows as soon as the window is back.
         self.last_scan = f64::NEG_INFINITY;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        if shared.settings.hide_on_capture {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
         if let Err(e) = crate::system::actions::spawn_self(args) {
             shared.toast(e);
         }
