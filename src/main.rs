@@ -331,6 +331,8 @@ struct App {
     quit_request: Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>,
     /// Every window agreed to the Quit: this one closes.
     quit_close: Arc<AtomicBool>,
+    /// macOS: whether the Dock shows this process, as last applied.
+    in_dock: Option<bool>,
 }
 
 impl App {
@@ -483,6 +485,12 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Each process follows the setting from its start; the resident also when it changes.
+        #[cfg(target_os = "macos")]
+        if self.in_dock != Some(self.shared.settings.show_in_dock) {
+            self.in_dock = Some(self.shared.settings.show_in_dock);
+            system::mac_titlebar::show_in_dock(self.shared.settings.show_in_dock);
+        }
         self.pump(ctx);
     }
 
@@ -981,6 +989,7 @@ fn main() -> eframe::Result {
                 notice_area,
                 quit_request,
                 quit_close,
+                in_dock: None,
             }))
         }),
     );
@@ -1069,6 +1078,7 @@ fn run_resident_windows(
         notice_area: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0)),
         quit_request: Arc::new(std::sync::Mutex::new(None)),
         quit_close: Arc::new(AtomicBool::new(false)),
+        in_dock: None,
     }));
     let since = std::time::Instant::now();
     // A hidden start waits for a panel to show the tray icon: without one it is unseen for good.
