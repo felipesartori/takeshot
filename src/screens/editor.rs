@@ -895,7 +895,7 @@ fn keys(ui: &Ui, tool: Tool) -> Vec<EditorAction> {
     let mut acts = Vec::new();
     let cmd = Modifiers::COMMAND;
     ui.input_mut(|i| {
-        if i.consume_key(cmd, Key::C) {
+        if crate::engine::annotator::consume_command(i, Key::C) {
             acts.push(EditorAction::Copy);
         }
         if i.consume_key(cmd | Modifiers::SHIFT, Key::S) {
@@ -962,6 +962,23 @@ fn checker(p: &egui::Painter, r: Rect) {
 mod tests {
     use super::*;
     use crate::engine::annotator::TextDraft;
+
+    #[test]
+    fn ctrl_c_copies() {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![
+                egui::Event::ModifiersChanged(Modifiers::COMMAND),
+                egui::Event::Copy,
+            ],
+            ..Default::default()
+        };
+        let mut acts = Vec::new();
+        ctx.run_ui(input, |ui| acts = keys(ui, Tool::Select))
+            .textures_delta
+            .clear();
+        assert_eq!(acts, vec![EditorAction::Copy]);
+    }
 
     #[test]
     fn zoom_steps_and_fit() {

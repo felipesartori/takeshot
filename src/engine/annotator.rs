@@ -887,6 +887,27 @@ fn paint_text(
     rect
 }
 
+/// Consumes Cmd/Ctrl + `key`. egui-winit turns Cmd/Ctrl+C and +X into [`egui::Event::Copy`] and
+/// [`egui::Event::Cut`] without their key, so those events count (and are consumed) too, but only
+/// while Cmd/Ctrl is down: Shift+Delete on Windows is a cut as well. Callers check first that no
+/// text field has the keyboard, since those events are its own.
+pub fn consume_command(i: &mut egui::InputState, key: egui::Key) -> bool {
+    let event = match key {
+        egui::Key::C => Some(egui::Event::Copy),
+        egui::Key::X => Some(egui::Event::Cut),
+        _ => None,
+    };
+    let mut hit = i.consume_key(egui::Modifiers::COMMAND, key);
+    if let Some(ev) = event
+        && i.modifiers.command
+    {
+        let before = i.events.len();
+        i.events.retain(|e| *e != ev);
+        hit |= i.events.len() != before;
+    }
+    hit
+}
+
 /// Plain mouse-wheel notches in this frame's `events` (Ctrl+wheel zooms instead): a line is a
 /// notch, and on a touchpad 50 points make one; `acc` keeps the part of a notch still to come.
 /// egui smooths the wheel over frames, so its scroll delta would count one notch many times.
@@ -1983,6 +2004,26 @@ mod tests {
         opts.color = [0, 200, 0, 255];
         an.restyle_from_opts(&before, &opts);
         assert_eq!(an.doc.objs()[0].ann.color, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn cmd_c_and_cmd_x_arrive_as_copy_and_cut() {
+        use egui::{Key, Modifiers as M};
+        let consume = |modifiers, event: Event, key| {
+            let mut i = egui::InputState::default();
+            i.modifiers = modifiers;
+            i.events = vec![event];
+            (consume_command(&mut i, key), i.events.len())
+        };
+        assert_eq!(consume(M::COMMAND, Event::Copy, Key::C), (true, 0));
+        assert_eq!(consume(M::COMMAND, Event::Cut, Key::X), (true, 0));
+        assert_eq!(consume(M::COMMAND, Event::Copy, Key::X), (false, 1));
+        assert_eq!(consume(M::COMMAND, Event::Cut, Key::C), (false, 1));
+        assert_eq!(
+            consume(M::SHIFT, Event::Cut, Key::X),
+            (false, 1),
+            "Shift+Delete"
+        );
     }
 
     #[test]

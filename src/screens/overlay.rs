@@ -704,7 +704,7 @@ impl Overlay {
             self.sel = Some(Rect::from_min_size(Pos2::ZERO, self.img_size()));
         }
         if self.sel.is_some() {
-            if ui.input_mut(|i| i.consume_key(cmd, Key::C)) {
+            if ui.input_mut(|i| crate::engine::annotator::consume_command(i, Key::C)) {
                 return Some(self.act_copy(shared));
             }
             if ui.input_mut(|i| i.consume_key(cmd, Key::S)) {
@@ -719,7 +719,7 @@ impl Overlay {
                 return Some(self.open_editor(ctx, shared));
             }
         }
-        if ui.input_mut(|i| i.consume_key(cmd, Key::X)) {
+        if ui.input_mut(|i| crate::engine::annotator::consume_command(i, Key::X)) {
             return Some(Switch::Close);
         }
         if self.sel.is_none() && ui.input(|i| i.key_pressed(Key::C) && !i.modifiers.any()) {
@@ -1309,6 +1309,44 @@ mod tests {
         );
         assert_eq!(o.an.tool, Tool::Text);
         assert_eq!(o.an.draft.as_ref().map(|d| d.text.as_str()), Some("Picor"));
+    }
+
+    fn cut_with(held: Modifiers) -> Vec<Vec<egui::Event>> {
+        vec![vec![egui::Event::ModifiersChanged(held), egui::Event::Cut]]
+    }
+
+    #[test]
+    fn ctrl_x_closes_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Rect);
+        let s = ui_frames(&mut o, &mut sh, cut_with(Modifiers::COMMAND));
+        assert!(matches!(s, Switch::Close));
+    }
+
+    #[test]
+    fn shift_delete_keeps_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Rect);
+        let s = ui_frames(&mut o, &mut sh, cut_with(Modifiers::SHIFT));
+        assert!(matches!(s, Switch::None));
+    }
+
+    #[test]
+    fn ctrl_x_in_a_text_being_typed_keeps_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Text);
+        o.an.draft = Some(crate::engine::annotator::TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: "Pico".into(),
+            started: 0.0,
+            caret: None,
+        });
+        let s = ui_frames(&mut o, &mut sh, cut_with(Modifiers::COMMAND));
+        assert!(matches!(s, Switch::None));
+        assert_eq!(o.an.draft.as_ref().map(|d| d.text.as_str()), Some("Pico"));
     }
 
     #[test]
