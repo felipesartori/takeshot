@@ -1391,31 +1391,23 @@ mod tests {
             vec![vec![key(egui::Key::ArrowDown, none)]],
         );
         assert_eq!(home.selected(), Some(std::path::Path::new("b.png")), "down");
-        for (k, m, act) in [
+        let ctrl_c = vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+            egui::Event::Copy,
+        ];
+        for (events, act) in [
             (
-                egui::Key::Enter,
-                none,
+                vec![key(egui::Key::Enter, none)],
                 MainAction::Edit(PathBuf::from("b.png")),
             ),
+            (ctrl_c, MainAction::Copy(PathBuf::from("b.png"))),
             (
-                egui::Key::C,
-                egui::Modifiers::COMMAND,
-                MainAction::Copy(PathBuf::from("b.png")),
-            ),
-            (
-                egui::Key::Delete,
-                none,
+                vec![key(egui::Key::Delete, none)],
                 MainAction::Trash(PathBuf::from("b.png")),
             ),
         ] {
-            let (acts, _) = run(
-                &mut home,
-                &mut shared,
-                (1160.0, 740.0),
-                true,
-                vec![vec![key(k, m)]],
-            );
-            assert!(acts.contains(&act), "{k:?}: {acts:?}");
+            let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![events]);
+            assert!(acts.contains(&act), "{act:?}: {acts:?}");
         }
         run(
             &mut home,

@@ -1311,6 +1311,44 @@ mod tests {
         assert_eq!(o.an.draft.as_ref().map(|d| d.text.as_str()), Some("Picor"));
     }
 
+    fn cut_with(held: Modifiers) -> Vec<Vec<egui::Event>> {
+        vec![vec![egui::Event::ModifiersChanged(held), egui::Event::Cut]]
+    }
+
+    #[test]
+    fn ctrl_x_closes_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Rect);
+        let s = ui_frames(&mut o, &mut sh, cut_with(Modifiers::COMMAND));
+        assert!(matches!(s, Switch::Close));
+    }
+
+    #[test]
+    fn shift_delete_keeps_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Rect);
+        let s = ui_frames(&mut o, &mut sh, cut_with(Modifiers::SHIFT));
+        assert!(matches!(s, Switch::None));
+    }
+
+    #[test]
+    fn ctrl_x_in_a_text_being_typed_keeps_the_capture() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut o = capture(&ctx, &sh, Tool::Text);
+        o.an.draft = Some(crate::engine::annotator::TextDraft {
+            pos: pos2(500.0, 500.0),
+            text: "Pico".into(),
+            started: 0.0,
+            caret: None,
+        });
+        let s = ui_frames(&mut o, &mut sh, cut_with(Modifiers::COMMAND));
+        assert!(matches!(s, Switch::None));
+        assert_eq!(o.an.draft.as_ref().map(|d| d.text.as_str()), Some("Pico"));
+    }
+
     #[test]
     fn a_wheel_notch_changes_the_width_by_one() {
         let ctx = egui::Context::default();
