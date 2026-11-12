@@ -321,6 +321,8 @@ pub enum Msg {
     FullOpensEditor,
     AllScreens,
     AllScreensHint,
+    HideOnCapture,
+    HideOnCaptureHint,
     CapturesFolder,
     Choose,
     SaveStraight,
@@ -630,6 +632,8 @@ fn en(m: Msg) -> &'static str {
         Msg::FullOpensEditor => "Full screen opens the editor",
         Msg::AllScreens => "Area capture on every screen",
         Msg::AllScreensHint => "Dims all monitors; choose the area on any of them.",
+        Msg::HideOnCapture => "Hide Takeshot when capturing",
+        Msg::HideOnCaptureHint => "Off, the Takeshot window stays and can be captured too.",
         Msg::CapturesFolder => "Captures folder",
         Msg::Choose => "Choose",
         Msg::SaveStraight => "Save straight to the folder",
@@ -920,6 +924,10 @@ fn pt(m: Msg) -> &'static str {
         Msg::FullOpensEditor => "Tela inteira abre no editor",
         Msg::AllScreens => "Captura de área em todas as telas",
         Msg::AllScreensHint => "Escurece todos os monitores; escolha a área em qualquer um.",
+        Msg::HideOnCapture => "Esconder o Takeshot ao capturar",
+        Msg::HideOnCaptureHint => {
+            "Desligado, a janela do Takeshot fica e também pode ser capturada."
+        }
         Msg::CapturesFolder => "Pasta das capturas",
         Msg::Choose => "Escolher",
         Msg::SaveStraight => "Salvar direto na pasta",
