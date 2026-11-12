@@ -1,5 +1,5 @@
-//! The main window: the title bar (mark, page pills, PrtSc status, light and dark, About and
-//! the window buttons) over a rounded content panel, as in "A · Janela principal" of the design.
+//! The main window: the title bar (mark, page pills, light and dark, About and
+//! the window buttons) over a rounded content panel, as in the design's main window.
 
 use crate::Shared;
 use crate::screens::home::{Home, MainAction};
@@ -50,7 +50,7 @@ pub fn main_window(
 fn title_bar(ui: &mut Ui, t: &Tokens, home: &mut Home, acts: &mut Vec<MainAction>) {
     // The empty bar moves the window; it goes first so the bar's buttons sit above it.
     chrome::drag_area(ui, ui.max_rect());
-    // Measures from page C: 4 px between items, 12 px at both ends, the name 8 px after the mark
+    // Measures from the design's title bar: 4 px between items, 12 px at both ends, the name 8 px after the mark
     // and the pills 20 px after the name; the window buttons behind a short line.
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;

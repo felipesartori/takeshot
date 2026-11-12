@@ -716,6 +716,17 @@ mod tests {
     }
 
     #[test]
+    fn the_window_minimizes_before_a_capture_unless_settings_keep_it() {
+        let shell = Shell::new(false, true);
+        let mut shared = Shared::for_tests();
+        let sent = commands(|ctx| shell.minimize_main(ctx, &shared));
+        assert!(sent.contains(&Cmd::Minimized(true)), "hides by default");
+        shared.settings.hide_on_capture = false;
+        let sent = commands(|ctx| shell.minimize_main(ctx, &shared));
+        assert!(!sent.contains(&Cmd::Minimized(true)), "kept on screen");
+    }
+
+    #[test]
     fn hiding_the_hosted_window_closes_nothing() {
         // Windows and macOS: the child viewport just stops being drawn.
         let mut shell = Shell::new(true, true);

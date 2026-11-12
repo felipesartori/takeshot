@@ -26,7 +26,7 @@ pub struct CaptureBars {
     pub actions: Rect,
 }
 
-/// Places the capture's parts around `area` (page C of the design): the tools in a column to the
+/// Places the capture's parts around `area` (the design's capture screens): the tools in a column to the
 /// area's right (its left without room), from the area's top and down past its bottom only when
 /// the column is taller than the area, in a place that never depends on the options; the options
 /// beside the tools, else on the area's other side, from the same top; the

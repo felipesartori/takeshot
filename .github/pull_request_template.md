@@ -11,6 +11,10 @@
 
 <!-- Attach a screenshot of each checked combination. -->
 
+## Design file
+
+- [ ] `design/takeshot-ui.fig` updated for every screen changed (or no screen changed)
+
 ## Parity
 
 Looks right in all four: <!-- write "yes", or list what still looks off and in which theme and mode -->
