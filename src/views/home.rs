@@ -1,5 +1,5 @@
 //! Início: the capture buttons, the gallery filters, search and folder, and the grid of
-//! captures from the save folder, as in "Início · escuro" and "Início · claro" of the design.
+//! captures from the save folder, as in "Início · grade · escuro" and "Início · grade · claro" of the design.
 
 use crate::Shared;
 use crate::screens::home::{Home, MainAction, when_label};
@@ -35,7 +35,7 @@ pub fn start_page(
 ) {
     let area = label(&shared.settings.hotkey_area);
     let full = label(&shared.settings.hotkey_full);
-    // Measures from "Início · escuro": the header 24 px in and 22 from the top over an 87 px
+    // Measures from "Início · grade · escuro": the header 24 px in and 22 from the top over an 87 px
     // band, a line across the box, the filters in a 56 px band 20 px in, the grid 24 px in.
     let inner = ui.max_rect();
     let b = inner.expand(1.0); // the box, its border included
@@ -816,7 +816,7 @@ mod tests {
 
     #[test]
     fn a_line_parts_the_header_from_the_filters() {
-        // "Início · escuro" (Portuguese, PrtSc): the header is 87 px tall, then a line across the
+        // "Início · grade · escuro" (Portuguese, PrtSc): the header is 87 px tall, then a line across the
         // whole box.
         let before = crate::ui::i18n::lang();
         crate::ui::i18n::set_lang(crate::ui::i18n::Lang::Pt);

@@ -13,7 +13,7 @@
 
 ## Design file
 
-- [ ] `design/takeshot-ui.fig` and `design/screens/` updated for every screen changed (or no screen changed)
+- [ ] `design/takeshot-ui.fig` updated for every screen changed (or no screen changed)
 
 ## Parity
 
