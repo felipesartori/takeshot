@@ -1,7 +1,7 @@
 # Conduz o exe do Takeshot em teste no Windows, com teclas e cliques reais (SendInput).
 # Uso: dot-source num powershell, depois chame as funcoes (uma chamada de PowerShell pode ter varias):
 #   . .\.claude\skills\revisar-pr\windows-ui.ps1
-#   Start-App "<exe>" "--page ajustes --lang en --theme takeui --mode light --captures-dir <repo>\design\screens"
+#   Start-App "<exe>" "--page ajustes --lang en --theme takeui --mode light --captures-dir <repo>\docs\images"
 #   Focus-App; ClickAt 87 196; Chord @('ctrl','shift','9'); Shot 'passo-1'
 # Regra de seguranca: tecla ou clique so sai se a janela em primeiro plano for do processo que
 # este script iniciou; senao a funcao aborta e nada e enviado. O processo do app tem uma janela
