@@ -25,6 +25,7 @@ Keeping it current is part of every visible change, in the same pull request:
 - The app is the truth. Draw from its render (`--screenshot`, with `--page`), never from memory, and compare the finished frame with that render: a frame that disagrees with the app is a bug in the file.
 - A visual with no precedent in the kit is drawn first on a dated page ("Proposta (AAAA-MM-DD)") and approved before the code. When the app ships it, its frames move to the "Telas" pages and the proposal page goes.
 - A change that reaches the kit also updates the matching component frame in "Sistema de design".
+- The frames draw the Windows and Linux window. A control the app shows only on macOS (the Dock row in Ajustes > General) stays out of them, and its check is in [docs/testing-macos.md](docs/testing-macos.md).
 
 ## Layout
 
