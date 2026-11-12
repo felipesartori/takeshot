@@ -7,7 +7,7 @@ use crate::ui::tokens::Tokens;
 use egui::{CursorIcon, Pos2, Rect, ResizeDirection, Response, Sense, Ui, ViewportCommand};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The title bar's height, as in page C of the design: its 32 px buttons keep 6 px above and below.
+/// The title bar's height, as in the design: its 32 px buttons keep 6 px above and below.
 pub const BAR_HEIGHT: f32 = 44.0;
 /// How far in from the window border a press resizes.
 pub const EDGE: f32 = 6.0;

@@ -38,7 +38,7 @@ pub fn settings_page(
     acts: &mut Vec<MainAction>,
 ) {
     let before = serde_json::to_string(&shared.settings).ok();
-    // Measures from "Ajustes · escuro": a 220 px list flush to the box (its 196 px items 12 px
+    // Measures from "Ajustes · Geral · escuro": a 220 px list flush to the box (its 196 px items 12 px
     // in), a line from top to bottom, and the content 40 px in on both sides, 28 from the top.
     let inner = ui.max_rect();
     let b = inner.expand(1.0); // the box, its border included
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn groups_sit_24_px_apart() {
-        // "Ajustes · escuro": 24 px from a group's box (or the heading) to the next title.
+        // "Ajustes · Geral · escuro": 24 px from a group's box (or the heading) to the next title.
         let (mut home, mut shared) = Home::for_tests(vec![]);
         home.open(Page::Settings);
         let (_, painted, blocks) =
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn the_section_list_matches_the_design() {
-        // "Ajustes · escuro": a 220 px list flush to the box, 196 × 36 items 12 px in from both
+        // "Ajustes · Geral · escuro": a 220 px list flush to the box, 196 × 36 items 12 px in from both
         // sides, a line from the box's top to its bottom, the content 40 px past it.
         let (mut home, mut shared) = Home::for_tests(vec![]);
         home.open(Page::Settings);

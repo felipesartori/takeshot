@@ -334,9 +334,30 @@ struct App {
 }
 
 impl App {
+    /// The monitor holding the capture's area; `None` outside a capture.
+    fn active_shot(&self) -> Option<&capture::Shot> {
+        match &self.mode {
+            Mode::Overlay {
+                main,
+                others,
+                active,
+            } => {
+                let o = match *active {
+                    0 => main.as_ref(),
+                    n => others.get(n - 1).map_or(main.as_ref(), |(_, o)| o),
+                };
+                Some(o.shot())
+            }
+            _ => None,
+        }
+    }
+
+    /// The editor opens on the monitor where the area was chosen, not where the capture started.
     fn switch_to_editor(&mut self, ctx: &egui::Context, e: Box<editor::Editor>) {
         use egui::ViewportCommand as C;
-        let (pos, size) = self.editor_window;
+        let (pos, size) = self
+            .active_shot()
+            .map_or(self.editor_window, |s| place_for(s).0);
         if !cfg!(target_os = "macos") {
             ctx.send_viewport_cmd(C::Fullscreen(false));
         }
@@ -391,7 +412,10 @@ impl App {
         ctx.send_viewport_cmd(C::Decorations(false));
         ctx.send_viewport_cmd(C::WindowLevel(egui::WindowLevel::AlwaysOnTop));
         ctx.send_viewport_cmd(C::InnerSize(notice::NOTICE_SIZE));
-        ctx.send_viewport_cmd(C::OuterPosition(notice::notice_pos(self.notice_area)));
+        let area = self
+            .active_shot()
+            .map_or(self.notice_area, |s| place_for(s).1);
+        ctx.send_viewport_cmd(C::OuterPosition(notice::notice_pos(area)));
         self.mode = Mode::Notice(n);
     }
 }
@@ -524,12 +548,15 @@ impl eframe::App for App {
             } => {
                 let t = self.shared.tokens(ctx.system_theme());
                 views::begin_frame(&ctx, &t);
-                let mut sw = main.ui(ui, Some(frame), &t, &mut self.shared);
+                // The other monitors' windows have no `Frame` of their own; the save dialog takes the
+                // first window as its owner, or it would open behind these always-on-top windows.
+                let parent: &eframe::Frame = frame;
+                let mut sw = main.ui(ui, Some(parent), &t, &mut self.shared);
                 let shared = &mut self.shared;
                 for (i, (vp, o)) in others.iter_mut().enumerate() {
                     let id = egui::ViewportId::from_hash_of(("capture", i));
                     let s = ctx.show_viewport_immediate(id, vp.clone(), |ui, _| {
-                        o.ui(ui, None, &t, shared)
+                        o.ui(ui, Some(parent), &t, shared)
                     });
                     if matches!(sw, Switch::None) {
                         sw = s;
@@ -715,24 +742,7 @@ fn main() -> eframe::Result {
     let mut pin_img = None;
     match (&args.launch, &shot) {
         (Launch::Capture { full }, Some(s)) => {
-            let k = s.scale;
-            let pos = egui::pos2(s.x as f32 / k, s.y as f32 / k);
-            let size = egui::vec2(s.image.width() as f32 / k, s.image.height() as f32 / k);
-            let ew = egui::vec2(1280.0f32.min(size.x - 40.0), 820.0f32.min(size.y - 60.0));
-            editor_window = (pos + (size - ew) / 2.0, ew);
-            // The notice keeps off the taskbar: the work area of this monitor, in points.
-            let middle = egui::pos2(
-                s.x as f32 + s.image.width() as f32 / 2.0,
-                s.y as f32 + s.image.height() as f32 / 2.0,
-            );
-            notice_area = capture::work_area(middle)
-                .map(|r| {
-                    egui::Rect::from_min_max(
-                        (r.min.to_vec2() / k).to_pos2(),
-                        (r.max.to_vec2() / k).to_pos2(),
-                    )
-                })
-                .unwrap_or(egui::Rect::from_min_size(pos, size));
+            (editor_window, notice_area) = place_for(s);
             if *full && !settings.open_editor_after_full && args.screenshot.is_none() {
                 // Shift+PrtSc saves the full screen at once.
                 let fonts = fonts::FontLib::load();
@@ -773,7 +783,7 @@ fn main() -> eframe::Result {
             } else if *full && settings.open_editor_after_full {
                 vp = vp
                     .with_title("Takeshot · editor")
-                    .with_inner_size(ew)
+                    .with_inner_size(editor_window.1)
                     .with_position(editor_window.0);
             } else if args.screenshot.is_some() {
                 vp = vp
@@ -873,7 +883,6 @@ fn main() -> eframe::Result {
                     Some(s) => {
                         // The overlay holds the slot; the editor and the notice paths drop it here.
                         let o = overlay::Overlay::new(ctx, s, &shared).hold(capture_slot.take());
-                        let theme = args.theme.unwrap_or(shared.settings.ui_theme);
                         let others = std::mem::take(&mut other_shots)
                             .into_iter()
                             .map(|s| {
@@ -994,6 +1003,28 @@ fn base_viewport(theme: ui::tokens::ThemeId) -> egui::ViewportBuilder {
     egui::ViewportBuilder::default()
         .with_icon(Arc::new(ui::brand::window_icon(theme)))
         .with_app_id("takeshot")
+}
+
+/// Where the editor and the notice go when the capture ends on the monitor of `s`: the editor
+/// centred on it, the notice in its work area (in points, off the taskbar).
+fn place_for(s: &capture::Shot) -> ((egui::Pos2, egui::Vec2), egui::Rect) {
+    let k = s.scale;
+    let pos = egui::pos2(s.x as f32 / k, s.y as f32 / k);
+    let size = egui::vec2(s.image.width() as f32 / k, s.image.height() as f32 / k);
+    let ew = egui::vec2(1280.0f32.min(size.x - 40.0), 820.0f32.min(size.y - 60.0));
+    let middle = egui::pos2(
+        s.x as f32 + s.image.width() as f32 / 2.0,
+        s.y as f32 + s.image.height() as f32 / 2.0,
+    );
+    let notice = capture::work_area(middle)
+        .map(|r| {
+            egui::Rect::from_min_max(
+                (r.min.to_vec2() / k).to_pos2(),
+                (r.max.to_vec2() / k).to_pos2(),
+            )
+        })
+        .unwrap_or(egui::Rect::from_min_size(pos, size));
+    ((pos + (size - ew) / 2.0, ew), notice)
 }
 
 /// A capture window covering the monitor of `s`.
@@ -1195,6 +1226,43 @@ mod tests {
             toast: None,
             overrides: RunOverrides::default(),
         }
+    }
+
+    fn shot_at(x: i32, y: i32, scale: f32, w: u32, h: u32) -> capture::Shot {
+        capture::Shot {
+            image: image::RgbaImage::new(w, h),
+            x,
+            y,
+            scale,
+        }
+    }
+
+    #[test]
+    fn a_capture_window_covers_its_monitor_in_points() {
+        // A monitor left of the primary one (negative origin), at 100% and at 200%.
+        for (scale, w, h) in [(1.0, 1920, 1080), (2.0, 3840, 2160)] {
+            let s = shot_at((-1920.0 * scale) as i32, 0, scale, w, h);
+            let vp = capture_viewport(egui::ViewportBuilder::default(), &s);
+            assert_eq!(vp.position, Some(egui::pos2(-1920.0, 0.0)), "scale {scale}");
+            assert_eq!(
+                vp.inner_size,
+                Some(egui::vec2(1920.0, 1080.0)),
+                "scale {scale}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_editor_opens_centred_on_the_monitor_of_the_area() {
+        let ((pos, size), _) = place_for(&shot_at(-1920, 0, 1.0, 1920, 1080));
+        assert_eq!(size, egui::vec2(1280.0, 820.0));
+        assert_eq!(
+            pos,
+            egui::pos2(-1920.0 + 320.0, 130.0),
+            "on the left monitor"
+        );
+        let ((pos, _), _) = place_for(&shot_at(0, 0, 1.0, 1920, 1080));
+        assert_eq!(pos, egui::pos2(320.0, 130.0), "on the primary one");
     }
 
     #[test]

@@ -964,6 +964,23 @@ mod tests {
     use crate::engine::annotator::TextDraft;
 
     #[test]
+    fn ctrl_c_copies() {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![
+                egui::Event::ModifiersChanged(Modifiers::COMMAND),
+                egui::Event::Copy,
+            ],
+            ..Default::default()
+        };
+        let mut acts = Vec::new();
+        ctx.run_ui(input, |ui| acts = keys(ui, Tool::Select))
+            .textures_delta
+            .clear();
+        assert_eq!(acts, vec![EditorAction::Copy]);
+    }
+
+    #[test]
     fn zoom_steps_and_fit() {
         let fit = 0.37;
         assert_eq!(zoom_scale(Zoom::Percent(100), 0.5, fit), 1.0);

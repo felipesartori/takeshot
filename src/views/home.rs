@@ -1,5 +1,5 @@
 //! Início: the capture buttons, the gallery filters, search and folder, and the grid of
-//! captures from the save folder, as in "Início · escuro" and "Início · claro" of the design.
+//! captures from the save folder, as in "Início · grade · escuro" and "Início · grade · claro" of the design.
 
 use crate::Shared;
 use crate::screens::home::{Home, MainAction, when_label};
@@ -35,7 +35,7 @@ pub fn start_page(
 ) {
     let area = label(&shared.settings.hotkey_area);
     let full = label(&shared.settings.hotkey_full);
-    // Measures from "Início · escuro": the header 24 px in and 22 from the top over an 87 px
+    // Measures from "Início · grade · escuro": the header 24 px in and 22 from the top over an 87 px
     // band, a line across the box, the filters in a 56 px band 20 px in, the grid 24 px in.
     let inner = ui.max_rect();
     let b = inner.expand(1.0); // the box, its border included
@@ -816,7 +816,7 @@ mod tests {
 
     #[test]
     fn a_line_parts_the_header_from_the_filters() {
-        // "Início · escuro" (Portuguese, PrtSc): the header is 87 px tall, then a line across the
+        // "Início · grade · escuro" (Portuguese, PrtSc): the header is 87 px tall, then a line across the
         // whole box.
         let before = crate::ui::i18n::lang();
         crate::ui::i18n::set_lang(crate::ui::i18n::Lang::Pt);
@@ -1036,6 +1036,28 @@ mod tests {
         let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, frames);
         assert!(!acts.contains(&MainAction::Paste), "{acts:?}");
         assert!(!acts.contains(&MainAction::OpenImage), "{acts:?}");
+    }
+
+    #[test]
+    fn a_pasted_image_opens_unless_search_has_the_keyboard() {
+        let (mut home, mut shared) = Home::for_tests(vec![entry("a.png", SystemTime::now())]);
+        let image = egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled(
+            [2, 2],
+            egui::Color32::RED,
+        )));
+        let (acts, painted) = run(
+            &mut home,
+            &mut shared,
+            (1160.0, 740.0),
+            true,
+            vec![vec![image.clone()]],
+        );
+        assert!(acts.contains(&MainAction::Paste), "{acts:?}");
+        let search = painted_at(&painted, &every(Msg::SearchByName), |_| true).unwrap();
+        let mut frames = click(search);
+        frames.push(vec![image]);
+        let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, frames);
+        assert!(!acts.contains(&MainAction::Paste), "{acts:?}");
     }
 
     fn delete_key() -> egui::Event {
@@ -1391,31 +1413,23 @@ mod tests {
             vec![vec![key(egui::Key::ArrowDown, none)]],
         );
         assert_eq!(home.selected(), Some(std::path::Path::new("b.png")), "down");
-        for (k, m, act) in [
+        let ctrl_c = vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+            egui::Event::Copy,
+        ];
+        for (events, act) in [
             (
-                egui::Key::Enter,
-                none,
+                vec![key(egui::Key::Enter, none)],
                 MainAction::Edit(PathBuf::from("b.png")),
             ),
+            (ctrl_c, MainAction::Copy(PathBuf::from("b.png"))),
             (
-                egui::Key::C,
-                egui::Modifiers::COMMAND,
-                MainAction::Copy(PathBuf::from("b.png")),
-            ),
-            (
-                egui::Key::Delete,
-                none,
+                vec![key(egui::Key::Delete, none)],
                 MainAction::Trash(PathBuf::from("b.png")),
             ),
         ] {
-            let (acts, _) = run(
-                &mut home,
-                &mut shared,
-                (1160.0, 740.0),
-                true,
-                vec![vec![key(k, m)]],
-            );
-            assert!(acts.contains(&act), "{k:?}: {acts:?}");
+            let (acts, _) = run(&mut home, &mut shared, (1160.0, 740.0), true, vec![events]);
+            assert!(acts.contains(&act), "{act:?}: {acts:?}");
         }
         run(
             &mut home,
