@@ -332,6 +332,7 @@ struct App {
     /// Every window agreed to the Quit: this one closes.
     quit_close: Arc<AtomicBool>,
     /// macOS: whether the Dock shows this process, as last applied.
+    #[cfg(target_os = "macos")]
     in_dock: Option<bool>,
 }
 
@@ -989,6 +990,7 @@ fn main() -> eframe::Result {
                 notice_area,
                 quit_request,
                 quit_close,
+                #[cfg(target_os = "macos")]
                 in_dock: None,
             }))
         }),
@@ -1078,6 +1080,7 @@ fn run_resident_windows(
         notice_area: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0)),
         quit_request: Arc::new(std::sync::Mutex::new(None)),
         quit_close: Arc::new(AtomicBool::new(false)),
+        #[cfg(target_os = "macos")]
         in_dock: None,
     }));
     let since = std::time::Instant::now();
