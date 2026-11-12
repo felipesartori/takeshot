@@ -536,6 +536,11 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Each process follows the setting from its start; the resident also when it changes.
+        // AppKit holds the policy (a no-op when it already matches), so it is also put back if
+        // winit sets it again once the launch finishes.
+        #[cfg(target_os = "macos")]
+        system::mac_titlebar::show_in_dock(self.shared.settings.show_in_dock);
         self.pump(ctx);
     }
 

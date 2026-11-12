@@ -264,6 +264,8 @@ pub struct Settings {
     pub capture_all_screens: bool,
     /// The main window gets out of the way before a capture; off, it can be captured too.
     pub hide_on_capture: bool,
+    /// macOS: Takeshot shows in the Dock; off, only its menu bar icon.
+    pub show_in_dock: bool,
     /// Show a short notice after copying and saving.
     pub show_bubbles: bool,
     pub hotkeys: bool,
@@ -303,6 +305,7 @@ impl Default for Settings {
             open_editor_after_full: false,
             capture_all_screens: false,
             hide_on_capture: true,
+            show_in_dock: true,
             show_bubbles: true,
             hotkeys: true,
             hotkey_area: default_keys(Shot::Area).to_string(),
@@ -490,6 +493,7 @@ mod tests {
         assert!(!s.show_bubbles);
         assert!(s.hide_on_capture, "Takeshot still hides when capturing");
         assert!(!s.capture_all_screens);
+        assert!(s.show_in_dock, "still in the Dock");
         assert_eq!(s.ui_theme, ThemeId::TakeUi);
         assert_eq!(s.ui_mode, UiMode::System);
         assert_eq!(s.lang, LangPref::Auto);

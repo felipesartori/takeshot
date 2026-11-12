@@ -267,6 +267,16 @@ fn general(
                 SELECT_WIDTH,
             );
         });
+        if cfg!(target_os = "macos") {
+            divider(ui, t);
+            switch_row(
+                ui,
+                t,
+                tr(Msg::ShowInDock),
+                Some(tr(Msg::ShowInDockHint)),
+                &mut s.show_in_dock,
+            );
+        }
         divider(ui, t);
         switch_row(
             ui,

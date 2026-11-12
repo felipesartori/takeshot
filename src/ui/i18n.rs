@@ -323,6 +323,8 @@ pub enum Msg {
     AllScreensHint,
     HideOnCapture,
     HideOnCaptureHint,
+    ShowInDock,
+    ShowInDockHint,
     CapturesFolder,
     Choose,
     SaveStraight,
@@ -634,6 +636,8 @@ fn en(m: Msg) -> &'static str {
         Msg::AllScreensHint => "Dims all monitors; choose the area on any of them.",
         Msg::HideOnCapture => "Hide Takeshot when capturing",
         Msg::HideOnCaptureHint => "Off, the Takeshot window stays and can be captured too.",
+        Msg::ShowInDock => "Show in the Dock",
+        Msg::ShowInDockHint => "Off, Takeshot lives in the menu bar icon only.",
         Msg::CapturesFolder => "Captures folder",
         Msg::Choose => "Choose",
         Msg::SaveStraight => "Save straight to the folder",
@@ -928,6 +932,8 @@ fn pt(m: Msg) -> &'static str {
         Msg::HideOnCaptureHint => {
             "Desligado, a janela do Takeshot fica e também pode ser capturada."
         }
+        Msg::ShowInDock => "Mostrar no Dock",
+        Msg::ShowInDockHint => "Desligado, o Takeshot fica só no ícone da barra de menus.",
         Msg::CapturesFolder => "Pasta das capturas",
         Msg::Choose => "Escolher",
         Msg::SaveStraight => "Salvar direto na pasta",
