@@ -169,6 +169,23 @@ pub fn keys_from_egui(key: egui::Key, mods: egui::Modifiers) -> Option<String> {
     Some(parts.join("+"))
 }
 
+/// egui sends Shift, Ctrl, Alt and Cmd as keys of their own. Such a key only starts a shortcut,
+/// and Change skips it to reach the key that ends it.
+pub fn is_modifier_key(key: egui::Key) -> bool {
+    use egui::Key as K;
+    matches!(
+        key,
+        K::ShiftLeft
+            | K::ShiftRight
+            | K::ControlLeft
+            | K::ControlRight
+            | K::AltLeft
+            | K::AltRight
+            | K::SuperLeft
+            | K::SuperRight
+    )
+}
+
 /// A global shortcut needs Ctrl, Alt or the Command key, or an F key: a plain or Shift+ key
 /// would be taken from every app while typing. Change keeps waiting on such a key.
 pub fn needs_modifier(key: egui::Key, mods: egui::Modifiers) -> bool {
@@ -408,6 +425,30 @@ mod tests {
         assert!(!needs_modifier(Key::A, Modifiers::ALT));
         assert!(!needs_modifier(Key::F9, Modifiers::NONE));
         assert!(!needs_modifier(Key::F9, Modifiers::SHIFT));
+        assert!(!needs_modifier(
+            Key::Num9,
+            Modifiers::COMMAND | Modifiers::SHIFT
+        ));
+    }
+
+    #[test]
+    fn a_modifier_key_only_starts_a_shortcut() {
+        use egui::Key;
+        for key in [
+            Key::ShiftLeft,
+            Key::ShiftRight,
+            Key::ControlLeft,
+            Key::ControlRight,
+            Key::AltLeft,
+            Key::AltRight,
+            Key::SuperLeft,
+            Key::SuperRight,
+        ] {
+            assert!(is_modifier_key(key), "{key:?}");
+        }
+        for key in [Key::A, Key::Num9, Key::F9, Key::Escape, Key::PrintScreen] {
+            assert!(!is_modifier_key(key), "{key:?}");
+        }
     }
     use global_hotkey::hotkey::HotKey;
     use std::str::FromStr;

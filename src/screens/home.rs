@@ -5,7 +5,9 @@
 use crate::Shared;
 use crate::engine::render;
 use crate::screens::overlay::color_image;
-use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label, needs_modifier};
+use crate::system::hotkeys::{
+    Shot, Status, default_keys, is_modifier_key, keys_from_egui, label, needs_modifier,
+};
 use crate::system::library::{self, Entry, Period, Thumbs};
 use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{CardThumb, WindowControl};
@@ -525,6 +527,7 @@ impl Home {
 
         let mut acts = Vec::new();
         // "Change" waits for the next keys: Esc cancels; a key needing Ctrl or Alt keeps waiting.
+        // A modifier key only starts the shortcut, so the first other key of the frame ends it.
         if let Some(shot) = self.capturing {
             let pressed = ui.input(|i| {
                 i.events.iter().find_map(|e| match e {
@@ -533,7 +536,7 @@ impl Home {
                         pressed: true,
                         modifiers,
                         ..
-                    } => Some((*key, *modifiers)),
+                    } if !is_modifier_key(*key) => Some((*key, *modifiers)),
                     _ => None,
                 })
             });
@@ -1097,6 +1100,89 @@ mod tests {
         home.apply(MainAction::StartRebind(Shot::Full), &ctx, &mut shared);
         home.apply(MainAction::Page(P::Start), &ctx, &mut shared);
         assert_eq!(home.capturing(), None, "another page");
+    }
+
+    /// One frame of the Settings page with these events, as the window would deliver them.
+    fn frame(home: &mut Home, shared: &mut Shared, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                home.begin(ui, shared);
+            },
+        );
+        // No painter here to apply the texture changes; egui panics if they are just dropped.
+        out.textures_delta.clear();
+    }
+
+    fn pressed(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn waiting_for_area_keys() -> (Home, Shared, egui::Context) {
+        use crate::system::instance::Page as P;
+        let ctx = egui::Context::default();
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(P::Settings);
+        home.apply(MainAction::StartRebind(Shot::Area), &ctx, &mut shared);
+        (home, shared, ctx)
+    }
+
+    #[test]
+    fn a_new_shortcut_waits_past_its_modifier_keys() {
+        use egui::{Event, Key, Modifiers};
+        let (mut home, mut shared, ctx) = waiting_for_area_keys();
+        let ctrl = Modifiers::CTRL;
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        // Windows order: winit reports the new modifiers before the key that carries them.
+        let steps = [
+            vec![
+                Event::ModifiersChanged(ctrl),
+                pressed(Key::ControlLeft, ctrl),
+            ],
+            vec![Event::ModifiersChanged(both), pressed(Key::ShiftLeft, both)],
+        ];
+        for events in steps {
+            frame(&mut home, &mut shared, &ctx, events);
+            assert_eq!(home.requests.rebind, None, "a modifier ended the shortcut");
+            assert_eq!(home.capturing(), Some(Shot::Area), "stopped waiting");
+        }
+        frame(&mut home, &mut shared, &ctx, vec![pressed(Key::Num9, both)]);
+        assert_eq!(
+            home.requests.rebind,
+            Some((Shot::Area, "ctrl+shift+Digit9".into()))
+        );
+        assert_eq!(home.capturing(), None);
+    }
+
+    #[test]
+    fn the_key_that_ends_a_shortcut_is_not_lost_behind_its_modifier() {
+        use egui::{Event, Key, Modifiers};
+        let (mut home, mut shared, ctx) = waiting_for_area_keys();
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        // Both events in one frame: the modifier comes first and must not hide the 9.
+        frame(
+            &mut home,
+            &mut shared,
+            &ctx,
+            vec![
+                Event::ModifiersChanged(both),
+                pressed(Key::ShiftLeft, both),
+                pressed(Key::Num9, both),
+            ],
+        );
+        assert_eq!(
+            home.requests.rebind,
+            Some((Shot::Area, "ctrl+shift+Digit9".into()))
+        );
     }
 
     #[test]
