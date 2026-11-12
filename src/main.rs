@@ -7,6 +7,7 @@
 //!   --edit [file]          editor for a picture (a sample when no file)
 //!   --pin file             picture pinned on top of other windows
 //!   --page inicio|estilo|ajustes   main window on that page
+//!   --section geral|captura|salvar|atalhos|sobre   Ajustes opens on that section
 //!   --page componentes     component gallery of the design system
 //!   --page editor|captura  the editor on the sample picture, the capture on the sample screen
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
@@ -49,6 +50,8 @@ pub struct RunOverrides {
     pub captures_dir: Option<String>,
     /// `--select`: Início starts with this capture chosen.
     pub select: Option<String>,
+    /// `--section`: Ajustes opens on this section.
+    pub section: Option<home::SettingsSection>,
 }
 
 impl Shared {
@@ -157,6 +160,7 @@ struct Args {
     page: Option<system::instance::Page>,
     captures_dir: Option<String>,
     select: Option<String>,
+    section: Option<home::SettingsSection>,
 }
 
 /// What `--page` names: a page of the main window, or the component gallery.
@@ -185,6 +189,19 @@ pub fn parse_page(s: &str) -> Option<PageArg> {
     })
 }
 
+/// What `--section` names: a section of Ajustes.
+pub fn parse_section(s: &str) -> Option<home::SettingsSection> {
+    use home::SettingsSection as S;
+    Some(match s {
+        "geral" => S::General,
+        "captura" => S::Capture,
+        "salvar" => S::Save,
+        "atalhos" => S::Shortcuts,
+        "sobre" => S::About,
+        _ => return None,
+    })
+}
+
 fn parse_args() -> Args {
     let mut a = Args {
         launch: Launch::Home,
@@ -198,6 +215,7 @@ fn parse_args() -> Args {
         page: None,
         captures_dir: None,
         select: None,
+        section: None,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut full = false;
@@ -218,6 +236,14 @@ fn parse_args() -> Args {
             }
             "--select" => {
                 a.select = v.get(i + 1).cloned();
+                i += 1;
+            }
+            "--section" => {
+                let name = v.get(i + 1).map(String::as_str);
+                a.section = name.and_then(parse_section);
+                if a.section.is_none() {
+                    unknown_value::<()>("--section", name);
+                }
                 i += 1;
             }
             "--full" => full = true,
@@ -304,6 +330,9 @@ fn main_home(
     let mut h = home::Home::new(ctx, shared);
     if let Some(p) = page {
         h.open(p);
+    }
+    if let Some(s) = shared.overrides.section {
+        h.open_section(s);
     }
     if let Some(name) = &shared.overrides.select {
         h.select_by_name(name);
@@ -1056,13 +1085,14 @@ fn main_window_viewport(vp: egui::ViewportBuilder) -> egui::ViewportBuilder {
         .with_drag_and_drop(true)
 }
 
-/// `--theme`, `--mode`, `--captures-dir` and `--select`: for this run only.
+/// `--theme`, `--mode`, `--captures-dir`, `--select` and `--section`: for this run only.
 fn run_overrides(args: &Args) -> RunOverrides {
     RunOverrides {
         theme: args.theme,
         mode: args.mode,
         captures_dir: args.captures_dir.clone(),
         select: args.select.clone(),
+        section: args.section,
     }
 }
 
@@ -1323,5 +1353,37 @@ mod tests {
         assert!(matches!(parse_page("captura"), Some(PageArg::Capture)));
         assert!(matches!(parse_page("aviso"), Some(PageArg::Notice)));
         assert!(parse_page("x").is_none());
+    }
+
+    #[test]
+    fn section_opens_settings_on_it() {
+        use home::SettingsSection as S;
+        let ctx = egui::Context::default();
+        let mut s = shared(ThemeId::TakeUi, UiMode::Dark);
+        s.settings.save_dir = std::env::temp_dir()
+            .join("takeshot-test-no-captures")
+            .to_string_lossy()
+            .into_owned();
+        s.overrides.section = Some(S::Shortcuts);
+        let h = main_home(&ctx, &s, None);
+        assert_eq!(h.page(), system::instance::Page::Settings);
+        assert_eq!(h.section(), S::Shortcuts);
+        s.overrides.section = None;
+        assert_eq!(main_home(&ctx, &s, None).section(), S::General);
+    }
+
+    #[test]
+    fn sections_parse() {
+        use home::SettingsSection as S;
+        for (name, section) in [
+            ("geral", S::General),
+            ("captura", S::Capture),
+            ("salvar", S::Save),
+            ("atalhos", S::Shortcuts),
+            ("sobre", S::About),
+        ] {
+            assert_eq!(parse_section(name), Some(section), "{name}");
+        }
+        assert_eq!(parse_section("x"), None);
     }
 }

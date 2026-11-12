@@ -222,6 +222,12 @@ impl Home {
         self.section
     }
 
+    /// Shows Ajustes on one of its sections (`--section`, for screenshots).
+    pub fn open_section(&mut self, section: SettingsSection) {
+        self.open(crate::system::instance::Page::Settings);
+        self.section = section;
+    }
+
     /// The shortcut waiting for its new keys, if any.
     pub fn capturing(&self) -> Option<Shot> {
         self.capturing
