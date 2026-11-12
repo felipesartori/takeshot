@@ -21,7 +21,10 @@ fn cursor() -> Option<(i32, i32)> {
 /// Capture the monitor under the mouse (or the primary one).
 pub fn grab() -> Result<Shot, String> {
     #[cfg(target_os = "linux")]
-    if crate::system::resident::on_wayland() {
+    if use_portal(
+        crate::system::resident::on_wayland(),
+        std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+    ) {
         return grab_wayland();
     }
     let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
@@ -81,9 +84,21 @@ fn shot_of(mon: &xcap::Monitor) -> Result<Shot, String> {
     })
 }
 
-/// Wayland lets no app read the screen: the desktop portal takes the picture (xcap's own Wayland
-/// path ends in a wlroots protocol GNOME and KDE lack, hiding why the portal failed). The portal
-/// gives the whole desktop; the monitor's part is cut from it, or with no monitor list the whole.
+/// Whether `grab` asks the desktop portal instead of xcap: on a GNOME Wayland session, where
+/// xcap's own Wayland path ends in a wlroots protocol GNOME lacks and hides why its portal
+/// attempt failed. `desktops` is `XDG_CURRENT_DESKTOP`, a colon-separated list (`ubuntu:GNOME`).
+/// KDE and wlroots keep xcap's path: the portal was not tried on them.
+#[cfg(any(target_os = "linux", test))]
+fn use_portal(wayland: bool, desktops: Option<&str>) -> bool {
+    wayland
+        && desktops.is_some_and(|list| {
+            list.split(':')
+                .any(|name| name.trim().eq_ignore_ascii_case("GNOME"))
+        })
+}
+
+/// Wayland lets no app read the screen: the desktop portal takes the picture. The portal gives
+/// the whole desktop; the monitor's part is cut from it, or with no monitor list the whole.
 #[cfg(target_os = "linux")]
 fn grab_wayland() -> Result<Shot, String> {
     let (desktop, interactive) = portal::screenshot()?;
@@ -524,6 +539,19 @@ mod tests {
             let r = work_area(p).expect("a monitor");
             assert!(r.width() > 0.0 && r.height() > 0.0, "{r:?}");
         }
+    }
+
+    #[test]
+    fn only_a_gnome_wayland_session_asks_the_portal() {
+        use super::use_portal;
+        assert!(use_portal(true, Some("ubuntu:GNOME")));
+        assert!(use_portal(true, Some("GNOME")));
+        assert!(use_portal(true, Some("gnome-classic:gnome")));
+        assert!(!use_portal(false, Some("ubuntu:GNOME")), "X11 keeps xcap");
+        assert!(!use_portal(true, Some("KDE")), "KDE keeps xcap");
+        assert!(!use_portal(true, Some("sway")), "wlroots keeps xcap");
+        assert!(!use_portal(true, Some("X-Cinnamon")));
+        assert!(!use_portal(true, None));
     }
 
     #[test]
