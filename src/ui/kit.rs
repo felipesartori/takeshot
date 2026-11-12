@@ -372,7 +372,7 @@ pub fn setting_row(
     hint: Option<&str>,
     control: impl FnOnce(&mut Ui),
 ) -> Response {
-    // Measures from "Ajustes · escuro": 20 px in, 63 px tall with a hint and 60 without, 24 px
+    // Measures from "Ajustes · Geral · escuro": 20 px in, 63 px tall with a hint and 60 without, 24 px
     // between the texts and the control.
     let w = ui.available_width().max(240.0);
     let h = if hint.is_some() { 63.0 } else { 60.0 };
@@ -1457,7 +1457,7 @@ pub fn confirm_dialog<T: Copy>(
 }
 
 /// Drop-down list on egui's combo box: 32 px tall, the input fill with a border (as the field in
-/// "Ajustes · escuro"); hover only colours the border.
+/// "Ajustes · Geral · escuro"); hover only colours the border.
 pub fn select<T: PartialEq + Copy>(
     ui: &mut Ui,
     t: &Tokens,

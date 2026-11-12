@@ -7,6 +7,7 @@
 //!   --edit [file]          editor for a picture (a sample when no file)
 //!   --pin file             picture pinned on top of other windows
 //!   --page inicio|estilo|ajustes   main window on that page
+//!   --section geral|captura|salvar|atalhos|sobre   Ajustes opens on that section
 //!   --page componentes     component gallery of the design system
 //!   --page editor|captura  the editor on the sample picture, the capture on the sample screen
 //!   --screenshot out.png   draw ~120 frames, save the window as PNG, exit
@@ -49,6 +50,8 @@ pub struct RunOverrides {
     pub captures_dir: Option<String>,
     /// `--select`: Início starts with this capture chosen.
     pub select: Option<String>,
+    /// `--section`: Ajustes opens on this section.
+    pub section: Option<home::SettingsSection>,
 }
 
 impl Shared {
@@ -157,6 +160,7 @@ struct Args {
     page: Option<system::instance::Page>,
     captures_dir: Option<String>,
     select: Option<String>,
+    section: Option<home::SettingsSection>,
 }
 
 /// What `--page` names: a page of the main window, or the component gallery.
@@ -185,6 +189,19 @@ pub fn parse_page(s: &str) -> Option<PageArg> {
     })
 }
 
+/// What `--section` names: a section of Ajustes.
+pub fn parse_section(s: &str) -> Option<home::SettingsSection> {
+    use home::SettingsSection as S;
+    Some(match s {
+        "geral" => S::General,
+        "captura" => S::Capture,
+        "salvar" => S::Save,
+        "atalhos" => S::Shortcuts,
+        "sobre" => S::About,
+        _ => return None,
+    })
+}
+
 fn parse_args() -> Args {
     let mut a = Args {
         launch: Launch::Home,
@@ -198,6 +215,7 @@ fn parse_args() -> Args {
         page: None,
         captures_dir: None,
         select: None,
+        section: None,
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut full = false;
@@ -218,6 +236,14 @@ fn parse_args() -> Args {
             }
             "--select" => {
                 a.select = v.get(i + 1).cloned();
+                i += 1;
+            }
+            "--section" => {
+                let name = v.get(i + 1).map(String::as_str);
+                a.section = name.and_then(parse_section);
+                if a.section.is_none() {
+                    unknown_value::<()>("--section", name);
+                }
                 i += 1;
             }
             "--full" => full = true,
@@ -305,6 +331,9 @@ fn main_home(
     if let Some(p) = page {
         h.open(p);
     }
+    if let Some(s) = shared.overrides.section {
+        h.open_section(s);
+    }
     if let Some(name) = &shared.overrides.select {
         h.select_by_name(name);
     }
@@ -337,9 +366,30 @@ struct App {
 }
 
 impl App {
+    /// The monitor holding the capture's area; `None` outside a capture.
+    fn active_shot(&self) -> Option<&capture::Shot> {
+        match &self.mode {
+            Mode::Overlay {
+                main,
+                others,
+                active,
+            } => {
+                let o = match *active {
+                    0 => main.as_ref(),
+                    n => others.get(n - 1).map_or(main.as_ref(), |(_, o)| o),
+                };
+                Some(o.shot())
+            }
+            _ => None,
+        }
+    }
+
+    /// The editor opens on the monitor where the area was chosen, not where the capture started.
     fn switch_to_editor(&mut self, ctx: &egui::Context, e: Box<editor::Editor>) {
         use egui::ViewportCommand as C;
-        let (pos, size) = self.editor_window;
+        let (pos, size) = self
+            .active_shot()
+            .map_or(self.editor_window, |s| place_for(s).0);
         if !cfg!(target_os = "macos") {
             ctx.send_viewport_cmd(C::Fullscreen(false));
         }
@@ -394,7 +444,10 @@ impl App {
         ctx.send_viewport_cmd(C::Decorations(false));
         ctx.send_viewport_cmd(C::WindowLevel(egui::WindowLevel::AlwaysOnTop));
         ctx.send_viewport_cmd(C::InnerSize(notice::NOTICE_SIZE));
-        ctx.send_viewport_cmd(C::OuterPosition(notice::notice_pos(self.notice_area)));
+        let area = self
+            .active_shot()
+            .map_or(self.notice_area, |s| place_for(s).1);
+        ctx.send_viewport_cmd(C::OuterPosition(notice::notice_pos(area)));
         self.mode = Mode::Notice(n);
     }
 }
@@ -533,12 +586,15 @@ impl eframe::App for App {
             } => {
                 let t = self.shared.tokens(ctx.system_theme());
                 views::begin_frame(&ctx, &t);
-                let mut sw = main.ui(ui, Some(frame), &t, &mut self.shared);
+                // The other monitors' windows have no `Frame` of their own; the save dialog takes the
+                // first window as its owner, or it would open behind these always-on-top windows.
+                let parent: &eframe::Frame = frame;
+                let mut sw = main.ui(ui, Some(parent), &t, &mut self.shared);
                 let shared = &mut self.shared;
                 for (i, (vp, o)) in others.iter_mut().enumerate() {
                     let id = egui::ViewportId::from_hash_of(("capture", i));
                     let s = ctx.show_viewport_immediate(id, vp.clone(), |ui, _| {
-                        o.ui(ui, None, &t, shared)
+                        o.ui(ui, Some(parent), &t, shared)
                     });
                     if matches!(sw, Switch::None) {
                         sw = s;
@@ -724,24 +780,7 @@ fn main() -> eframe::Result {
     let mut pin_img = None;
     match (&args.launch, &shot) {
         (Launch::Capture { full }, Some(s)) => {
-            let k = s.scale;
-            let pos = egui::pos2(s.x as f32 / k, s.y as f32 / k);
-            let size = egui::vec2(s.image.width() as f32 / k, s.image.height() as f32 / k);
-            let ew = egui::vec2(1280.0f32.min(size.x - 40.0), 820.0f32.min(size.y - 60.0));
-            editor_window = (pos + (size - ew) / 2.0, ew);
-            // The notice keeps off the taskbar: the work area of this monitor, in points.
-            let middle = egui::pos2(
-                s.x as f32 + s.image.width() as f32 / 2.0,
-                s.y as f32 + s.image.height() as f32 / 2.0,
-            );
-            notice_area = capture::work_area(middle)
-                .map(|r| {
-                    egui::Rect::from_min_max(
-                        (r.min.to_vec2() / k).to_pos2(),
-                        (r.max.to_vec2() / k).to_pos2(),
-                    )
-                })
-                .unwrap_or(egui::Rect::from_min_size(pos, size));
+            (editor_window, notice_area) = place_for(s);
             if *full && !settings.open_editor_after_full && args.screenshot.is_none() {
                 // Shift+PrtSc saves the full screen at once.
                 let fonts = fonts::FontLib::load();
@@ -782,7 +821,7 @@ fn main() -> eframe::Result {
             } else if *full && settings.open_editor_after_full {
                 vp = vp
                     .with_title("Takeshot · editor")
-                    .with_inner_size(ew)
+                    .with_inner_size(editor_window.1)
                     .with_position(editor_window.0);
             } else if args.screenshot.is_some() {
                 vp = vp
@@ -882,7 +921,6 @@ fn main() -> eframe::Result {
                     Some(s) => {
                         // The overlay holds the slot; the editor and the notice paths drop it here.
                         let o = overlay::Overlay::new(ctx, s, &shared).hold(capture_slot.take());
-                        let theme = args.theme.unwrap_or(shared.settings.ui_theme);
                         let others = std::mem::take(&mut other_shots)
                             .into_iter()
                             .map(|s| {
@@ -1007,6 +1045,28 @@ fn base_viewport(theme: ui::tokens::ThemeId) -> egui::ViewportBuilder {
         .with_app_id("takeshot")
 }
 
+/// Where the editor and the notice go when the capture ends on the monitor of `s`: the editor
+/// centred on it, the notice in its work area (in points, off the taskbar).
+fn place_for(s: &capture::Shot) -> ((egui::Pos2, egui::Vec2), egui::Rect) {
+    let k = s.scale;
+    let pos = egui::pos2(s.x as f32 / k, s.y as f32 / k);
+    let size = egui::vec2(s.image.width() as f32 / k, s.image.height() as f32 / k);
+    let ew = egui::vec2(1280.0f32.min(size.x - 40.0), 820.0f32.min(size.y - 60.0));
+    let middle = egui::pos2(
+        s.x as f32 + s.image.width() as f32 / 2.0,
+        s.y as f32 + s.image.height() as f32 / 2.0,
+    );
+    let notice = capture::work_area(middle)
+        .map(|r| {
+            egui::Rect::from_min_max(
+                (r.min.to_vec2() / k).to_pos2(),
+                (r.max.to_vec2() / k).to_pos2(),
+            )
+        })
+        .unwrap_or(egui::Rect::from_min_size(pos, size));
+    ((pos + (size - ew) / 2.0, ew), notice)
+}
+
 /// A capture window covering the monitor of `s`.
 fn capture_viewport(vp: egui::ViewportBuilder, s: &capture::Shot) -> egui::ViewportBuilder {
     let k = s.scale;
@@ -1036,13 +1096,14 @@ fn main_window_viewport(vp: egui::ViewportBuilder) -> egui::ViewportBuilder {
         .with_drag_and_drop(true)
 }
 
-/// `--theme`, `--mode`, `--captures-dir` and `--select`: for this run only.
+/// `--theme`, `--mode`, `--captures-dir`, `--select` and `--section`: for this run only.
 fn run_overrides(args: &Args) -> RunOverrides {
     RunOverrides {
         theme: args.theme,
         mode: args.mode,
         captures_dir: args.captures_dir.clone(),
         select: args.select.clone(),
+        section: args.section,
     }
 }
 
@@ -1210,6 +1271,43 @@ mod tests {
         }
     }
 
+    fn shot_at(x: i32, y: i32, scale: f32, w: u32, h: u32) -> capture::Shot {
+        capture::Shot {
+            image: image::RgbaImage::new(w, h),
+            x,
+            y,
+            scale,
+        }
+    }
+
+    #[test]
+    fn a_capture_window_covers_its_monitor_in_points() {
+        // A monitor left of the primary one (negative origin), at 100% and at 200%.
+        for (scale, w, h) in [(1.0, 1920, 1080), (2.0, 3840, 2160)] {
+            let s = shot_at((-1920.0 * scale) as i32, 0, scale, w, h);
+            let vp = capture_viewport(egui::ViewportBuilder::default(), &s);
+            assert_eq!(vp.position, Some(egui::pos2(-1920.0, 0.0)), "scale {scale}");
+            assert_eq!(
+                vp.inner_size,
+                Some(egui::vec2(1920.0, 1080.0)),
+                "scale {scale}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_editor_opens_centred_on_the_monitor_of_the_area() {
+        let ((pos, size), _) = place_for(&shot_at(-1920, 0, 1.0, 1920, 1080));
+        assert_eq!(size, egui::vec2(1280.0, 820.0));
+        assert_eq!(
+            pos,
+            egui::pos2(-1920.0 + 320.0, 130.0),
+            "on the left monitor"
+        );
+        let ((pos, _), _) = place_for(&shot_at(0, 0, 1.0, 1920, 1080));
+        assert_eq!(pos, egui::pos2(320.0, 130.0), "on the primary one");
+    }
+
     #[test]
     fn overrides_win_for_this_run_only() {
         let mut s = shared(ThemeId::TakeUi, UiMode::Dark);
@@ -1268,5 +1366,37 @@ mod tests {
         assert!(matches!(parse_page("captura"), Some(PageArg::Capture)));
         assert!(matches!(parse_page("aviso"), Some(PageArg::Notice)));
         assert!(parse_page("x").is_none());
+    }
+
+    #[test]
+    fn section_opens_settings_on_it() {
+        use home::SettingsSection as S;
+        let ctx = egui::Context::default();
+        let mut s = shared(ThemeId::TakeUi, UiMode::Dark);
+        s.settings.save_dir = std::env::temp_dir()
+            .join("takeshot-test-no-captures")
+            .to_string_lossy()
+            .into_owned();
+        s.overrides.section = Some(S::Shortcuts);
+        let h = main_home(&ctx, &s, None);
+        assert_eq!(h.page(), system::instance::Page::Settings);
+        assert_eq!(h.section(), S::Shortcuts);
+        s.overrides.section = None;
+        assert_eq!(main_home(&ctx, &s, None).section(), S::General);
+    }
+
+    #[test]
+    fn sections_parse() {
+        use home::SettingsSection as S;
+        for (name, section) in [
+            ("geral", S::General),
+            ("captura", S::Capture),
+            ("salvar", S::Save),
+            ("atalhos", S::Shortcuts),
+            ("sobre", S::About),
+        ] {
+            assert_eq!(parse_section(name), Some(section), "{name}");
+        }
+        assert_eq!(parse_section("x"), None);
     }
 }

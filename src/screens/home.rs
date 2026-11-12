@@ -5,7 +5,9 @@
 use crate::Shared;
 use crate::engine::render;
 use crate::screens::overlay::color_image;
-use crate::system::hotkeys::{Shot, Status, default_keys, keys_from_egui, label, needs_modifier};
+use crate::system::hotkeys::{
+    Shot, Status, default_keys, is_modifier_key, keys_from_egui, label, needs_modifier,
+};
 use crate::system::library::{self, Entry, Period, Thumbs};
 use crate::ui::i18n::{Msg, t as tr, tf};
 use crate::ui::kit::{CardThumb, WindowControl};
@@ -218,6 +220,12 @@ impl Home {
 
     pub fn section(&self) -> SettingsSection {
         self.section
+    }
+
+    /// Shows Ajustes on one of its sections (`--section`, for screenshots).
+    pub fn open_section(&mut self, section: SettingsSection) {
+        self.open(crate::system::instance::Page::Settings);
+        self.section = section;
     }
 
     /// The shortcut waiting for its new keys, if any.
@@ -525,6 +533,7 @@ impl Home {
 
         let mut acts = Vec::new();
         // "Change" waits for the next keys: Esc cancels; a key needing Ctrl or Alt keeps waiting.
+        // A modifier key only starts the shortcut, so the first other key of the frame ends it.
         if let Some(shot) = self.capturing {
             let pressed = ui.input(|i| {
                 i.events.iter().find_map(|e| match e {
@@ -533,7 +542,7 @@ impl Home {
                         pressed: true,
                         modifiers,
                         ..
-                    } => Some((*key, *modifiers)),
+                    } if !is_modifier_key(*key) => Some((*key, *modifiers)),
                     _ => None,
                 })
             });
@@ -560,9 +569,11 @@ impl Home {
         }
         // A text field keeps its own paste and shortcuts.
         if !ctx.text_edit_focused() {
-            if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::V))
-                || ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))))
-            {
+            if ui.input(|i| {
+                i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Paste(_) | egui::Event::PasteImage(_)))
+            }) {
                 acts.push(MainAction::Paste);
             }
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O)) {
@@ -768,12 +779,17 @@ impl Home {
     fn capture(&mut self, ctx: &egui::Context, shared: &mut Shared, args: &[&str]) {
         // The new capture shows as soon as the window is back.
         self.last_scan = f64::NEG_INFINITY;
-        if shared.settings.hide_on_capture {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        }
+        step_aside(ctx, shared);
         if let Err(e) = crate::system::actions::spawn_self(args) {
             shared.toast(e);
         }
+    }
+}
+
+/// Out of the picture before a capture, unless Settings keep Takeshot in it.
+fn step_aside(ctx: &egui::Context, shared: &Shared) {
+    if shared.settings.hide_on_capture {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
 }
 
@@ -784,7 +800,7 @@ fn open_clipboard(shared: &mut Shared) {
                 let _ = crate::system::actions::spawn_self(&["--edit", &p.to_string_lossy()]);
             }
         }
-        None => shared.toast("Não há imagem na área de transferência".into()),
+        None => shared.toast(tr(Msg::NoImageToPaste).into()),
     }
 }
 
@@ -1080,6 +1096,24 @@ mod tests {
     }
 
     #[test]
+    fn the_window_steps_aside_for_a_capture_unless_settings_keep_it() {
+        use egui::ViewportCommand::Minimized;
+        let sent = |shared: &Shared| {
+            let ctx = egui::Context::default();
+            let mut full = ctx.run_ui(egui::RawInput::default(), |ui| step_aside(ui.ctx(), shared));
+            full.textures_delta.clear();
+            full.viewport_output
+                .remove(&egui::ViewportId::ROOT)
+                .map(|v| v.commands)
+                .unwrap_or_default()
+        };
+        let (_, mut shared) = Home::for_tests(vec![]);
+        assert!(sent(&shared).contains(&Minimized(true)), "hides by default");
+        shared.settings.hide_on_capture = false;
+        assert!(!sent(&shared).contains(&Minimized(true)), "kept on screen");
+    }
+
+    #[test]
     fn leaving_shortcuts_stops_waiting_for_keys() {
         // Otherwise the next F-key pressed on any page would become the shortcut.
         let ctx = egui::Context::default();
@@ -1097,6 +1131,89 @@ mod tests {
         home.apply(MainAction::StartRebind(Shot::Full), &ctx, &mut shared);
         home.apply(MainAction::Page(P::Start), &ctx, &mut shared);
         assert_eq!(home.capturing(), None, "another page");
+    }
+
+    /// One frame of the Settings page with these events, as the window would deliver them.
+    fn frame(home: &mut Home, shared: &mut Shared, ctx: &egui::Context, events: Vec<egui::Event>) {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                home.begin(ui, shared);
+            },
+        );
+        // No painter here to apply the texture changes; egui panics if they are just dropped.
+        out.textures_delta.clear();
+    }
+
+    fn pressed(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn waiting_for_area_keys() -> (Home, Shared, egui::Context) {
+        use crate::system::instance::Page as P;
+        let ctx = egui::Context::default();
+        let (mut home, mut shared) = Home::for_tests(vec![]);
+        home.open(P::Settings);
+        home.apply(MainAction::StartRebind(Shot::Area), &ctx, &mut shared);
+        (home, shared, ctx)
+    }
+
+    #[test]
+    fn a_new_shortcut_waits_past_its_modifier_keys() {
+        use egui::{Event, Key, Modifiers};
+        let (mut home, mut shared, ctx) = waiting_for_area_keys();
+        let ctrl = Modifiers::CTRL;
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        // Windows order: winit reports the new modifiers before the key that carries them.
+        let steps = [
+            vec![
+                Event::ModifiersChanged(ctrl),
+                pressed(Key::ControlLeft, ctrl),
+            ],
+            vec![Event::ModifiersChanged(both), pressed(Key::ShiftLeft, both)],
+        ];
+        for events in steps {
+            frame(&mut home, &mut shared, &ctx, events);
+            assert_eq!(home.requests.rebind, None, "a modifier ended the shortcut");
+            assert_eq!(home.capturing(), Some(Shot::Area), "stopped waiting");
+        }
+        frame(&mut home, &mut shared, &ctx, vec![pressed(Key::Num9, both)]);
+        assert_eq!(
+            home.requests.rebind,
+            Some((Shot::Area, "ctrl+shift+Digit9".into()))
+        );
+        assert_eq!(home.capturing(), None);
+    }
+
+    #[test]
+    fn the_key_that_ends_a_shortcut_is_not_lost_behind_its_modifier() {
+        use egui::{Event, Key, Modifiers};
+        let (mut home, mut shared, ctx) = waiting_for_area_keys();
+        let both = Modifiers::CTRL | Modifiers::SHIFT;
+        // Both events in one frame: the modifier comes first and must not hide the 9.
+        frame(
+            &mut home,
+            &mut shared,
+            &ctx,
+            vec![
+                Event::ModifiersChanged(both),
+                pressed(Key::ShiftLeft, both),
+                pressed(Key::Num9, both),
+            ],
+        );
+        assert_eq!(
+            home.requests.rebind,
+            Some((Shot::Area, "ctrl+shift+Digit9".into()))
+        );
     }
 
     #[test]

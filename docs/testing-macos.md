@@ -13,7 +13,7 @@ CI builds and lints the macOS app but cannot click through it. Before a release,
 4. Press `Ctrl+Shift+2` (area). macOS asks for Screen Recording: allow it in System Settings > Privacy & Security > Screen & System Audio Recording, then quit Takeshot from the menu bar icon and open it again.
 5. `Ctrl+Shift+2` again: the screen dims, drag an area. Expect the tools in a column beside the area, the options next to them and Pin, Save, Edit and Copy under the area. Draw a rectangle and an arrow, press Copy, paste in Preview (File > New from Clipboard).
 6. `Ctrl+Shift+1` (full screen) opens the editor with the whole screen.
-7. On a second monitor, if there is one: the area capture works there and the bars stay on that monitor.
+7. On a second monitor, if there is one: the area capture works there and the bars stay on that monitor. Then turn on Settings > Capture > "Area capture on every screen": every monitor dims. Choose the area on one, then on another (the first one's area and marks go away), with monitors of different scales if you have them, and check that the window covers each monitor exactly. Then Edit, Copy and Save (turn "Save straight to the folder" off to see the dialog, which must show above the capture): the picture is that of the monitor with the area, and the editor and the notice open there.
 
 ## Windows and title bar
 
