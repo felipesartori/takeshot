@@ -47,6 +47,8 @@ Editor and capture share one behaviour:
 
 `engine::placement::capture_bars` places them, tested on its own: the tools in one column beside the area (right, else left) from its top, past its bottom only when the area is lower; the options panel next to them; the actions in a row under the area (over it without room) ending at its right edge. The tools' side depends on their own width alone, so they stay put while the options come and go; the options go beside them away from the area, else on the area's other side, and only with no room left do they cover the area. The view hands it the frames' drawn sizes from the frame before.
 
+With Settings > Capture > "Area capture on every screen" (off by default, hidden on Wayland, where a window gets no position) the capture has one `Overlay` per monitor: `capture::grab_all` grabs them (the one under the mouse first, the others best-effort), `Mode::Overlay` shows the first in the root window and the others in immediate viewports (`capture_viewport`), and `overlay::settle` keeps a single area: the window that gains one makes the others drop theirs and their marks (`clear_area`). What ends the capture happens on the area's monitor: `active_shot` and `place_for` put the editor and the notice there, and the save dialog is owned by the first window, because the others have no `eframe::Frame` and a dialog without an owner opens behind these always-on-top windows.
+
 ## The resident
 
 `takeshot` with no arguments starts the resident: one process per user owns the tray icon, the global hotkeys and the main window, and a second launch only shows it. Captures, editors and pinned images run as their own processes (`--capture`, `--edit`, `--pin`).

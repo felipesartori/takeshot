@@ -154,7 +154,15 @@ impl Overlay {
     fn clear_area(&mut self) {
         self.sel = None;
         self.drag = Drag::None;
-        self.an = Annotator::new(self.an.tool);
+        // Not `Annotator::new`: it takes the picture to be baked already, so the marks would stay
+        // on `baked` and the texture. An annotator that has not baked yet draws the plain
+        // screenshot again on the next frame.
+        self.an = Annotator::with_doc(self.an.tool, Doc::new());
+    }
+
+    /// The monitor this window covers.
+    pub fn shot(&self) -> &Shot {
+        &self.shot
     }
 
     /// The area on `screen`, which shows the whole picture.
@@ -834,7 +842,6 @@ impl Overlay {
     }
 }
 
-/// The area handle (or `Move` inside the area) under screen point `p`.
 /// One capture window per monitor and a single area: the window that gains one becomes the
 /// active one and the others drop theirs. Returns the new active index.
 pub fn settle(overlays: &mut [&mut Overlay], active: usize) -> usize {
@@ -849,6 +856,7 @@ pub fn settle(overlays: &mut [&mut Overlay], active: usize) -> usize {
     now
 }
 
+/// The area handle (or `Move` inside the area) under screen point `p`.
 fn area_hit(sel: Option<Rect>, view: &View, p: Pos2) -> Option<Handle> {
     let s = sel?;
     let r = Rect::from_min_max(view.to_screen(s.min), view.to_screen(s.max));
@@ -1006,6 +1014,57 @@ mod tests {
             a.an.doc.objs().is_empty(),
             "what was drawn goes with the area"
         );
+    }
+
+    #[test]
+    fn the_marks_dropped_with_an_area_leave_the_picture_too() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        let mut a = capture(&ctx, &sh, Tool::Select);
+        ui_frames(&mut a, &mut sh, vec![]);
+        let plain = *a.shot.image.get_pixel(350, 350);
+        assert_ne!(*a.baked.get_pixel(350, 350), plain, "the mark is baked in");
+        let mut b = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh).beside();
+        b.sel = Some(AREA);
+        assert_eq!(settle(&mut [&mut a, &mut b], 0), 1);
+        ui_frames(&mut a, &mut sh, vec![]);
+        assert_eq!(
+            *a.baked.get_pixel(350, 350),
+            plain,
+            "a later copy from this monitor would carry the old mark"
+        );
+    }
+
+    #[test]
+    fn the_area_follows_the_monitor_it_was_last_drawn_on() {
+        let ctx = egui::Context::default();
+        let sh = shared();
+        let area = Rect::from_min_size(pos2(10.0, 10.0), vec2(50.0, 50.0));
+        let mut a = capture(&ctx, &sh, Tool::Select).with_area(area);
+        let mut b = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh).beside();
+        let mut c = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh).beside();
+        b.sel = Some(area);
+        assert_eq!(settle(&mut [&mut a, &mut b, &mut c], 0), 1);
+        assert!(a.sel.is_none() && b.sel.is_some() && c.sel.is_none());
+        // Back to the first monitor: the area leaves the second one.
+        a.sel = Some(area);
+        assert_eq!(settle(&mut [&mut a, &mut b, &mut c], 1), 0);
+        assert!(a.sel.is_some() && b.sel.is_none() && c.sel.is_none());
+        c.sel = Some(area);
+        assert_eq!(settle(&mut [&mut a, &mut b, &mut c], 0), 2);
+        assert!(a.sel.is_none() && b.sel.is_none() && c.sel.is_some());
+    }
+
+    #[test]
+    fn a_window_beside_does_not_take_the_remembered_area() {
+        let ctx = egui::Context::default();
+        let mut sh = shared();
+        sh.settings.keep_selection = true;
+        sh.settings.last_selection = Some([10.0, 10.0, 50.0, 50.0]);
+        let first = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh);
+        assert!(first.sel.is_some(), "the first monitor keeps it");
+        let beside = Overlay::new(&ctx, crate::system::capture::sample_shot(), &sh).beside();
+        assert!(beside.sel.is_none(), "only one monitor holds the area");
     }
 
     #[test]
