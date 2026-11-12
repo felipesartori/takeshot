@@ -6,7 +6,7 @@
 # Regra de seguranca: tecla ou clique so sai se a janela em primeiro plano for do processo que
 # este script iniciou; senao a funcao aborta e nada e enviado. O processo do app tem uma janela
 # host invisivel ("Takeshot resident", fora da tela): por isso as janelas visiveis sao enumeradas.
-# Sempre inicie com --captures-dir apontando para design/screens: a Home mostra a pasta do usuario.
+# Sempre inicie com --captures-dir apontando para docs/images: a Home mostra a pasta do usuario.
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
