@@ -21,7 +21,43 @@ fn cursor() -> Option<(i32, i32)> {
 /// Capture the monitor under the mouse (or the primary one).
 pub fn grab() -> Result<Shot, String> {
     let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
-    let mon = cursor()
+    let mon = cursor_monitor(&monitors)
+        .or_else(|| monitors.into_iter().next())
+        .ok_or_else(|| "nenhum monitor encontrado".to_string())?;
+    shot_of(&mon)
+}
+
+/// Capture every monitor, the one under the mouse (or the primary one) first. A monitor that
+/// cannot be grabbed is left out; only the first one is required.
+pub fn grab_all() -> Result<Vec<Shot>, String> {
+    let mut monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
+    if let Some(first) = cursor_monitor(&monitors).and_then(|m| {
+        let id = m.id().ok()?;
+        monitors.iter().position(|o| o.id().ok() == Some(id))
+    }) {
+        monitors.swap(0, first);
+    }
+    if monitors.is_empty() {
+        return Err("nenhum monitor encontrado".to_string());
+    }
+    first_required(monitors.iter().map(shot_of))
+}
+
+/// The grabs that worked, in order; the first one failing fails them all (it is the window the
+/// user sees first), the others are skipped.
+fn first_required<T, E>(grabs: impl IntoIterator<Item = Result<T, E>>) -> Result<Vec<T>, E> {
+    let mut grabs = grabs.into_iter();
+    let mut ok = Vec::new();
+    if let Some(first) = grabs.next() {
+        ok.push(first?);
+    }
+    ok.extend(grabs.filter_map(Result::ok));
+    Ok(ok)
+}
+
+/// The monitor under the mouse, else the primary one.
+fn cursor_monitor(monitors: &[xcap::Monitor]) -> Option<xcap::Monitor> {
+    cursor()
         .and_then(|(x, y)| xcap::Monitor::from_point(x, y).ok())
         .or_else(|| {
             monitors
@@ -29,8 +65,9 @@ pub fn grab() -> Result<Shot, String> {
                 .find(|m| m.is_primary().unwrap_or(false))
                 .cloned()
         })
-        .or_else(|| monitors.into_iter().next())
-        .ok_or_else(|| "nenhum monitor encontrado".to_string())?;
+}
+
+fn shot_of(mon: &xcap::Monitor) -> Result<Shot, String> {
     let image = mon.capture_image().map_err(|e| e.to_string())?;
     Ok(Shot {
         image,
@@ -316,6 +353,21 @@ mod tests {
             let r = work_area(p).expect("a monitor");
             assert!(r.width() > 0.0 && r.height() > 0.0, "{r:?}");
         }
+    }
+
+    #[test]
+    fn a_monitor_that_cannot_be_grabbed_does_not_cost_the_others() {
+        fn r(v: &[Result<u8, &'static str>]) -> Result<Vec<u8>, &'static str> {
+            super::first_required(v.iter().cloned())
+        }
+        assert_eq!(r(&[Ok(1), Ok(2), Ok(3)]), Ok(vec![1, 2, 3]));
+        assert_eq!(r(&[Ok(1), Err("x"), Ok(3)]), Ok(vec![1, 3]));
+        assert_eq!(r(&[Ok(1), Err("x")]), Ok(vec![1]));
+        assert_eq!(
+            r(&[Err("first"), Ok(2)]),
+            Err("first"),
+            "the first is required"
+        );
     }
 
     /// Needs a real display: `cargo test -- --ignored`.
