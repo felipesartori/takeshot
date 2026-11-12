@@ -496,6 +496,12 @@ mod tests {
     }
 
     #[test]
+    fn keeping_takeshot_on_screen_survives_a_reload() {
+        let s: Settings = serde_json::from_str(r#"{"hide_on_capture":false}"#).unwrap();
+        assert!(!s.hide_on_capture);
+    }
+
+    #[test]
     fn old_settings_without_close_and_tray_fields_get_the_defaults() {
         let s: Settings = serde_json::from_str(r#"{"save_dir":"D:/caps"}"#).unwrap();
         assert_eq!(s.on_close, OnClose::Ask);

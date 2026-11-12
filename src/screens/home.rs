@@ -779,12 +779,17 @@ impl Home {
     fn capture(&mut self, ctx: &egui::Context, shared: &mut Shared, args: &[&str]) {
         // The new capture shows as soon as the window is back.
         self.last_scan = f64::NEG_INFINITY;
-        if shared.settings.hide_on_capture {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        }
+        step_aside(ctx, shared);
         if let Err(e) = crate::system::actions::spawn_self(args) {
             shared.toast(e);
         }
+    }
+}
+
+/// Out of the picture before a capture, unless Settings keep Takeshot in it.
+fn step_aside(ctx: &egui::Context, shared: &Shared) {
+    if shared.settings.hide_on_capture {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
 }
 
@@ -1088,6 +1093,24 @@ mod tests {
             chip(Some(&Status::Unavailable("no display".into())), &s),
             (ChipState::Off, tr(Msg::ShortcutsUnavailable).to_string())
         );
+    }
+
+    #[test]
+    fn the_window_steps_aside_for_a_capture_unless_settings_keep_it() {
+        use egui::ViewportCommand::Minimized;
+        let sent = |shared: &Shared| {
+            let ctx = egui::Context::default();
+            let mut full = ctx.run_ui(egui::RawInput::default(), |ui| step_aside(ui.ctx(), shared));
+            full.textures_delta.clear();
+            full.viewport_output
+                .remove(&egui::ViewportId::ROOT)
+                .map(|v| v.commands)
+                .unwrap_or_default()
+        };
+        let (_, mut shared) = Home::for_tests(vec![]);
+        assert!(sent(&shared).contains(&Minimized(true)), "hides by default");
+        shared.settings.hide_on_capture = false;
+        assert!(!sent(&shared).contains(&Minimized(true)), "kept on screen");
     }
 
     #[test]
