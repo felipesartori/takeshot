@@ -1,4 +1,4 @@
-//! The capture's bars, as on page C of the design: the tools in a column beside the area, the
+//! The capture's bars, as in the design's capture screens: the tools in a column beside the area, the
 //! options of the tool or the selected object in a panel next to them, the actions (pin, save,
 //! edit, copy, close) in a row under the area, and the hint before an area is chosen. Behaviour is
 //! in `screens::overlay`.

@@ -1,0 +1,23 @@
+---
+name: implementar-issue
+description: Use ao implementar uma mudança no Takeshot, vinda de issue ou de pedido direto, e ao criar ou mudar qualquer função, tela ou texto visível, da spec até o PR aberto.
+---
+
+# Implementar issue
+
+A issue (ou o pedido do usuário) é a spec e o `AGENTS.md` traz os padrões. Decida sozinho e liste as decisões no relatório final.
+
+Mudança visível: antes de começar, leia a seção Parity do `AGENTS.md`. Os dois temas dividem um layout só, e um tema muda cores, marca, nome e o visual de alguns componentes do kit, nunca o lugar de uma função. Referência visual: `design/takeshot-ui.fig`, que desenha o app de hoje: páginas "Telas · TakeUI" e "Telas · Coral UI" (cada tela, escuro e claro) e "Sistema de design" (componentes dos dois temas). O desenho acompanha o app: a mudança visível só termina com ele atualizado (passo 8).
+
+1. **Spec.** `gh issue view <n> --comments`, ou o pedido do usuário. Escreva o critério de pronto em uma frase de comportamento observável por quem usa o app. Visual sem precedente no kit é desenhado antes, numa página datada "Proposta (AAAA-MM-DD)" do `.fig`, e aprovado pelo usuário antes do código; o resto segue o padrão mais próximo do desenho, e a decisão vai para o relatório.
+2. **Branch.** `fix/<tema>` ou `feat/<tema>` a partir de `origin/main`, criada com `git switch -c <branch> --no-track origin/main`; árvore suja pede worktree.
+3. **Núcleo, vermelho primeiro.** O comportamento mora em `src/engine/`, `src/system/` ou no estado de `src/screens/`, nunca dentro de uma vista. Bug: um comando determinístico que falha no sintoma (teste, `--screenshot` ou cenário de `.claude/skills/revisar-pr/ambientes.md`), visto falhar antes de qualquer correção, com `superpowers:systematic-debugging`. Funcionalidade: teste que falha. Pronto quando o teste novo passa e o `cargo test` inteiro está verde.
+4. **Vista** (se visível). Em `src/views/`, no lugar que o `.fig` dá à tela, com os componentes de `src/ui/kit.rs` e as cores de `Tokens`. Uma diferença de visual entre os temas mora no kit, nos tokens ou em `ui::brand`; a vista não pergunta qual é o tema para mudar um lugar. Pronto quando a função funciona no app.
+5. **Textos** (se visível). Cada texto novo vira uma chave `Msg` em `src/ui/i18n.rs`, com inglês e português. Pronto quando o projeto compila (uma tradução faltando não compila).
+6. **Sistema.** Código atrás de `#[cfg(...)]` ou no residente (captura, bandeja, hotkeys, Wayland) roda também no ambiente em que vive: Windows no host, Linux nos containers de `revisar-pr/ambientes.md`. Pronto quando o cenário da issue passa no binário, com comando e saída colados.
+7. **Verificação.** Os passos 1 a 3 de "Verify before calling work done" do `AGENTS.md`, com a saída lida do arquivo. Mudança visível ainda gera as quatro combinações de `--theme takeui|coral` com `--mode light|dark` da tela mexida, cada uma com `--screenshot <arquivo>.png` (a galeria é `--page componentes`; `scripts/screenshots.sh` faz todas), e compara cada uma com o quadro da mesma tela e do mesmo visual no `.fig`. Pronto quando as quatro imagens estão abertas e certas. O container (`scripts/check.sh`, pelo hook de pre-push) roda uma vez, no push final, e não a cada commit.
+8. **Desenho (`.fig`), no mesmo PR.** Cada tela que a mudança toca é atualizada em `design/takeshot-ui.fig`, nas páginas "Telas · TakeUI" e "Telas · Coral UI", nos quatro visuais, desenhada a partir do render do app (passo 7, com `--page`) e não de memória; componente novo ou mudado do kit também atualiza "Sistema de design". Tela nova ganha quadros; tela removida perde os dela. Compare cada quadro com o render. Edição pelo MCP do OpenPencil: `get_jsx` lê um quadro, `render` com JSX escreve outro, `export_image` confere; salve só a aba que abriu o arquivo do repo. Pronto quando nenhum quadro difere do app e o relatório lista os quadros alterados.
+9. **Docs.** Comportamento mudado ou novo atualiza `README.md`, `docs/` e o `AGENTS.md` no mesmo PR, corrigindo o que ficou velho.
+10. **PR.** Commits Conventional em inglês; `git push -u origin <branch>`; `gh pr create --body-file <arquivo fora do repo>` com o template de `.github/pull_request_template.md` preenchido (as quatro telas com imagens da amostra, nunca capturas do usuário; a linha do desenho atualizado; a linha de paridade com os quatro visuais certos ou o que ainda destoa; as traduções), `Closes #<n>` em linha própria quando há issue e título Conventional de até 70 caracteres. Merge e release ficam para quando o usuário pedir.
+
+Pronto quando o PR está aberto, cada item marcado no template tem evidência, e o relatório diz o que mudou em cada arquivo, as decisões tomadas e o que não pôde ser verificado.
